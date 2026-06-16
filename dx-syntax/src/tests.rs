@@ -172,6 +172,8 @@ fn niche_languages_are_not_core_enabled() {
     assert!(!core.contains("asm"));
     assert!(!core.contains("tablegen"));
     assert!(!core.contains("nix"));
+    assert!(!core.contains("cmake"));
+    assert!(!core.contains("zig"));
 }
 
 #[test]

@@ -41,8 +41,6 @@ pub(crate) const CORE_LANGUAGES: &[&str] = &[
     "typescript",
     "javascript",
     "tsx",
-    "zig",
-    "cmake",
     "bash",
     "toml",
     "json",
