@@ -1,0 +1,22 @@
+#!/usr/bin/env sh
+set -eu
+
+version="${1:-latest}"
+install_dir="$(mktemp -d)"
+script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+installer="${DX_INSTALLER:-$script_dir/install.sh}"
+# Set DX_INSTALLER_URL to smoke a published installer instead of this checkout.
+
+cleanup() {
+  rm -rf "$install_dir"
+}
+trap cleanup EXIT INT TERM
+
+if [ -n "${DX_INSTALLER_URL:-}" ]; then
+  installer="$install_dir/install.sh"
+  curl -fsSL "$DX_INSTALLER_URL" -o "$installer"
+fi
+
+DX_INSTALL_DIR="$install_dir" DX_VERSION="$version" sh "$installer"
+test -x "$install_dir/dx"
+"$install_dir/dx" --version

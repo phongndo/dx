@@ -1,0 +1,75 @@
+#!/usr/bin/env sh
+set -eu
+
+version="${1:?usage: scripts/render-homebrew-formula <version> <dist-dir> [output]}"
+dist_dir="${2:?usage: scripts/render-homebrew-formula <version> <dist-dir> [output]}"
+output="${3:-}"
+
+checksum() {
+  target="$1"
+  file="$dist_dir/dx-v$version-$target.tar.gz.sha256"
+  if [ ! -f "$file" ]; then
+    echo "render-homebrew-formula: missing checksum file: $file" >&2
+    exit 1
+  fi
+  awk '{ print $1 }' "$file"
+}
+
+darwin_arm64_sha="$(checksum aarch64-apple-darwin)"
+darwin_x86_64_sha="$(checksum x86_64-apple-darwin)"
+linux_arm64_sha="$(checksum aarch64-unknown-linux-gnu)"
+linux_x86_64_sha="$(checksum x86_64-unknown-linux-gnu)"
+
+tmp_file="$(mktemp)"
+cleanup() {
+  rm -f "$tmp_file"
+}
+trap cleanup EXIT INT TERM
+
+cat >"$tmp_file" <<EOF
+class DxCli < Formula
+  desc "Fast terminal Git diff review tool"
+  homepage "https://github.com/phongndo/dx"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/phongndo/dx/releases/download/v$version/dx-v$version-aarch64-apple-darwin.tar.gz"
+      sha256 "$darwin_arm64_sha"
+    end
+
+    on_intel do
+      url "https://github.com/phongndo/dx/releases/download/v$version/dx-v$version-x86_64-apple-darwin.tar.gz"
+      sha256 "$darwin_x86_64_sha"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/phongndo/dx/releases/download/v$version/dx-v$version-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "$linux_arm64_sha"
+    end
+
+    on_intel do
+      url "https://github.com/phongndo/dx/releases/download/v$version/dx-v$version-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "$linux_x86_64_sha"
+    end
+  end
+
+  def install
+    bin.install "dx"
+  end
+
+  test do
+    assert_match "dx #{version}", shell_output("#{bin}/dx --version")
+  end
+end
+EOF
+
+if [ -n "$output" ]; then
+  mkdir -p "$(dirname "$output")"
+  mv "$tmp_file" "$output"
+  trap - EXIT INT TERM
+else
+  cat "$tmp_file"
+fi

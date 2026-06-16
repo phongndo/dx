@@ -1,0 +1,24 @@
+[package]
+name = "dx-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+fff-grep.workspace = true
+crossterm.workspace = true
+dx-core.workspace = true
+dx-diff.workspace = true
+dx-git.workspace = true
+dx-syntax.workspace = true
+memchr.workspace = true
+notify.workspace = true
+ratatui.workspace = true
+shlex.workspace = true
+tokio.workspace = true
+unicode-width.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true

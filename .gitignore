@@ -1,0 +1,6 @@
+/target/
+/dist/
+/homebrew-tap/
+/result
+/result-*
+*.profraw

@@ -1,0 +1,20 @@
+[package]
+name = "dx-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "dx"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+dx-command.workspace = true
+dx-core.workspace = true
+dx-tui.workspace = true
