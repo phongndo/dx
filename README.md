@@ -64,10 +64,24 @@ cat changes.diff | dx --patch -
 dx --no-watch
 dx --no-syntax
 dx --stat
+dx config
 ```
 
 `dx diff ...` is also accepted as a compatibility/discoverability alias, but
 plain `dx ...` is the primary interface.
+
+## Configuration
+
+`dx` reads a user-local TOML config from the user's config directory. On XDG
+systems this is usually `~/.config/dx/config.toml`; run `dx config` to
+print the exact path. `XDG_CONFIG_HOME` is honored, and Windows uses `APPDATA`
+when `XDG_CONFIG_HOME` is unset.
+
+No config file is created automatically; missing config means built-in defaults.
+Create the file manually only when you want to override syntax mode,
+colorscheme, diff styling, or highlight performance limits. Parser registry
+state is kept separately in `tree-sitter.json` under the same `dx` config
+directory.
 
 ## Syntax highlighting
 

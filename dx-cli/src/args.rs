@@ -30,6 +30,7 @@ examples:
   dx --no-watch
   dx --no-syntax
   dx --stat
+  dx config
   dx syntax add ruby elixir";
 
 pub(crate) const INSTALL_SCRIPT: &str = include_str!("../../scripts/install.sh");
@@ -81,6 +82,8 @@ examples:
         #[command(subcommand)]
         command: SyntaxCommand,
     },
+    #[command(about = "Print the user config file path")]
+    Config,
     #[command(
         about = "Update this dx binary from GitHub releases",
         after_help = "\
@@ -110,7 +113,7 @@ pub(crate) enum SyntaxCommand {
     Available(SyntaxAvailableArgs),
     #[command(about = "Remove cached tree-sitter parser libraries")]
     Clean,
-    #[command(about = "Print tree-sitter cache and syntax config paths")]
+    #[command(about = "Print tree-sitter cache and user config paths")]
     Path,
     #[command(about = "Validate enabled syntax highlighting languages")]
     Doctor,

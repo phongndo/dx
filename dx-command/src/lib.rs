@@ -1,3 +1,4 @@
+mod config;
 mod diff;
 mod syntax;
 
@@ -8,6 +9,7 @@ pub use dx_syntax::{
     SyntaxThemeConfig, SyntaxThemeSource, SyntaxUpdateResult,
 };
 
+pub use config::config_path;
 pub use diff::{diff, diff_bytes, diff_to_writer, github_pr_diff_options};
 pub use syntax::{
     syntax_add, syntax_available_languages, syntax_cache_dir, syntax_clean_cache,

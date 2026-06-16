@@ -23,6 +23,16 @@ pub(crate) fn config_home() -> DxResult<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
+    #[cfg(windows)]
+    {
+        if let Some(path) = env::var_os("APPDATA").filter(|value| !value.is_empty()) {
+            return Ok(PathBuf::from(path));
+        }
+        if let Some(path) = env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+            return Ok(PathBuf::from(path).join("AppData").join("Roaming"));
+        }
+    }
+
     env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

@@ -1,4 +1,5 @@
 mod args;
+mod config;
 mod syntax;
 mod update;
 
@@ -87,6 +88,7 @@ fn run() -> CliResult<()> {
 
     match cli.command {
         None => run_diff(cli.diff),
+        Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
         Some(Command::Syntax { command }) => syntax(command),
         Some(Command::Update(args)) => update(args),

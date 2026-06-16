@@ -190,4 +190,5 @@ if [ "$action" = "update" ]; then
 else
   echo "installed $binary $tag to $install_dir/$binary"
   echo "run: $binary --version"
+  echo "config: $binary config"
 fi
