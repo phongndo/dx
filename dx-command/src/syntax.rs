@@ -1,13 +1,20 @@
 use std::path::PathBuf;
 
 use crate::{
-    SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult, SyntaxDoctorReport,
-    SyntaxLanguageStatus, SyntaxRemoveResult, SyntaxUpdateResult,
+    SyntaxAddOptions, SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult,
+    SyntaxDoctorReport, SyntaxLanguageStatus, SyntaxRemoveResult, SyntaxUpdateResult,
 };
 use dx_core::DxResult;
 
 pub fn syntax_add(languages: &[String]) -> DxResult<SyntaxAddResult> {
     dx_syntax::add_languages(languages)
+}
+
+pub fn syntax_add_with_options(
+    languages: &[String],
+    options: SyntaxAddOptions,
+) -> DxResult<SyntaxAddResult> {
+    dx_syntax::add_languages_with_options(languages, options)
 }
 
 pub fn syntax_update(languages: &[String], all: bool) -> DxResult<SyntaxUpdateResult> {
@@ -44,6 +51,14 @@ pub fn syntax_settings_path() -> DxResult<PathBuf> {
 
 pub fn syntax_colorscheme_dir() -> DxResult<PathBuf> {
     dx_syntax::colorscheme_dir()
+}
+
+pub fn syntax_queries_dir() -> DxResult<PathBuf> {
+    dx_syntax::queries_dir()
+}
+
+pub fn syntax_parsers_dir() -> DxResult<PathBuf> {
+    dx_syntax::parsers_dir()
 }
 
 pub fn syntax_doctor() -> DxResult<SyntaxDoctorReport> {

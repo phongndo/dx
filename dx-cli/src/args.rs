@@ -98,7 +98,7 @@ examples:
 #[derive(Debug, Subcommand)]
 pub(crate) enum SyntaxCommand {
     #[command(about = "Install and enable syntax highlighting languages")]
-    Add(SyntaxLanguagesArgs),
+    Add(SyntaxAddArgs),
     #[command(about = "Update cached syntax highlighting parsers")]
     Update(SyntaxUpdateArgs),
     #[command(alias = "remove", about = "Remove syntax highlighting languages")]
@@ -116,6 +116,24 @@ pub(crate) enum SyntaxCommand {
     Path,
     #[command(about = "Validate enabled syntax highlighting languages")]
     Doctor,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct SyntaxAddArgs {
+    #[arg(value_name = "LANG", required = true)]
+    pub(crate) languages: Vec<String>,
+    /// Register a local tree-sitter parser library for this language.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) parser: Option<PathBuf>,
+    /// Install a local tree-sitter highlights.scm query for this language.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) query: Option<PathBuf>,
+    /// Map a file extension to this language. Can be repeated.
+    #[arg(long = "ext", value_name = "EXT")]
+    pub(crate) extensions: Vec<String>,
+    /// Map an exact filename to this language. Can be repeated.
+    #[arg(long = "filename", value_name = "NAME")]
+    pub(crate) filenames: Vec<String>,
 }
 
 #[derive(Debug, Args)]

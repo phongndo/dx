@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf};
 
 use crate::{
-    COLORSCHEME_DIR, CONFIG_DIR, CONFIG_FILE, LEGACY_SETTINGS_FILE, SETTINGS_FILE, SyntaxSettings,
-    config_home, parse_settings,
+    COLORSCHEME_DIR, CONFIG_DIR, CONFIG_FILE, LEGACY_SETTINGS_FILE, PARSER_DIR, QUERY_DIR,
+    SETTINGS_FILE, SyntaxSettings, config_home, parse_settings,
 };
 use dx_core::{DxError, DxResult};
 
@@ -20,6 +20,14 @@ pub(crate) fn legacy_settings_path() -> DxResult<PathBuf> {
 
 pub fn colorscheme_dir() -> DxResult<PathBuf> {
     config_home().map(|path| path.join(CONFIG_DIR).join(COLORSCHEME_DIR))
+}
+
+pub fn queries_dir() -> DxResult<PathBuf> {
+    config_home().map(|path| path.join(CONFIG_DIR).join(QUERY_DIR))
+}
+
+pub fn parsers_dir() -> DxResult<PathBuf> {
+    config_home().map(|path| path.join(CONFIG_DIR).join(PARSER_DIR))
 }
 
 pub fn load_settings() -> DxResult<SyntaxSettings> {

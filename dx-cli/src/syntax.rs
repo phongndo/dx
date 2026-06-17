@@ -18,7 +18,15 @@ use crate::{
 pub(crate) fn syntax(command: SyntaxCommand) -> CliResult<()> {
     match command {
         SyntaxCommand::Add(args) => {
-            let result = dx_command::syntax_add(&args.languages)?;
+            let result = dx_command::syntax_add_with_options(
+                &args.languages,
+                dx_command::SyntaxAddOptions {
+                    parser: args.parser,
+                    query: args.query,
+                    extensions: args.extensions,
+                    filenames: args.filenames,
+                },
+            )?;
             print_syntax_add_result(&result)?;
         }
         SyntaxCommand::Update(args) => {
@@ -65,6 +73,14 @@ pub(crate) fn syntax(command: SyntaxCommand) -> CliResult<()> {
             write_stdout(format_args!(
                 "colorscheme {}\n",
                 dx_command::syntax_colorscheme_dir()?.display()
+            ))?;
+            write_stdout(format_args!(
+                "queries     {}\n",
+                dx_command::syntax_queries_dir()?.display()
+            ))?;
+            write_stdout(format_args!(
+                "parsers     {}\n",
+                dx_command::syntax_parsers_dir()?.display()
             ))?;
         }
         SyntaxCommand::Doctor => {
@@ -203,8 +219,17 @@ pub(crate) fn print_syntax_add_result(result: &dx_command::SyntaxAddResult) -> C
     }
     for language in &result.without_highlights {
         write_stdout(format_args!(
-            "warning {language}: no bundled highlights query; diff will render plain text\n"
+            "warning {language}: no highlights query; diff will render plain text\n"
         ))?;
+    }
+    for language in &result.custom_parsers {
+        write_stdout(format_args!("+ trusted custom parser {language}\n"))?;
+    }
+    for language in &result.custom_queries {
+        write_stdout(format_args!("+ installed highlights query {language}\n"))?;
+    }
+    for mapping in &result.custom_mappings {
+        write_stdout(format_args!("+ mapped {mapping}\n"))?;
     }
     Ok(())
 }
@@ -212,6 +237,7 @@ pub(crate) fn print_syntax_add_result(result: &dx_command::SyntaxAddResult) -> C
 pub(crate) fn print_syntax_update_result(result: &dx_command::SyntaxUpdateResult) -> CliResult<()> {
     if result.updated.is_empty()
         && result.bundled.is_empty()
+        && result.custom.is_empty()
         && result.not_installed.is_empty()
         && result.unavailable.is_empty()
     {
@@ -223,6 +249,9 @@ pub(crate) fn print_syntax_update_result(result: &dx_command::SyntaxUpdateResult
     for language in &result.bundled {
         write_stdout(format_args!("= bundled parser {language}\n"))?;
     }
+    for language in &result.custom {
+        write_stdout(format_args!("= custom parser {language}\n"))?;
+    }
     for language in &result.not_installed {
         write_stdout(format_args!("= not installed {language}\n"))?;
     }
@@ -231,7 +260,7 @@ pub(crate) fn print_syntax_update_result(result: &dx_command::SyntaxUpdateResult
     }
     for language in &result.without_highlights {
         write_stdout(format_args!(
-            "warning {language}: no bundled highlights query; diff will render plain text\n"
+            "warning {language}: no highlights query; diff will render plain text\n"
         ))?;
     }
     Ok(())
@@ -429,6 +458,8 @@ pub(crate) fn syntax_status_kind(status: &dx_command::SyntaxLanguageStatus) -> S
 pub(crate) fn syntax_source_label(status: &dx_command::SyntaxLanguageStatus) -> &'static str {
     if status.source.as_deref() == Some("bundled") {
         "bundled"
+    } else if status.source.as_deref() == Some("custom") {
+        "custom"
     } else if status.artifact.is_some() {
         "cache"
     } else {
