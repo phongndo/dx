@@ -92,6 +92,18 @@ dx syntax clean
 dx syntax path
 ```
 
+Custom Tree-sitter support can be registered without rebuilding `dx`:
+
+```sh
+dx syntax add mylang \
+  --parser ~/parsers/libtree_sitter_mylang.dylib \
+  --query ~/parsers/mylang/highlights.scm \
+  --ext mylang
+```
+
+User highlight queries are read from `~/.config/dx/queries/<lang>/highlights.scm`
+and take precedence over bundled queries.
+
 Syntax settings and caches live under the user config/cache locations for `dx`
 (for example `~/.config/dx/config.toml`).
 

@@ -1,23 +1,50 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult, SyntaxDoctorIssue,
-    SyntaxDoctorReport, SyntaxLanguageStatus, SyntaxParserArtifact, SyntaxRemoveResult,
-    SyntaxUpdateResult, core_enabled_language_set, enabled_language_set,
-    enabled_language_set_for_mode, has_highlights, install_language, installed_language_set,
-    language_pack_version, language_vec_to_set, load_config, load_language_without_download,
-    load_settings, local_parser_language_set, normalize_language_names, parser_artifact_map,
+    CUSTOM_PARSER_SOURCE, StoredSyntaxConfig, SyntaxAddOptions, SyntaxAddResult,
+    SyntaxAvailableFilter, SyntaxCleanResult, SyntaxDoctorIssue, SyntaxDoctorReport,
+    SyntaxLanguageStatus, SyntaxParserArtifact, SyntaxRemoveResult, SyntaxUpdateResult,
+    core_enabled_language_set, downloaded_language_set, enabled_language_set,
+    enabled_language_set_for_mode, has_highlights, highlights_query, install_custom_parser,
+    install_language, install_user_highlights_query, installed_language_set, language_pack_version,
+    language_vec_to_set, load_config, load_language_without_download, load_settings,
+    local_parser_language_set, normalize_language_names, parser_artifact_map,
     reject_core_language_removal, remove_cached_language, save_config, trusted_language_set,
-    update_all_language_set, upsert_parser_artifact,
+    update_all_language_set, upsert_extension_mappings, upsert_filename_mappings,
+    upsert_parser_artifact, user_highlights_query_path, validate_highlights_query,
 };
 use dx_core::{DxError, DxResult};
 
 pub fn available_languages(filter: SyntaxAvailableFilter) -> DxResult<Vec<String>> {
     match filter {
         SyntaxAvailableFilter::All => {
-            tree_sitter_language_pack::manifest_languages().map_err(|error| {
-                DxError::Usage(format!("failed to list tree-sitter languages: {error}"))
-            })
+            let mut languages =
+                tree_sitter_language_pack::manifest_languages().map_err(|error| {
+                    DxError::Usage(format!("failed to list tree-sitter languages: {error}"))
+                })?;
+            if let Ok(config) = load_config() {
+                languages.extend(
+                    config
+                        .parsers
+                        .iter()
+                        .map(|artifact| artifact.language.clone()),
+                );
+                languages.extend(
+                    config
+                        .extensions
+                        .iter()
+                        .map(|mapping| mapping.language.clone()),
+                );
+                languages.extend(
+                    config
+                        .filenames
+                        .iter()
+                        .map(|mapping| mapping.language.clone()),
+                );
+            }
+            languages.sort();
+            languages.dedup();
+            Ok(languages)
         }
         SyntaxAvailableFilter::Installed => Ok(local_parser_language_set().into_iter().collect()),
         SyntaxAvailableFilter::Enabled => enabled_languages(),
@@ -82,8 +109,25 @@ pub fn language_statuses() -> DxResult<Vec<SyntaxLanguageStatus>> {
 }
 
 pub fn add_languages(languages: &[String]) -> DxResult<SyntaxAddResult> {
+    add_languages_with_options(languages, SyntaxAddOptions::default())
+}
+
+pub fn add_languages_with_options(
+    languages: &[String],
+    options: SyntaxAddOptions,
+) -> DxResult<SyntaxAddResult> {
     if languages.is_empty() {
         return Err(DxError::Usage("provide at least one language".to_owned()));
+    }
+
+    let has_custom_options = options.parser.is_some()
+        || options.query.is_some()
+        || !options.extensions.is_empty()
+        || !options.filenames.is_empty();
+    if has_custom_options && languages.len() != 1 {
+        return Err(DxError::Usage(
+            "use --parser, --query, --ext, or --filename with exactly one language".to_owned(),
+        ));
     }
 
     let requested = normalize_language_names(languages);
@@ -92,10 +136,39 @@ pub fn add_languages(languages: &[String]) -> DxResult<SyntaxAddResult> {
     let mut added = Vec::new();
     let mut already_enabled = Vec::new();
     let mut without_highlights = Vec::new();
+    let mut custom_parsers = Vec::new();
+    let mut custom_queries = Vec::new();
+    let mut custom_mappings = Vec::new();
 
     for language in requested {
-        let artifact = install_language(&language)?;
-        upsert_parser_artifact(&mut config, &language, artifact);
+        if let Some(parser_path) = options.parser.as_deref() {
+            let artifact = install_custom_parser(&language, parser_path)?;
+            custom_parsers.push(language.clone());
+            upsert_parser_artifact(&mut config, &language, Some(artifact));
+        } else if !has_custom_parser_artifact(&config, &language) {
+            let artifact = install_language(&language)?;
+            upsert_parser_artifact(&mut config, &language, artifact);
+        }
+
+        if let Some(query_path) = options.query.as_deref() {
+            install_user_highlights_query(&language, query_path)?;
+            custom_queries.push(language.clone());
+        }
+
+        let extension_mappings =
+            upsert_extension_mappings(&mut config.extensions, &language, &options.extensions)?;
+        custom_mappings.extend(
+            extension_mappings
+                .into_iter()
+                .map(|extension| format!("*.{extension} -> {language}")),
+        );
+        let filename_mappings =
+            upsert_filename_mappings(&mut config.filenames, &language, &options.filenames)?;
+        custom_mappings.extend(
+            filename_mappings
+                .into_iter()
+                .map(|filename| format!("{filename} -> {language}")),
+        );
 
         if !has_highlights(&language) {
             without_highlights.push(language.clone());
@@ -115,7 +188,16 @@ pub fn add_languages(languages: &[String]) -> DxResult<SyntaxAddResult> {
         added,
         already_enabled,
         without_highlights,
+        custom_parsers,
+        custom_queries,
+        custom_mappings,
     })
+}
+
+pub(crate) fn has_custom_parser_artifact(config: &StoredSyntaxConfig, language: &str) -> bool {
+    parser_artifact_map(config)
+        .get(language)
+        .is_some_and(|artifact| artifact.source == CUSTOM_PARSER_SOURCE)
 }
 
 pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdateResult> {
@@ -133,6 +215,7 @@ pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdat
     let mut config = load_config()?;
     let configured = language_vec_to_set(&config.languages);
     let installed = installed_language_set();
+    let artifacts = parser_artifact_map(&config);
     let requested = if all {
         update_all_language_set(&config, &installed)
     } else {
@@ -141,6 +224,14 @@ pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdat
     let mut result = SyntaxUpdateResult::default();
 
     for language in requested {
+        if artifacts
+            .get(&language)
+            .is_some_and(|artifact| artifact.source == CUSTOM_PARSER_SOURCE)
+        {
+            result.custom.push(language);
+            continue;
+        }
+
         if !tree_sitter_language_pack::has_language(&language) {
             if all {
                 result.unavailable.push(language);
@@ -202,6 +293,12 @@ pub fn remove_languages(languages: &[String]) -> DxResult<SyntaxRemoveResult> {
     config
         .parsers
         .retain(|artifact| !requested.contains(&artifact.language));
+    config
+        .extensions
+        .retain(|mapping| !requested.contains(&mapping.language));
+    config
+        .filenames
+        .retain(|mapping| !requested.contains(&mapping.language));
 
     config.languages = enabled.into_iter().collect();
     save_config(&config)?;
@@ -223,14 +320,17 @@ pub fn remove_languages(languages: &[String]) -> DxResult<SyntaxRemoveResult> {
 }
 
 pub fn clean_cache() -> DxResult<SyntaxCleanResult> {
-    let parser_artifacts_removed = installed_language_set().len();
+    let parser_artifacts_removed = downloaded_language_set().len();
     let mut config = load_config()?;
-    let artifact_records_removed = config.parsers.len();
+    let artifact_records_before = config.parsers.len();
     let enabled_languages_kept = language_vec_to_set(&config.languages).len();
 
     tree_sitter_language_pack::clean_cache()
         .map_err(|error| DxError::Usage(format!("failed to clean tree-sitter cache: {error}")))?;
-    config.parsers.clear();
+    config
+        .parsers
+        .retain(|artifact| artifact.source == CUSTOM_PARSER_SOURCE);
+    let artifact_records_removed = artifact_records_before.saturating_sub(config.parsers.len());
     save_config(&config)?;
 
     Ok(SyntaxCleanResult {
@@ -254,7 +354,8 @@ pub(crate) fn doctor_issues(statuses: &[SyntaxLanguageStatus]) -> Vec<SyntaxDoct
         if !status.enabled {
             continue;
         }
-        if !tree_sitter_language_pack::has_language(&status.language) {
+        let custom_parser = status.source.as_deref() == Some(CUSTOM_PARSER_SOURCE);
+        if !custom_parser && !tree_sitter_language_pack::has_language(&status.language) {
             issues.push(SyntaxDoctorIssue {
                 language: status.language.clone(),
                 message: "enabled in config, but language is not known; run `dx syntax rm`"
@@ -280,18 +381,28 @@ pub(crate) fn doctor_issues(statuses: &[SyntaxLanguageStatus]) -> Vec<SyntaxDoct
             continue;
         }
         if !status.has_highlights {
+            let query_path = user_highlights_query_path(&status.language)
+                .ok()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "~/.config/dx/queries/<language>/highlights.scm".to_owned());
             issues.push(SyntaxDoctorIssue {
                 language: status.language.clone(),
-                message: "parser is available, but no bundled highlights query exists; diff will render plain text"
-                    .to_owned(),
+                message: format!(
+                    "parser is available, but no highlights query exists; add one at {query_path}"
+                ),
+            });
+        } else if let Some(query) = highlights_query(&status.language)
+            && let Err(error) = validate_highlights_query(&status.language, query.as_ref())
+        {
+            issues.push(SyntaxDoctorIssue {
+                language: status.language.clone(),
+                message: format!("highlights query failed to load: {error}"),
             });
         }
         if let Err(error) = load_language_without_download(&status.language) {
             issues.push(SyntaxDoctorIssue {
                 language: status.language.clone(),
-                message: format!(
-                    "parser cache exists, but failed to load without downloading: {error}"
-                ),
+                message: format!("parser exists, but failed to load without downloading: {error}"),
             });
         }
     }

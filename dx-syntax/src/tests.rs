@@ -131,6 +131,73 @@ fn detects_compiler_languages_by_path() {
 }
 
 #[test]
+fn detects_custom_languages_by_extension_and_filename() {
+    let extensions = vec![StoredLanguageMapping {
+        pattern: "foo.bar".to_owned(),
+        language: "customlang".to_owned(),
+    }];
+    let filenames = vec![StoredLanguageMapping {
+        pattern: "Customfile".to_owned(),
+        language: "customfilelang".to_owned(),
+    }];
+
+    assert_eq!(
+        detect_custom_language_from_path("src/example.foo.bar", &extensions, &filenames).as_deref(),
+        Some("customlang")
+    );
+    assert_eq!(
+        detect_custom_language_from_path("src/CUSTOMFILE", &extensions, &filenames).as_deref(),
+        Some("customfilelang")
+    );
+    assert_eq!(
+        detect_custom_language_from_path("src/example.rs", &extensions, &filenames),
+        None
+    );
+}
+
+#[test]
+fn validates_custom_language_inputs() {
+    assert!(ensure_safe_language_name("custom_lang1").is_ok());
+    assert!(ensure_safe_language_name("custom-lang").is_err());
+    assert_eq!(normalize_custom_extension(".foo.bar").unwrap(), "foo.bar");
+    assert!(normalize_custom_extension("../foo").is_err());
+    assert_eq!(
+        normalize_custom_filename("Makefile.custom").unwrap(),
+        "Makefile.custom"
+    );
+    assert!(normalize_custom_filename("dir/file").is_err());
+}
+
+#[test]
+fn detects_existing_custom_parser_artifacts() {
+    let config = StoredSyntaxConfig {
+        parsers: vec![
+            StoredParserArtifact {
+                language: "customlang".to_owned(),
+                version: CUSTOM_PARSER_VERSION.to_owned(),
+                path: PathBuf::from("/tmp/libtree_sitter_customlang.dylib"),
+                sha256: "custom-sha".to_owned(),
+                installed_at_unix: 1,
+                source: CUSTOM_PARSER_SOURCE.to_owned(),
+            },
+            StoredParserArtifact {
+                language: "ruby".to_owned(),
+                version: language_pack_version(),
+                path: PathBuf::from("/tmp/libtree_sitter_ruby.dylib"),
+                sha256: "packaged-sha".to_owned(),
+                installed_at_unix: 1,
+                source: ARTIFACT_SOURCE.to_owned(),
+            },
+        ],
+        ..StoredSyntaxConfig::default()
+    };
+
+    assert!(has_custom_parser_artifact(&config, "customlang"));
+    assert!(!has_custom_parser_artifact(&config, "ruby"));
+    assert!(!has_custom_parser_artifact(&config, "missing"));
+}
+
+#[test]
 fn compiler_languages_have_queries_where_expected() {
     assert!(has_highlights("llvm"));
     assert!(has_highlights("mlir"));
@@ -139,6 +206,46 @@ fn compiler_languages_have_queries_where_expected() {
     assert!(has_highlights("typescript"));
     assert!(has_highlights("tsx"));
     assert!(has_highlights("tablegen"));
+}
+
+#[test]
+fn cached_language_fallback_queries_are_available() {
+    assert!(has_highlights("commonlisp"));
+    assert!(has_highlights("ocaml"));
+}
+
+#[test]
+fn cached_language_fallback_queries_highlight_when_installed() {
+    let samples = [
+        (
+            "commonlisp",
+            "(defun hello (name) (format t \"hello ~A\" name))",
+        ),
+        (
+            "ocaml",
+            "let hello name = print_endline (\"hello \" ^ name)",
+        ),
+    ];
+    let mut highlighter = SyntaxHighlighter::new();
+
+    for (language, source) in samples {
+        if !is_language_trusted(language) {
+            continue;
+        }
+
+        let highlighted = highlighter
+            .highlight(language, source)
+            .unwrap_or_else(|error| panic!("{language} fallback query should highlight: {error}"));
+
+        assert!(
+            highlighted
+                .lines
+                .iter()
+                .flat_map(|line| line.segments.iter())
+                .any(|segment| segment.class.is_some()),
+            "{language} fallback query should produce styled segments"
+        );
+    }
 }
 
 #[test]
@@ -193,6 +300,7 @@ fn update_all_targets_configured_and_cached_languages() {
     let config = StoredSyntaxConfig {
         languages: vec!["ruby".to_owned(), "shell".to_owned()],
         parsers: Vec::new(),
+        ..StoredSyntaxConfig::default()
     };
     let installed = BTreeSet::from(["elixir".to_owned()]);
 
@@ -395,6 +503,7 @@ fn syntax_modes_choose_enabled_languages_without_downloads() {
     let config = StoredSyntaxConfig {
         languages: vec!["definitely_custom_language".to_owned()],
         parsers: Vec::new(),
+        ..StoredSyntaxConfig::default()
     };
     let trusted = BTreeSet::from(["elixir".to_owned()]);
 
@@ -424,6 +533,8 @@ fn language_set_falls_back_when_parser_is_missing() {
         enabled: BTreeSet::from([language.to_owned()]),
         installed: BTreeSet::new(),
         trusted: BTreeSet::new(),
+        extensions: Vec::new(),
+        filenames: Vec::new(),
     };
 
     assert!(!languages.is_highlight_ready(language));
@@ -436,6 +547,8 @@ fn language_set_falls_back_when_highlight_query_is_missing() {
         enabled: BTreeSet::from(["desktop".to_owned()]),
         installed: BTreeSet::from(["desktop".to_owned()]),
         trusted: BTreeSet::from(["desktop".to_owned()]),
+        extensions: Vec::new(),
+        filenames: Vec::new(),
     };
 
     assert!(tree_sitter_language_pack::has_language("desktop"));

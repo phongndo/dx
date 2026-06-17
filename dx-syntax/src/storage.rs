@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
@@ -6,16 +7,19 @@ use std::{
 };
 
 use crate::{
-    ARTIFACT_SOURCE, ASM_HIGHLIGHTS_QUERY, BASENAME_LANGUAGES, CORE_LANGUAGES,
-    DiffContextExpansion, DiffSettings, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION,
+    ARTIFACT_SOURCE, ASM_HIGHLIGHTS_QUERY, BASENAME_LANGUAGES, COMMONLISP_HIGHLIGHTS_QUERY,
+    CORE_LANGUAGES, CUSTOM_PARSER_SOURCE, CUSTOM_PARSER_VERSION, DiffContextExpansion,
+    DiffSettings, HIGHLIGHT_NAMES, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION, OCAML_HIGHLIGHTS_QUERY,
     StoredDiffContextExpansion, StoredDiffContextExpansionMode, StoredDiffSettings,
-    StoredParserArtifact, StoredSyntaxConfig, StoredSyntaxLimits, StoredSyntaxSettings,
-    StoredSyntaxThemeConfig, StoredSyntaxThemeTable, SyntaxLimits, SyntaxMode, SyntaxSettings,
-    SyntaxThemeConfig, SyntaxThemeSource, TRUSTED_PARSER_MANIFEST, TRUSTED_PARSER_MANIFEST_SHA256,
-    cache_dir, config_path, load_settings,
+    StoredLanguageMapping, StoredParserArtifact, StoredSyntaxConfig, StoredSyntaxLimits,
+    StoredSyntaxSettings, StoredSyntaxThemeConfig, StoredSyntaxThemeTable, SyntaxLimits,
+    SyntaxMode, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource, TRUSTED_PARSER_MANIFEST,
+    TRUSTED_PARSER_MANIFEST_SHA256, cache_dir, config_path, load_settings, parsers_dir,
+    queries_dir,
 };
 use dx_core::{DxError, DxResult};
 use sha2::{Digest, Sha256};
+use tree_sitter_highlight::HighlightConfiguration;
 use tree_sitter_language_pack::LanguageRegistry;
 
 pub(crate) fn config_home() -> DxResult<PathBuf> {
@@ -280,6 +284,22 @@ pub(crate) fn update_all_language_set(
 }
 
 pub(crate) fn installed_language_set() -> BTreeSet<String> {
+    let mut installed = downloaded_language_set();
+    if let Ok(config) = load_config() {
+        installed.extend(
+            config
+                .parsers
+                .iter()
+                .filter(|artifact| {
+                    artifact.source == CUSTOM_PARSER_SOURCE && artifact.path.exists()
+                })
+                .map(|artifact| normalize_language_name(artifact.language.clone())),
+        );
+    }
+    installed
+}
+
+pub(crate) fn downloaded_language_set() -> BTreeSet<String> {
     tree_sitter_language_pack::downloaded_languages()
         .into_iter()
         .map(normalize_language_name)
@@ -367,6 +387,30 @@ pub(crate) fn detect_language_from_basename(path: &str) -> Option<&'static str> 
         .find_map(|(basename, language)| name.eq_ignore_ascii_case(basename).then_some(*language))
 }
 
+pub(crate) fn detect_custom_language_from_path(
+    path: &str,
+    extensions: &[StoredLanguageMapping],
+    filenames: &[StoredLanguageMapping],
+) -> Option<String> {
+    let name = Path::new(path).file_name()?.to_str()?.to_ascii_lowercase();
+
+    filenames
+        .iter()
+        .find(|mapping| name.eq_ignore_ascii_case(&mapping.pattern))
+        .map(|mapping| mapping.language.clone())
+        .or_else(|| {
+            extensions
+                .iter()
+                .find(|mapping| extension_mapping_matches(&name, &mapping.pattern))
+                .map(|mapping| mapping.language.clone())
+        })
+}
+
+pub(crate) fn extension_mapping_matches(filename: &str, extension: &str) -> bool {
+    let extension = extension.trim_start_matches('.').to_ascii_lowercase();
+    !extension.is_empty() && (filename == extension || filename.ends_with(&format!(".{extension}")))
+}
+
 pub(crate) fn is_language_trusted(language: &str) -> bool {
     if tree_sitter_language_pack::has_parser(language) {
         return true;
@@ -382,25 +426,63 @@ pub(crate) fn is_language_trusted(language: &str) -> bool {
 
 pub(crate) fn load_language_without_download(language: &str) -> Result<(), String> {
     let registry = LanguageRegistry::new();
-    if let Ok(cache) = cache_dir() {
-        registry.add_extra_libs_dir(PathBuf::from(cache));
-    }
+    register_parser_dirs(&registry);
     registry
         .get_language(language)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
+pub(crate) fn register_parser_dirs(registry: &LanguageRegistry) {
+    if let Ok(dir) = parsers_dir() {
+        registry.add_extra_libs_dir(dir);
+    }
+    if let Ok(config) = load_config() {
+        for artifact in config
+            .parsers
+            .iter()
+            .filter(|artifact| artifact.source == CUSTOM_PARSER_SOURCE)
+        {
+            if let Some(parent) = artifact.path.parent() {
+                registry.add_extra_libs_dir(parent.to_path_buf());
+            }
+        }
+    }
+    if let Ok(cache) = cache_dir() {
+        registry.add_extra_libs_dir(PathBuf::from(cache));
+    }
+}
+
 pub(crate) fn has_highlights(language: &str) -> bool {
     highlights_query(language).is_some()
 }
 
-pub(crate) fn highlights_query(language: &str) -> Option<&'static str> {
-    match language {
-        "asm" => Some(ASM_HIGHLIGHTS_QUERY),
-        "typescript" | "tsx" => tree_sitter_language_pack::get_highlights_query("javascript"),
-        _ => tree_sitter_language_pack::get_highlights_query(language),
+pub(crate) fn highlights_query(language: &str) -> Option<Cow<'static, str>> {
+    if let Some(query) = user_highlights_query(language) {
+        return Some(Cow::Owned(query));
     }
+
+    match language {
+        "asm" => Some(Cow::Borrowed(ASM_HIGHLIGHTS_QUERY)),
+        "commonlisp" => Some(Cow::Borrowed(COMMONLISP_HIGHLIGHTS_QUERY)),
+        "ocaml" => Some(Cow::Borrowed(OCAML_HIGHLIGHTS_QUERY)),
+        "typescript" | "tsx" => {
+            tree_sitter_language_pack::get_highlights_query("javascript").map(Cow::Borrowed)
+        }
+        _ => tree_sitter_language_pack::get_highlights_query(language).map(Cow::Borrowed),
+    }
+}
+
+pub(crate) fn user_highlights_query(language: &str) -> Option<String> {
+    let path = user_highlights_query_path(language).ok()?;
+    path.exists()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+}
+
+pub(crate) fn user_highlights_query_path(language: &str) -> DxResult<PathBuf> {
+    ensure_safe_language_name(language)?;
+    Ok(queries_dir()?.join(language).join("highlights.scm"))
 }
 
 pub(crate) fn install_language(language: &str) -> DxResult<Option<StoredParserArtifact>> {
@@ -446,6 +528,198 @@ pub(crate) fn install_language(language: &str) -> DxResult<Option<StoredParserAr
     Ok(Some(artifact))
 }
 
+pub(crate) fn install_custom_parser(
+    language: &str,
+    parser_path: &Path,
+) -> DxResult<StoredParserArtifact> {
+    ensure_safe_language_name(language)?;
+    if tree_sitter_language_pack::has_parser(language) {
+        return Err(DxError::Usage(format!(
+            "tree-sitter language '{language}' is bundled; custom parser overrides are not supported"
+        )));
+    }
+
+    let source = parser_path;
+    if !source.is_file() {
+        return Err(DxError::Usage(format!(
+            "custom parser path does not exist or is not a file: {}",
+            source.display()
+        )));
+    }
+
+    let destination = custom_parser_path(language)?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let source_canonical = source.canonicalize()?;
+    let destination_canonical = destination.canonicalize().ok();
+    if Some(source_canonical.as_path()) != destination_canonical.as_deref() {
+        fs::copy(source, &destination)?;
+    }
+
+    let artifact = StoredParserArtifact {
+        language: language.to_owned(),
+        version: CUSTOM_PARSER_VERSION.to_owned(),
+        sha256: sha256_file(&destination)?,
+        installed_at_unix: unix_time_now(),
+        source: CUSTOM_PARSER_SOURCE.to_owned(),
+        path: destination,
+    };
+
+    load_language_without_download(language).map_err(|error| {
+        DxError::Usage(format!(
+            "failed to load custom tree-sitter language '{language}': {error}"
+        ))
+    })?;
+
+    Ok(artifact)
+}
+
+pub(crate) fn install_user_highlights_query(
+    language: &str,
+    query_path: &Path,
+) -> DxResult<PathBuf> {
+    ensure_safe_language_name(language)?;
+    if !query_path.is_file() {
+        return Err(DxError::Usage(format!(
+            "highlights query path does not exist or is not a file: {}",
+            query_path.display()
+        )));
+    }
+    let query = fs::read_to_string(query_path)?;
+    validate_highlights_query(language, &query)?;
+
+    let destination = user_highlights_query_path(language)?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let source_canonical = query_path.canonicalize()?;
+    let destination_canonical = destination.canonicalize().ok();
+    if Some(source_canonical.as_path()) != destination_canonical.as_deref() {
+        fs::copy(query_path, &destination)?;
+    }
+    Ok(destination)
+}
+
+pub(crate) fn validate_highlights_query(language: &str, query: &str) -> DxResult<()> {
+    let registry = LanguageRegistry::new();
+    register_parser_dirs(&registry);
+    let language_fn = registry
+        .get_language(language)
+        .map_err(|error| DxError::Usage(format!("failed to load {language}: {error}")))?;
+    let mut config =
+        HighlightConfiguration::new(language_fn, language, query, "", "").map_err(|error| {
+            DxError::Usage(format!(
+                "failed to configure {language} highlights: {error}"
+            ))
+        })?;
+    config.configure(HIGHLIGHT_NAMES);
+    Ok(())
+}
+
+pub(crate) fn custom_parser_path(language: &str) -> DxResult<PathBuf> {
+    ensure_safe_language_name(language)?;
+    let filename = expected_cached_language_path(language)?
+        .and_then(|path| path.file_name().map(PathBuf::from))
+        .ok_or_else(|| {
+            DxError::Usage(format!(
+                "failed to resolve parser library filename for tree-sitter language '{language}'"
+            ))
+        })?;
+    Ok(parsers_dir()?.join(filename))
+}
+
+pub(crate) fn ensure_safe_language_name(language: &str) -> DxResult<()> {
+    if !language.is_empty()
+        && language
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return Ok(());
+    }
+
+    Err(DxError::Usage(format!(
+        "language names must use lowercase letters, digits, or underscores: {language}"
+    )))
+}
+
+pub(crate) fn normalize_custom_extension(extension: &str) -> DxResult<String> {
+    let extension = extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    if !extension.is_empty()
+        && !extension.contains('/')
+        && !extension.contains('\\')
+        && !extension.split('.').any(str::is_empty)
+    {
+        return Ok(extension);
+    }
+
+    Err(DxError::Usage(format!(
+        "extension mappings must be extension tokens without path separators: {extension}"
+    )))
+}
+
+pub(crate) fn normalize_custom_filename(filename: &str) -> DxResult<String> {
+    let filename = filename.trim();
+    if !filename.is_empty()
+        && !filename.contains('/')
+        && !filename.contains('\\')
+        && Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(filename)
+    {
+        return Ok(filename.to_owned());
+    }
+
+    Err(DxError::Usage(format!(
+        "filename mappings must be bare filenames without path separators: {filename}"
+    )))
+}
+
+pub(crate) fn upsert_extension_mappings(
+    mappings: &mut Vec<StoredLanguageMapping>,
+    language: &str,
+    extensions: &[String],
+) -> DxResult<Vec<String>> {
+    let mut added = Vec::new();
+    for extension in extensions {
+        let pattern = normalize_custom_extension(extension)?;
+        upsert_mapping(mappings, language, &pattern);
+        added.push(pattern);
+    }
+    Ok(added)
+}
+
+pub(crate) fn upsert_filename_mappings(
+    mappings: &mut Vec<StoredLanguageMapping>,
+    language: &str,
+    filenames: &[String],
+) -> DxResult<Vec<String>> {
+    let mut added = Vec::new();
+    for filename in filenames {
+        let pattern = normalize_custom_filename(filename)?;
+        upsert_mapping(mappings, language, &pattern);
+        added.push(pattern);
+    }
+    Ok(added)
+}
+
+pub(crate) fn upsert_mapping(
+    mappings: &mut Vec<StoredLanguageMapping>,
+    language: &str,
+    pattern: &str,
+) {
+    mappings.retain(|mapping| !mapping.pattern.eq_ignore_ascii_case(pattern));
+    mappings.push(StoredLanguageMapping {
+        pattern: pattern.to_owned(),
+        language: language.to_owned(),
+    });
+}
+
 pub(crate) fn stored_parser_artifact(language: &str) -> DxResult<StoredParserArtifact> {
     let path = expected_cached_language_path(language)?.ok_or_else(|| {
         DxError::Usage(format!(
@@ -489,6 +763,12 @@ pub(crate) fn parser_artifact_is_trusted(
     let Some(artifact) = artifacts.get(language) else {
         return false;
     };
+    if artifact.source == CUSTOM_PARSER_SOURCE {
+        return artifact.version == CUSTOM_PARSER_VERSION
+            && artifact.path.exists()
+            && sha256_file(&artifact.path).is_ok_and(|sha256| sha256 == artifact.sha256);
+    }
+
     if artifact.version != language_pack_version() || artifact.source != ARTIFACT_SOURCE {
         return false;
     }
@@ -589,6 +869,9 @@ pub(crate) fn remove_cached_language(language: &str) -> DxResult<bool> {
     let cache = PathBuf::from(cache_dir()?);
     let mut candidates = BTreeSet::new();
     if let Some(path) = cached_language_path(&cache, language) {
+        candidates.insert(path);
+    }
+    if let Ok(path) = custom_parser_path(language) {
         candidates.insert(path);
     }
     candidates.extend(scan_cached_language_paths(&cache, language));

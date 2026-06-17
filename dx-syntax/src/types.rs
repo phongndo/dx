@@ -4,9 +4,10 @@ use std::{
 };
 
 use crate::{
-    cache_dir, detect_language_name, enabled_language_set_for_mode, has_highlights,
-    highlighted_text_from_events, highlights_query, installed_language_set, is_language_trusted,
-    language_vec_to_set, load_config, load_settings, normalize_language_name, trusted_language_set,
+    detect_custom_language_from_path, detect_language_name, enabled_language_set_for_mode,
+    has_highlights, highlighted_text_from_events, highlights_query, installed_language_set,
+    is_language_trusted, language_vec_to_set, load_config, load_settings, normalize_language_name,
+    register_parser_dirs, trusted_language_set,
 };
 use dx_core::{DxError, DxResult};
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,8 @@ pub(crate) const CONFIG_FILE: &str = "tree-sitter.json";
 pub(crate) const SETTINGS_FILE: &str = "config.toml";
 pub(crate) const LEGACY_SETTINGS_FILE: &str = "syntax.toml";
 pub(crate) const COLORSCHEME_DIR: &str = "colorscheme";
+pub(crate) const QUERY_DIR: &str = "queries";
+pub(crate) const PARSER_DIR: &str = "parsers";
 pub(crate) const LANGUAGE_PACK_VERSION: &str = "1.9.0-rc.18";
 // Lockfile copied from the matching tree-sitter-language-pack GitHub release.
 // Non-bundled parser installs seed this manifest before any download so the
@@ -26,6 +29,8 @@ pub(crate) const TRUSTED_PARSER_MANIFEST: &str = include_str!("tree_sitter_parse
 pub(crate) const TRUSTED_PARSER_MANIFEST_SHA256: &str =
     "be3db342638e23ceac0844de831ce86baa2d7dacf2666fd42f42619d831da115";
 pub(crate) const ARTIFACT_SOURCE: &str = "github:kreuzberg-dev/tree-sitter-language-pack@parsers.json-sha256:be3db342638e23ceac0844de831ce86baa2d7dacf2666fd42f42619d831da115";
+pub(crate) const CUSTOM_PARSER_SOURCE: &str = "custom";
+pub(crate) const CUSTOM_PARSER_VERSION: &str = "custom";
 
 pub const DEFAULT_MAX_HIGHLIGHT_SOURCE_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MAX_HIGHLIGHT_LINE_BYTES: usize = 8 * 1024;
@@ -128,6 +133,10 @@ pub(crate) const ASM_HIGHLIGHTS_QUERY: &str = r#"
 (int) @number
 "#;
 
+pub(crate) const COMMONLISP_HIGHLIGHTS_QUERY: &str =
+    include_str!("queries/commonlisp/highlights.scm");
+pub(crate) const OCAML_HIGHLIGHTS_QUERY: &str = include_str!("queries/ocaml/highlights.scm");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyntaxClass {
     Attribute,
@@ -172,6 +181,16 @@ pub(crate) struct StoredSyntaxConfig {
     pub(crate) languages: Vec<String>,
     #[serde(default)]
     pub(crate) parsers: Vec<StoredParserArtifact>,
+    #[serde(default)]
+    pub(crate) extensions: Vec<StoredLanguageMapping>,
+    #[serde(default)]
+    pub(crate) filenames: Vec<StoredLanguageMapping>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StoredLanguageMapping {
+    pub(crate) pattern: String,
+    pub(crate) language: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +537,17 @@ pub struct SyntaxAddResult {
     pub added: Vec<String>,
     pub already_enabled: Vec<String>,
     pub without_highlights: Vec<String>,
+    pub custom_parsers: Vec<String>,
+    pub custom_queries: Vec<String>,
+    pub custom_mappings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyntaxAddOptions {
+    pub parser: Option<PathBuf>,
+    pub query: Option<PathBuf>,
+    pub extensions: Vec<String>,
+    pub filenames: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -532,6 +562,7 @@ pub enum SyntaxAvailableFilter {
 pub struct SyntaxUpdateResult {
     pub updated: Vec<String>,
     pub bundled: Vec<String>,
+    pub custom: Vec<String>,
     pub not_installed: Vec<String>,
     pub unavailable: Vec<String>,
     pub without_highlights: Vec<String>,
@@ -569,6 +600,8 @@ pub struct SyntaxLanguageSet {
     pub(crate) enabled: BTreeSet<String>,
     pub(crate) installed: BTreeSet<String>,
     pub(crate) trusted: BTreeSet<String>,
+    pub(crate) extensions: Vec<StoredLanguageMapping>,
+    pub(crate) filenames: Vec<StoredLanguageMapping>,
 }
 
 impl SyntaxLanguageSet {
@@ -585,6 +618,8 @@ impl SyntaxLanguageSet {
             enabled: enabled_language_set_for_mode(mode, &config, &trusted),
             trusted,
             installed,
+            extensions: config.extensions,
+            filenames: config.filenames,
         })
     }
 
@@ -595,6 +630,8 @@ impl SyntaxLanguageSet {
             enabled: language_vec_to_set(languages),
             trusted: trusted_language_set(&installed, &config),
             installed,
+            extensions: config.extensions,
+            filenames: config.filenames,
         }
     }
 
@@ -606,7 +643,9 @@ impl SyntaxLanguageSet {
     }
 
     pub fn language_for_path(&self, path: &str) -> Option<String> {
-        let language = normalize_language_name(detect_language_name(path)?.to_owned());
+        let language = detect_custom_language_from_path(path, &self.extensions, &self.filenames)
+            .or_else(|| detect_language_name(path).map(str::to_owned))?;
+        let language = normalize_language_name(language);
         self.is_highlight_ready(&language).then_some(language)
     }
 
@@ -627,9 +666,7 @@ pub struct SyntaxHighlighter {
 impl Default for SyntaxHighlighter {
     fn default() -> Self {
         let registry = LanguageRegistry::new();
-        if let Ok(cache) = cache_dir() {
-            registry.add_extra_libs_dir(PathBuf::from(cache));
-        }
+        register_parser_dirs(&registry);
 
         Self {
             registry,
@@ -684,13 +721,18 @@ impl SyntaxHighlighter {
                 .map_err(|error| DxError::Usage(format!("failed to load {language}: {error}")))?;
             let highlights_query = highlights_query(language)
                 .ok_or_else(|| DxError::Usage(format!("{language} has no highlights query")))?;
-            let mut config =
-                HighlightConfiguration::new(language_fn, language, highlights_query, "", "")
-                    .map_err(|error| {
-                        DxError::Usage(format!(
-                            "failed to configure {language} highlights: {error}"
-                        ))
-                    })?;
+            let mut config = HighlightConfiguration::new(
+                language_fn,
+                language,
+                highlights_query.as_ref(),
+                "",
+                "",
+            )
+            .map_err(|error| {
+                DxError::Usage(format!(
+                    "failed to configure {language} highlights: {error}"
+                ))
+            })?;
             config.configure(HIGHLIGHT_NAMES);
             self.configs.insert(language.to_owned(), config);
         }
