@@ -1,17 +1,18 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    CUSTOM_PARSER_SOURCE, StoredSyntaxConfig, SyntaxAddOptions, SyntaxAddResult,
-    SyntaxAvailableFilter, SyntaxCleanResult, SyntaxDoctorIssue, SyntaxDoctorReport,
-    SyntaxLanguageStatus, SyntaxParserArtifact, SyntaxRemoveResult, SyntaxUpdateResult,
-    core_enabled_language_set, downloaded_language_set, enabled_language_set,
-    enabled_language_set_for_mode, has_highlights, highlights_query, install_custom_parser,
-    install_language, install_user_highlights_query, installed_language_set, language_pack_version,
+    CUSTOM_PARSER_SOURCE, InstalledFile, PreparedCustomParser, PreparedUserHighlightsQuery,
+    StoredSyntaxConfig, SyntaxAddOptions, SyntaxAddResult, SyntaxAvailableFilter,
+    SyntaxCleanResult, SyntaxDoctorIssue, SyntaxDoctorReport, SyntaxLanguageStatus,
+    SyntaxParserArtifact, SyntaxRemoveResult, SyntaxUpdateResult, core_enabled_language_set,
+    downloaded_language_set, enabled_language_set, enabled_language_set_for_mode, has_highlights,
+    highlights_query, install_language, installed_language_set, language_pack_version,
     language_vec_to_set, load_config, load_language_without_download, load_settings,
     local_parser_language_set, normalize_language_names, parser_artifact_map,
-    reject_core_language_removal, remove_cached_language, save_config, trusted_language_set,
-    update_all_language_set, upsert_extension_mappings, upsert_filename_mappings,
-    upsert_parser_artifact, user_highlights_query_path, validate_highlights_query,
+    prepare_custom_parser, prepare_user_highlights_query, reject_core_language_removal,
+    remove_cached_language, save_config, trusted_language_set, update_all_language_set,
+    upsert_extension_mappings, upsert_filename_mappings, upsert_parser_artifact,
+    user_highlights_query_path, validate_highlights_query,
 };
 use dx_core::{DxError, DxResult};
 
@@ -139,20 +140,33 @@ pub fn add_languages_with_options(
     let mut custom_parsers = Vec::new();
     let mut custom_queries = Vec::new();
     let mut custom_mappings = Vec::new();
+    let mut pending_custom_parser = None;
+    let mut pending_query = None;
 
     for language in requested {
         if let Some(parser_path) = options.parser.as_deref() {
-            let artifact = install_custom_parser(&language, parser_path)?;
+            let parser = prepare_custom_parser(&language, parser_path)?;
+            let artifact = parser.artifact();
             custom_parsers.push(language.clone());
             upsert_parser_artifact(&mut config, &language, Some(artifact));
+            pending_custom_parser = Some(parser);
         } else if !has_custom_parser_artifact(&config, &language) {
             let artifact = install_language(&language)?;
             upsert_parser_artifact(&mut config, &language, artifact);
         }
 
         if let Some(query_path) = options.query.as_deref() {
-            install_user_highlights_query(&language, query_path)?;
+            let staged_parser_artifact = pending_custom_parser
+                .as_ref()
+                .map(|parser| parser.staged_artifact());
+            let query = prepare_user_highlights_query(
+                &language,
+                query_path,
+                &config,
+                staged_parser_artifact.as_ref(),
+            )?;
             custom_queries.push(language.clone());
+            pending_query = Some(query);
         }
 
         let extension_mappings =
@@ -170,7 +184,7 @@ pub fn add_languages_with_options(
                 .map(|filename| format!("{filename} -> {language}")),
         );
 
-        if !has_highlights(&language) {
+        if options.query.is_none() && !has_highlights(&language) {
             without_highlights.push(language.clone());
         }
 
@@ -182,7 +196,7 @@ pub fn add_languages_with_options(
     }
 
     config.languages = enabled.into_iter().collect();
-    save_config(&config)?;
+    commit_prepared_syntax_add(&config, pending_custom_parser, pending_query, save_config)?;
 
     Ok(SyntaxAddResult {
         added,
@@ -192,6 +206,50 @@ pub fn add_languages_with_options(
         custom_queries,
         custom_mappings,
     })
+}
+
+pub(crate) fn commit_prepared_syntax_add<F>(
+    config: &StoredSyntaxConfig,
+    pending_custom_parser: Option<PreparedCustomParser>,
+    pending_query: Option<PreparedUserHighlightsQuery>,
+    save: F,
+) -> DxResult<()>
+where
+    F: FnOnce(&StoredSyntaxConfig) -> DxResult<()>,
+{
+    let installed_custom_parser = pending_custom_parser
+        .map(PreparedCustomParser::commit)
+        .transpose()?;
+
+    let installed_query = match pending_query {
+        Some(query) => match query.commit() {
+            Ok(installed) => Some(installed),
+            Err(error) => {
+                rollback_installed_files(None, installed_custom_parser);
+                return Err(error);
+            }
+        },
+        None => None,
+    };
+
+    if let Err(error) = save(config) {
+        rollback_installed_files(installed_query, installed_custom_parser);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+fn rollback_installed_files(
+    installed_query: Option<InstalledFile>,
+    installed_custom_parser: Option<InstalledFile>,
+) {
+    if let Some(installed_query) = installed_query {
+        let _ = installed_query.rollback();
+    }
+    if let Some(installed_custom_parser) = installed_custom_parser {
+        let _ = installed_custom_parser.rollback();
+    }
 }
 
 pub(crate) fn has_custom_parser_artifact(config: &StoredSyntaxConfig, language: &str) -> bool {
@@ -224,15 +282,11 @@ pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdat
     let mut result = SyntaxUpdateResult::default();
 
     for language in requested {
-        if artifacts
+        let custom_parser = artifacts
             .get(&language)
-            .is_some_and(|artifact| artifact.source == CUSTOM_PARSER_SOURCE)
-        {
-            result.custom.push(language);
-            continue;
-        }
+            .is_some_and(|artifact| artifact.source == CUSTOM_PARSER_SOURCE);
 
-        if !tree_sitter_language_pack::has_language(&language) {
+        if !custom_parser && !tree_sitter_language_pack::has_language(&language) {
             if all {
                 result.unavailable.push(language);
                 continue;
@@ -242,8 +296,8 @@ pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdat
             )));
         }
 
-        if !has_highlights(&language) {
-            result.without_highlights.push(language.clone());
+        if record_update_parser_result(&mut result, &language, custom_parser) {
+            continue;
         }
 
         if tree_sitter_language_pack::has_parser(&language) {
@@ -267,6 +321,23 @@ pub fn update_languages(languages: &[String], all: bool) -> DxResult<SyntaxUpdat
     }
 
     Ok(result)
+}
+
+pub(crate) fn record_update_parser_result(
+    result: &mut SyntaxUpdateResult,
+    language: &str,
+    custom_parser: bool,
+) -> bool {
+    if !has_highlights(language) {
+        result.without_highlights.push(language.to_owned());
+    }
+
+    if custom_parser {
+        result.custom.push(language.to_owned());
+        return true;
+    }
+
+    false
 }
 
 pub fn remove_languages(languages: &[String]) -> DxResult<SyntaxRemoveResult> {

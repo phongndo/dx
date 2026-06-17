@@ -6,13 +6,12 @@ use std::{
 use crate::{
     detect_custom_language_from_path, detect_language_name, enabled_language_set_for_mode,
     has_highlights, highlighted_text_from_events, highlights_query, installed_language_set,
-    is_language_trusted, language_vec_to_set, load_config, load_settings, normalize_language_name,
-    register_parser_dirs, trusted_language_set,
+    is_language_trusted, language_vec_to_set, load_config, load_language_with_config,
+    load_settings, normalize_language_name, trusted_language_set,
 };
 use dx_core::{DxError, DxResult};
 use serde::{Deserialize, Serialize};
 use tree_sitter_highlight::{HighlightConfiguration, Highlighter};
-use tree_sitter_language_pack::LanguageRegistry;
 
 pub(crate) const CONFIG_DIR: &str = "dx";
 pub(crate) const CONFIG_FILE: &str = "tree-sitter.json";
@@ -657,7 +656,6 @@ impl SyntaxLanguageSet {
 }
 
 pub struct SyntaxHighlighter {
-    pub(crate) registry: LanguageRegistry,
     pub(crate) highlighter: Highlighter,
     pub(crate) configs: HashMap<String, HighlightConfiguration>,
     pub(crate) trusted_languages: BTreeSet<String>,
@@ -665,11 +663,7 @@ pub struct SyntaxHighlighter {
 
 impl Default for SyntaxHighlighter {
     fn default() -> Self {
-        let registry = LanguageRegistry::new();
-        register_parser_dirs(&registry);
-
         Self {
-            registry,
             highlighter: Highlighter::new(),
             configs: HashMap::new(),
             trusted_languages: BTreeSet::new(),
@@ -715,9 +709,8 @@ impl SyntaxHighlighter {
 
     pub(crate) fn ensure_config(&mut self, language: &str) -> DxResult<()> {
         if !self.configs.contains_key(language) {
-            let language_fn = self
-                .registry
-                .get_language(language)
+            let config = load_config()?;
+            let language_fn = load_language_with_config(language, &config)
                 .map_err(|error| DxError::Usage(format!("failed to load {language}: {error}")))?;
             let highlights_query = highlights_query(language)
                 .ok_or_else(|| DxError::Usage(format!("{language} has no highlights query")))?;

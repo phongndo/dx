@@ -14,6 +14,7 @@ pub use language::{
 pub use paths::{
     cache_dir, colorscheme_dir, config_path, load_settings, parsers_dir, queries_dir, settings_path,
 };
+pub use storage::run_validation_child_from_env;
 pub use types::*;
 
 pub(crate) use highlight::*;

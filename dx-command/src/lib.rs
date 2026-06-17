@@ -7,6 +7,7 @@ pub use dx_syntax::{
     SyntaxAddOptions, SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult,
     SyntaxDoctorReport, SyntaxLanguageStatus, SyntaxLimits, SyntaxMode, SyntaxRemoveResult,
     SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource, SyntaxUpdateResult,
+    run_validation_child_from_env,
 };
 
 pub use config::config_path;

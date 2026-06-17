@@ -1,7 +1,10 @@
+#[cfg(not(test))]
+use std::process::{Command, Stdio};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     env, fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +24,12 @@ use dx_core::{DxError, DxResult};
 use sha2::{Digest, Sha256};
 use tree_sitter_highlight::HighlightConfiguration;
 use tree_sitter_language_pack::LanguageRegistry;
+
+const VALIDATION_CHILD_ENV: &str = "DX_SYNTAX_VALIDATION_CHILD";
+const VALIDATION_LANGUAGE_ENV: &str = "DX_SYNTAX_VALIDATION_LANGUAGE";
+const VALIDATION_PARSER_ENV: &str = "DX_SYNTAX_VALIDATION_PARSER";
+const VALIDATION_QUERY_ENV: &str = "DX_SYNTAX_VALIDATION_QUERY";
+const VALIDATION_CHILD_SUCCESS: &[u8] = b"dx-syntax-validation-ok\n";
 
 pub(crate) fn config_home() -> DxResult<PathBuf> {
     if let Some(path) = env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
@@ -401,14 +410,24 @@ pub(crate) fn detect_custom_language_from_path(
         .or_else(|| {
             extensions
                 .iter()
-                .find(|mapping| extension_mapping_matches(&name, &mapping.pattern))
-                .map(|mapping| mapping.language.clone())
+                .enumerate()
+                .filter_map(|(index, mapping)| {
+                    extension_mapping_match_len(&name, &mapping.pattern)
+                        .map(|length| (length, index, mapping))
+                })
+                .max_by_key(|candidate| (candidate.0, candidate.1))
+                .map(|(_, _, mapping)| mapping.language.clone())
         })
 }
 
-pub(crate) fn extension_mapping_matches(filename: &str, extension: &str) -> bool {
+fn extension_mapping_match_len(filename: &str, extension: &str) -> Option<usize> {
     let extension = extension.trim_start_matches('.').to_ascii_lowercase();
-    !extension.is_empty() && (filename == extension || filename.ends_with(&format!(".{extension}")))
+    if extension.is_empty() {
+        return None;
+    }
+    filename
+        .ends_with(&format!(".{extension}"))
+        .then_some(extension.len())
 }
 
 pub(crate) fn is_language_trusted(language: &str) -> bool {
@@ -425,32 +444,33 @@ pub(crate) fn is_language_trusted(language: &str) -> bool {
 }
 
 pub(crate) fn load_language_without_download(language: &str) -> Result<(), String> {
-    let registry = LanguageRegistry::new();
-    register_parser_dirs(&registry);
-    registry
-        .get_language(language)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let config = load_config().map_err(|error| error.to_string())?;
+    load_language_with_config(language, &config).map(|_| ())
 }
 
-pub(crate) fn register_parser_dirs(registry: &LanguageRegistry) {
-    if let Ok(dir) = parsers_dir() {
-        registry.add_extra_libs_dir(dir);
-    }
-    if let Ok(config) = load_config() {
-        for artifact in config
-            .parsers
-            .iter()
-            .filter(|artifact| artifact.source == CUSTOM_PARSER_SOURCE)
-        {
-            if let Some(parent) = artifact.path.parent() {
-                registry.add_extra_libs_dir(parent.to_path_buf());
-            }
-        }
-    }
-    if let Ok(cache) = cache_dir() {
-        registry.add_extra_libs_dir(PathBuf::from(cache));
-    }
+pub(crate) fn load_language_with_config(
+    language: &str,
+    config: &StoredSyntaxConfig,
+) -> Result<tree_sitter_language_pack::Language, String> {
+    let artifacts = parser_artifact_map(config);
+    let artifact = (!tree_sitter_language_pack::has_parser(language)
+        && parser_artifact_is_trusted(language, &artifacts))
+    .then(|| artifacts.get(language))
+    .flatten();
+    load_language_with_artifact(language, artifact)
+}
+
+pub(crate) fn load_language_with_artifact(
+    language: &str,
+    artifact: Option<&StoredParserArtifact>,
+) -> Result<tree_sitter_language_pack::Language, String> {
+    let registry = artifact
+        .and_then(|artifact| artifact.path.parent())
+        .map(|parent| LanguageRegistry::with_libs_dir(parent.to_path_buf()))
+        .unwrap_or_default();
+    registry
+        .get_language(language)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn has_highlights(language: &str) -> bool {
@@ -519,7 +539,7 @@ pub(crate) fn install_language(language: &str) -> DxResult<Option<StoredParserAr
     verify_trusted_parser_manifest()?;
 
     let artifact = stored_parser_artifact(language)?;
-    load_language_without_download(language).map_err(|error| {
+    load_language_with_artifact(language, Some(&artifact)).map_err(|error| {
         DxError::Usage(format!(
             "failed to load tree-sitter language '{language}' from verified parser cache: {error}"
         ))
@@ -528,10 +548,121 @@ pub(crate) fn install_language(language: &str) -> DxResult<Option<StoredParserAr
     Ok(Some(artifact))
 }
 
-pub(crate) fn install_custom_parser(
+#[derive(Debug)]
+pub(crate) struct PreparedCustomParser {
+    artifact: StoredParserArtifact,
+    staged_path: PathBuf,
+    staging_dir: Option<PathBuf>,
+    destination: PathBuf,
+}
+
+impl PreparedCustomParser {
+    pub(crate) fn artifact(&self) -> StoredParserArtifact {
+        self.artifact.clone()
+    }
+
+    pub(crate) fn staged_artifact(&self) -> StoredParserArtifact {
+        let mut artifact = self.artifact.clone();
+        artifact.path = self.staged_path.clone();
+        artifact
+    }
+
+    pub(crate) fn commit(mut self) -> DxResult<InstalledFile> {
+        let Some(_staging_dir) = self.staging_dir.as_ref() else {
+            return Ok(InstalledFile::noop(self.destination.clone()));
+        };
+        let installed = replace_file_with_staged_path(&self.destination, &self.staged_path)?;
+        self.staged_path = self.destination.clone();
+        Ok(installed)
+    }
+}
+
+impl Drop for PreparedCustomParser {
+    fn drop(&mut self) {
+        if let Some(staging_dir) = self.staging_dir.take() {
+            let _ = fs::remove_dir_all(staging_dir);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedUserHighlightsQuery {
+    pub(crate) contents: String,
+    pub(crate) destination: PathBuf,
+}
+
+impl PreparedUserHighlightsQuery {
+    pub(crate) fn commit(self) -> DxResult<InstalledFile> {
+        if let Some(parent) = self.destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let staged_path = write_staged_file(&self.destination, self.contents.as_bytes())?;
+        let staging_dir = staged_path.parent().map(Path::to_path_buf);
+        let install_result = replace_file_with_staged_path(&self.destination, &staged_path);
+        if let Some(staging_dir) = staging_dir {
+            let _ = fs::remove_dir_all(staging_dir);
+        }
+        install_result
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct InstalledFile {
+    destination: PathBuf,
+    backup_dir: Option<PathBuf>,
+    backup_path: Option<PathBuf>,
+    created: bool,
+}
+
+impl InstalledFile {
+    fn noop(destination: PathBuf) -> Self {
+        Self {
+            destination,
+            backup_dir: None,
+            backup_path: None,
+            created: false,
+        }
+    }
+
+    pub(crate) fn rollback(mut self) -> DxResult<()> {
+        if let Some(backup_path) = self.backup_path.take() {
+            match fs::remove_file(&self.destination) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            if let Err(error) = fs::rename(&backup_path, &self.destination) {
+                self.backup_path = Some(backup_path);
+                self.backup_dir = None;
+                return Err(error.into());
+            }
+        } else if self.created {
+            match fs::remove_file(&self.destination) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.created = false;
+        if let Some(backup_dir) = self.backup_dir.take() {
+            let _ = fs::remove_dir_all(backup_dir);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for InstalledFile {
+    fn drop(&mut self) {
+        if let Some(backup_dir) = self.backup_dir.take() {
+            let _ = fs::remove_dir_all(backup_dir);
+        }
+    }
+}
+
+pub(crate) fn prepare_custom_parser(
     language: &str,
     parser_path: &Path,
-) -> DxResult<StoredParserArtifact> {
+) -> DxResult<PreparedCustomParser> {
     ensure_safe_language_name(language)?;
     if tree_sitter_language_pack::has_parser(language) {
         return Err(DxError::Usage(format!(
@@ -554,32 +685,60 @@ pub(crate) fn install_custom_parser(
 
     let source_canonical = source.canonicalize()?;
     let destination_canonical = destination.canonicalize().ok();
-    if Some(source_canonical.as_path()) != destination_canonical.as_deref() {
-        fs::copy(source, &destination)?;
-    }
+    let staged_path = if Some(source_canonical.as_path()) == destination_canonical.as_deref() {
+        destination.clone()
+    } else {
+        staged_parser_path(source, &destination)?
+    };
+    let staging_dir = (staged_path != destination)
+        .then(|| staged_path.parent().map(Path::to_path_buf))
+        .flatten();
+    let sha256 = match sha256_file(&staged_path) {
+        Ok(sha256) => sha256,
+        Err(error) => {
+            if let Some(staging_dir) = staging_dir.as_ref() {
+                let _ = fs::remove_dir_all(staging_dir);
+            }
+            return Err(error);
+        }
+    };
 
     let artifact = StoredParserArtifact {
         language: language.to_owned(),
         version: CUSTOM_PARSER_VERSION.to_owned(),
-        sha256: sha256_file(&destination)?,
+        sha256,
         installed_at_unix: unix_time_now(),
         source: CUSTOM_PARSER_SOURCE.to_owned(),
-        path: destination,
+        path: destination.clone(),
+    };
+    let staged_artifact = StoredParserArtifact {
+        path: staged_path.clone(),
+        ..artifact.clone()
     };
 
-    load_language_without_download(language).map_err(|error| {
-        DxError::Usage(format!(
+    if let Err(error) = validate_custom_parser_candidate(language, &staged_artifact) {
+        if let Some(staging_dir) = staging_dir.as_ref() {
+            let _ = fs::remove_dir_all(staging_dir);
+        }
+        return Err(DxError::Usage(format!(
             "failed to load custom tree-sitter language '{language}': {error}"
-        ))
-    })?;
+        )));
+    }
 
-    Ok(artifact)
+    Ok(PreparedCustomParser {
+        artifact,
+        staged_path,
+        staging_dir,
+        destination,
+    })
 }
 
-pub(crate) fn install_user_highlights_query(
+pub(crate) fn prepare_user_highlights_query(
     language: &str,
     query_path: &Path,
-) -> DxResult<PathBuf> {
+    config: &StoredSyntaxConfig,
+    parser_artifact: Option<&StoredParserArtifact>,
+) -> DxResult<PreparedUserHighlightsQuery> {
     ensure_safe_language_name(language)?;
     if !query_path.is_file() {
         return Err(DxError::Usage(format!(
@@ -588,26 +747,49 @@ pub(crate) fn install_user_highlights_query(
         )));
     }
     let query = fs::read_to_string(query_path)?;
-    validate_highlights_query(language, &query)?;
+    if let Some(parser_artifact) = parser_artifact {
+        validate_custom_highlights_query_candidate(language, &query, parser_artifact)?;
+    } else {
+        validate_highlights_query_with_config(language, &query, config)?;
+    }
 
     let destination = user_highlights_query_path(language)?;
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let source_canonical = query_path.canonicalize()?;
-    let destination_canonical = destination.canonicalize().ok();
-    if Some(source_canonical.as_path()) != destination_canonical.as_deref() {
-        fs::copy(query_path, &destination)?;
-    }
-    Ok(destination)
+    Ok(PreparedUserHighlightsQuery {
+        contents: query,
+        destination,
+    })
 }
 
 pub(crate) fn validate_highlights_query(language: &str, query: &str) -> DxResult<()> {
-    let registry = LanguageRegistry::new();
-    register_parser_dirs(&registry);
-    let language_fn = registry
-        .get_language(language)
+    let config = load_config()?;
+    validate_highlights_query_with_config(language, query, &config)
+}
+
+pub(crate) fn validate_highlights_query_with_config(
+    language: &str,
+    query: &str,
+    config: &StoredSyntaxConfig,
+) -> DxResult<()> {
+    let language_fn = load_language_with_config(language, config)
         .map_err(|error| DxError::Usage(format!("failed to load {language}: {error}")))?;
+    validate_highlights_query_with_language(language, query, language_fn)
+}
+
+pub(crate) fn validate_highlights_query_with_artifact(
+    language: &str,
+    query: &str,
+    artifact: Option<&StoredParserArtifact>,
+) -> DxResult<()> {
+    let language_fn = load_language_with_artifact(language, artifact)
+        .map_err(|error| DxError::Usage(format!("failed to load {language}: {error}")))?;
+    validate_highlights_query_with_language(language, query, language_fn)
+}
+
+fn validate_highlights_query_with_language(
+    language: &str,
+    query: &str,
+    language_fn: tree_sitter_language_pack::Language,
+) -> DxResult<()> {
     let mut config =
         HighlightConfiguration::new(language_fn, language, query, "", "").map_err(|error| {
             DxError::Usage(format!(
@@ -616,6 +798,241 @@ pub(crate) fn validate_highlights_query(language: &str, query: &str) -> DxResult
         })?;
     config.configure(HIGHLIGHT_NAMES);
     Ok(())
+}
+
+fn validate_custom_parser_candidate(
+    language: &str,
+    artifact: &StoredParserArtifact,
+) -> DxResult<()> {
+    validate_custom_parser_candidate_with_query(language, artifact, None)
+}
+
+fn validate_custom_highlights_query_candidate(
+    language: &str,
+    query: &str,
+    artifact: &StoredParserArtifact,
+) -> DxResult<()> {
+    validate_custom_parser_candidate_with_query(language, artifact, Some(query))
+}
+
+#[cfg(test)]
+fn validate_custom_parser_candidate_with_query(
+    language: &str,
+    artifact: &StoredParserArtifact,
+    query: Option<&str>,
+) -> DxResult<()> {
+    if let Some(query) = query {
+        validate_highlights_query_with_artifact(language, query, Some(artifact))
+    } else {
+        load_language_with_artifact(language, Some(artifact))
+            .map(|_| ())
+            .map_err(|error| DxError::Usage(error.to_string()))
+    }
+}
+
+#[cfg(not(test))]
+fn validate_custom_parser_candidate_with_query(
+    language: &str,
+    artifact: &StoredParserArtifact,
+    query: Option<&str>,
+) -> DxResult<()> {
+    let mut command = Command::new(env::current_exe()?);
+    command
+        .env(VALIDATION_CHILD_ENV, "1")
+        .env(VALIDATION_LANGUAGE_ENV, language)
+        .env(VALIDATION_PARSER_ENV, &artifact.path)
+        .stdin(if query.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if query.is_some() {
+        command.env(VALIDATION_QUERY_ENV, "1");
+    }
+
+    let mut child = command.spawn()?;
+    let write_result = if let Some(query) = query {
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| {
+                DxError::Usage("failed to open syntax validation child stdin".to_owned())
+            })
+            .and_then(|mut stdin| stdin.write_all(query.as_bytes()).map_err(Into::into))
+    } else {
+        Ok(())
+    };
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+        write_result?;
+        if output.stdout.as_slice() == VALIDATION_CHILD_SUCCESS {
+            return Ok(());
+        }
+        return Err(DxError::Usage(
+            "syntax validation child did not acknowledge validation request".to_owned(),
+        ));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let message = stderr.trim();
+    if message.is_empty() {
+        Err(DxError::Usage(format!(
+            "syntax validation child exited with {}",
+            output.status
+        )))
+    } else {
+        Err(DxError::Usage(message.to_owned()))
+    }
+}
+
+#[doc(hidden)]
+pub fn run_validation_child_from_env() -> Option<DxResult<()>> {
+    env::var_os(VALIDATION_CHILD_ENV).map(|_| {
+        run_validation_child()?;
+        std::io::stdout()
+            .lock()
+            .write_all(VALIDATION_CHILD_SUCCESS)?;
+        Ok(())
+    })
+}
+
+fn run_validation_child() -> DxResult<()> {
+    let language = env::var(VALIDATION_LANGUAGE_ENV)
+        .map_err(|_| DxError::Usage("syntax validation child missing language".to_owned()))?;
+    let parser_path = env::var_os(VALIDATION_PARSER_ENV)
+        .map(PathBuf::from)
+        .ok_or_else(|| DxError::Usage("syntax validation child missing parser path".to_owned()))?;
+    let artifact = StoredParserArtifact {
+        language: language.clone(),
+        version: CUSTOM_PARSER_VERSION.to_owned(),
+        sha256: String::new(),
+        installed_at_unix: 0,
+        source: CUSTOM_PARSER_SOURCE.to_owned(),
+        path: parser_path,
+    };
+
+    if env::var_os(VALIDATION_QUERY_ENV).is_some() {
+        let mut query = String::new();
+        std::io::stdin().read_to_string(&mut query)?;
+        validate_highlights_query_with_artifact(&language, &query, Some(&artifact))
+    } else {
+        load_language_with_artifact(&language, Some(&artifact))
+            .map(|_| ())
+            .map_err(|error| DxError::Usage(error.to_string()))
+    }
+}
+
+fn staged_parser_path(source: &Path, destination: &Path) -> DxResult<PathBuf> {
+    let staging_dir = create_sibling_temp_dir(destination, "stage")?;
+    let filename = destination.file_name().ok_or_else(|| {
+        DxError::Usage(format!(
+            "failed to resolve parser library filename for {}",
+            destination.display()
+        ))
+    })?;
+    let staged_path = staging_dir.join(filename);
+    if let Err(error) = fs::copy(source, &staged_path) {
+        let _ = fs::remove_dir_all(staging_dir);
+        return Err(error.into());
+    }
+    Ok(staged_path)
+}
+
+fn write_staged_file(destination: &Path, contents: &[u8]) -> DxResult<PathBuf> {
+    let staging_dir = create_sibling_temp_dir(destination, "stage")?;
+    let filename = destination.file_name().ok_or_else(|| {
+        DxError::Usage(format!(
+            "failed to resolve filename for {}",
+            destination.display()
+        ))
+    })?;
+    let staged_path = staging_dir.join(filename);
+    if let Err(error) = fs::write(&staged_path, contents) {
+        let _ = fs::remove_dir_all(staging_dir);
+        return Err(error.into());
+    }
+    Ok(staged_path)
+}
+
+fn replace_file_with_staged_path(
+    destination: &Path,
+    staged_path: &Path,
+) -> DxResult<InstalledFile> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut backup_dir = None;
+    let mut backup_path = None;
+    if destination.exists() {
+        let dir = create_sibling_temp_dir(destination, "backup")?;
+        let filename = destination.file_name().ok_or_else(|| {
+            DxError::Usage(format!(
+                "failed to resolve filename for {}",
+                destination.display()
+            ))
+        })?;
+        let path = dir.join(filename);
+        if let Err(error) = fs::rename(destination, &path) {
+            let _ = fs::remove_dir_all(dir);
+            return Err(error.into());
+        }
+        backup_dir = Some(dir);
+        backup_path = Some(path);
+    }
+
+    if let Err(error) = fs::rename(staged_path, destination) {
+        let restored_backup = backup_path
+            .as_ref()
+            .map(|path| fs::rename(path, destination).is_ok())
+            .unwrap_or(true);
+        if restored_backup && let Some(dir) = backup_dir.as_ref() {
+            let _ = fs::remove_dir_all(dir);
+        }
+        return Err(error.into());
+    }
+
+    Ok(InstalledFile {
+        destination: destination.to_path_buf(),
+        backup_dir,
+        created: backup_path.is_none(),
+        backup_path,
+    })
+}
+
+fn create_sibling_temp_dir(destination: &Path, label: &str) -> DxResult<PathBuf> {
+    let parent = destination.parent().ok_or_else(|| {
+        DxError::Usage(format!(
+            "failed to resolve parent directory for {}",
+            destination.display()
+        ))
+    })?;
+    let filename = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            DxError::Usage(format!(
+                "failed to resolve filename for {}",
+                destination.display()
+            ))
+        })?;
+    for attempt in 0..16 {
+        let path = parent.join(format!(
+            ".{filename}.{label}.{}.{}.{attempt}",
+            std::process::id(),
+            unix_time_now()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(DxError::Usage(format!(
+        "failed to create temporary directory next to {}",
+        destination.display()
+    )))
 }
 
 pub(crate) fn custom_parser_path(language: &str) -> DxResult<PathBuf> {
@@ -764,7 +1181,11 @@ pub(crate) fn parser_artifact_is_trusted(
         return false;
     };
     if artifact.source == CUSTOM_PARSER_SOURCE {
+        let Ok(expected_path) = custom_parser_path(language) else {
+            return false;
+        };
         return artifact.version == CUSTOM_PARSER_VERSION
+            && artifact.path == expected_path
             && artifact.path.exists()
             && sha256_file(&artifact.path).is_ok_and(|sha256| sha256 == artifact.sha256);
     }
@@ -931,4 +1352,100 @@ pub(crate) fn cached_filename_matches_language(name: &str, language: &str) -> bo
     };
 
     name == language || name.replace('_', "") == language.replace('_', "")
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "dx-syntax-{name}-{}-{}",
+            std::process::id(),
+            NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("test dir should be created");
+        path
+    }
+
+    #[test]
+    fn staged_parser_copy_uses_destination_filename_without_replacing_destination() {
+        let dir = temp_test_dir("parser-stage");
+        let source = dir.join("candidate-parser");
+        let destination = dir.join("libtree_sitter_customlang.dylib");
+        fs::write(&source, b"candidate").expect("source parser should be written");
+        fs::write(&destination, b"trusted").expect("destination parser should be written");
+
+        let staged_path =
+            staged_parser_path(&source, &destination).expect("parser should be staged");
+
+        assert_eq!(staged_path.file_name(), destination.file_name());
+        assert_eq!(fs::read(&destination).unwrap(), b"trusted");
+        assert_eq!(fs::read(&staged_path).unwrap(), b"candidate");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn staged_file_replacement_rolls_back_existing_destination() {
+        let dir = temp_test_dir("rollback-existing");
+        let destination = dir.join("highlights.scm");
+        fs::write(&destination, b"trusted").expect("destination should be written");
+
+        let staged_path =
+            write_staged_file(&destination, b"candidate").expect("file should be staged");
+        assert_eq!(fs::read(&destination).unwrap(), b"trusted");
+
+        let installed = replace_file_with_staged_path(&destination, &staged_path)
+            .expect("staged file should be promoted");
+        assert_eq!(fs::read(&destination).unwrap(), b"candidate");
+
+        installed
+            .rollback()
+            .expect("rollback should restore backup");
+        assert_eq!(fs::read(&destination).unwrap(), b"trusted");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn staged_file_replacement_rolls_back_created_destination() {
+        let dir = temp_test_dir("rollback-created");
+        let destination = dir.join("highlights.scm");
+
+        let staged_path =
+            write_staged_file(&destination, b"candidate").expect("file should be staged");
+        let installed = replace_file_with_staged_path(&destination, &staged_path)
+            .expect("staged file should be promoted");
+        assert_eq!(fs::read(&destination).unwrap(), b"candidate");
+
+        installed
+            .rollback()
+            .expect("rollback should remove created destination");
+        assert!(!destination.exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn prepared_highlights_query_does_not_replace_until_commit() {
+        let dir = temp_test_dir("query-commit");
+        let destination = dir.join("highlights.scm");
+        fs::write(&destination, b"trusted").expect("destination should be written");
+        let query = PreparedUserHighlightsQuery {
+            contents: "candidate".to_owned(),
+            destination: destination.clone(),
+        };
+
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "trusted");
+
+        query.commit().expect("query should be installed");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), "candidate");
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }

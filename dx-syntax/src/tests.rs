@@ -1,11 +1,26 @@
 use super::*;
+use dx_core::DxError;
 use std::{
     collections::BTreeSet,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use sha2::{Digest, Sha256};
+
+static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+
+fn temp_syntax_test_dir(name: &str) -> PathBuf {
+    let path = env::temp_dir().join(format!(
+        "dx-syntax-{name}-{}-{}",
+        std::process::id(),
+        NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("test dir should be created");
+    path
+}
 
 #[test]
 fn language_pack_version_matches_workspace_dependency() {
@@ -152,6 +167,31 @@ fn detects_custom_languages_by_extension_and_filename() {
     assert_eq!(
         detect_custom_language_from_path("src/example.rs", &extensions, &filenames),
         None
+    );
+    assert_eq!(
+        detect_custom_language_from_path("src/foo.bar", &extensions, &filenames),
+        None
+    );
+
+    let overlapping_extensions = vec![
+        StoredLanguageMapping {
+            pattern: "bar".to_owned(),
+            language: "barlang".to_owned(),
+        },
+        StoredLanguageMapping {
+            pattern: "foo.bar".to_owned(),
+            language: "customlang".to_owned(),
+        },
+    ];
+    assert_eq!(
+        detect_custom_language_from_path("src/example.foo.bar", &overlapping_extensions, &[])
+            .as_deref(),
+        Some("customlang")
+    );
+    assert_eq!(
+        detect_custom_language_from_path("src/example.bar", &overlapping_extensions, &[])
+            .as_deref(),
+        Some("barlang")
     );
 }
 
@@ -310,6 +350,75 @@ fn update_all_targets_configured_and_cached_languages() {
         languages,
         BTreeSet::from(["bash".to_owned(), "elixir".to_owned(), "ruby".to_owned()])
     );
+}
+
+#[test]
+fn update_custom_parser_result_preserves_missing_highlights_warning() {
+    let mut result = SyntaxUpdateResult::default();
+
+    assert!(record_update_parser_result(&mut result, "desktop", true));
+
+    assert_eq!(result.custom, vec!["desktop"]);
+    assert_eq!(result.without_highlights, vec!["desktop"]);
+}
+
+#[test]
+fn syntax_add_query_commit_failure_does_not_save_config() {
+    let dir = temp_syntax_test_dir("query-commit-failure");
+    let query_parent = dir.join("queries").join("customlang");
+    fs::create_dir_all(query_parent.parent().unwrap()).expect("query root should be created");
+    fs::write(&query_parent, b"not a directory").expect("blocking file should be written");
+    let query = PreparedUserHighlightsQuery {
+        contents: "(identifier) @variable".to_owned(),
+        destination: query_parent.join("highlights.scm"),
+    };
+    let config = StoredSyntaxConfig {
+        languages: vec!["customlang".to_owned()],
+        ..StoredSyntaxConfig::default()
+    };
+    let mut save_called = false;
+
+    let error = commit_prepared_syntax_add(&config, None, Some(query), |_| {
+        save_called = true;
+        Ok(())
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(!save_called);
+    assert!(!error.is_empty());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn syntax_add_rolls_back_query_when_config_save_fails() {
+    let dir = temp_syntax_test_dir("query-save-rollback");
+    let destination = dir
+        .join("queries")
+        .join("customlang")
+        .join("highlights.scm");
+    fs::create_dir_all(destination.parent().unwrap()).expect("query dir should be created");
+    fs::write(&destination, "trusted").expect("existing query should be written");
+    let query = PreparedUserHighlightsQuery {
+        contents: "(identifier) @variable".to_owned(),
+        destination: destination.clone(),
+    };
+    let config = StoredSyntaxConfig {
+        languages: vec!["customlang".to_owned()],
+        ..StoredSyntaxConfig::default()
+    };
+
+    let error = commit_prepared_syntax_add(&config, None, Some(query), |_| {
+        Err(DxError::Usage("save failed".to_owned()))
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert_eq!(error, "save failed");
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "trusted");
+
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
