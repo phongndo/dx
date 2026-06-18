@@ -60,6 +60,15 @@ test("dxInvocationNeedsGit allows patch files", () => {
 test("dxInvocationNeedsGit allows full GitHub pull request URLs", () => {
   assert.equal(dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123"]), false);
   assert.equal(dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/"]), false);
+  assert.equal(
+    dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/files"]),
+    false,
+  );
+  assert.equal(dxInvocationNeedsGit(["--pr=github.com/owner/repo/pull/123/files"]), false);
+  assert.equal(
+    dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/files?diff=split"]),
+    false,
+  );
 });
 
 test("dxInvocationNeedsGit requires git for regular diffs and pull request numbers", () => {

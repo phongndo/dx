@@ -320,7 +320,33 @@ function stdinPatchRequested(argv: string[]): boolean {
 }
 
 function isGitHubPullRequestUrl(target: string): boolean {
-  return /^https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+\/?(?:[?#].*)?$/i.test(target.trim());
+  const value = target.trim();
+  const withoutScheme = value.startsWith("https://")
+    ? value.slice("https://".length)
+    : value.startsWith("http://")
+      ? value.slice("http://".length)
+      : value;
+
+  const path = withoutScheme.startsWith("github.com/")
+    ? withoutScheme.slice("github.com/".length).split(/[?#]/, 1)[0]
+    : undefined;
+  if (!path) {
+    return false;
+  }
+
+  const [owner, repo, marker, number] = path.split("/");
+  return (
+    validGitHubPathSegment(owner) &&
+    validGitHubPathSegment(repo) &&
+    marker === "pull" &&
+    typeof number === "string" &&
+    /^[0-9]+$/.test(number) &&
+    !/^0+$/.test(number)
+  );
+}
+
+function validGitHubPathSegment(segment: string | undefined): boolean {
+  return typeof segment === "string" && /^[A-Za-z0-9._-]+$/.test(segment);
 }
 
 function report(ctx: ExtensionCommandContext, message: string, level: NotifyLevel): void {
