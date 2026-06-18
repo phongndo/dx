@@ -3,4 +3,5 @@
 /homebrew-tap/
 /result
 /result-*
+node_modules/
 *.profraw

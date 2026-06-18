@@ -64,6 +64,16 @@ dx config
 `dx diff ...` is also accepted as a compatibility/discoverability alias, but
 plain `dx ...` is the primary interface.
 
+## Pi extension
+
+This repository includes a separate `pi-dx/` Pi package that adds a `/diff`
+command to Pi and shells out to an already-installed `dx` binary. It does not
+bundle the CLI. From this checkout:
+
+```sh
+pi install ./pi-dx
+```
+
 ## Configuration
 
 `dx` reads a user-local TOML config from the user's config directory. On XDG

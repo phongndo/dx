@@ -142,3 +142,34 @@ jobs:
 
       - name: Smoke installer and update
         run: scripts/smoke-installer-update
+
+  pi-dx:
+    name: pi-dx package quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pi-dx/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: pi-dx
+        run: pnpm install --frozen-lockfile
+
+      - name: Check pi-dx
+        working-directory: pi-dx
+        run: pnpm run check
