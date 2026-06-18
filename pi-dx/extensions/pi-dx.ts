@@ -297,13 +297,21 @@ function repoPathFromArgs(argv: string[]): string | null | undefined {
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--repo" || arg === "-r") {
-      return argv[index + 1] ?? null;
+      return repoPathValue(argv[index + 1]);
     }
     if (arg?.startsWith("--repo=")) {
-      return arg.slice("--repo=".length) || null;
+      return repoPathValue(arg.slice("--repo=".length));
+    }
+    if (arg?.startsWith("-r")) {
+      const value = arg.slice("-r".length);
+      return repoPathValue(value.startsWith("=") ? value.slice("=".length) : value);
     }
   }
   return undefined;
+}
+
+function repoPathValue(value: string | undefined): string | null {
+  return value ? value : null;
 }
 
 function stdinPatchRequested(argv: string[]): boolean {
