@@ -328,6 +328,7 @@ pub(crate) fn handle_event(
 
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
+        Event::Key(key) if is_quit_key(key) => Ok(true),
         Event::Key(key)
             if app.keymap.matches_single(GlobalAction::EditHunk, key)
                 && app.editor_shortcut_available() =>
@@ -988,7 +989,7 @@ impl DiffApp {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> DxResult<bool> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        if is_quit_key(key) {
             return Ok(true);
         }
 
@@ -2534,7 +2535,7 @@ impl DiffApp {
         self.color_scheme_picker_open = false;
 
         if draft.layout != self.layout {
-            self.set_layout(draft.layout, true);
+            self.set_manual_layout(draft.layout);
         }
         if draft.file_sidebar_open != self.file_sidebar_open {
             self.file_sidebar_open = draft.file_sidebar_open;
@@ -4481,6 +4482,10 @@ impl DiffApp {
 
     pub(crate) fn toggle_layout(&mut self) {
         let layout = self.layout.toggled();
+        self.set_manual_layout(layout);
+    }
+
+    pub(crate) fn set_manual_layout(&mut self, layout: DiffLayoutMode) {
         self.layout_override = Some(layout);
         self.set_layout(layout, true);
     }

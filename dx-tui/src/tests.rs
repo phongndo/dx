@@ -1548,6 +1548,24 @@ fn responsive_layout_preserves_manual_unified_choice_on_wide_resize() {
 }
 
 #[test]
+fn responsive_layout_preserves_options_menu_unified_choice_on_wide_resize() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
+
+    app.open_options_menu();
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .expect("space should toggle layout draft");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should apply options");
+    assert_eq!(app.layout, DiffLayoutMode::Unified);
+    assert_eq!(app.layout_override, Some(DiffLayoutMode::Unified));
+
+    app.apply_responsive_layout(MIN_SPLIT_WIDTH + 40);
+
+    assert_eq!(app.layout, DiffLayoutMode::Unified);
+}
+
+#[test]
 fn responsive_layout_remembers_manual_split_after_narrow_resize() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -2358,6 +2376,27 @@ fn edit_hunk_remap_disables_default_ctrl_g() {
         app.notice.as_ref().map(|notice| notice.text.as_str()),
         Some("no editable focused hunk")
     );
+}
+
+#[test]
+fn ctrl_c_force_quit_wins_over_configured_edit_hunk_key() {
+    let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        edit_hunk = "ctrl-c"
+        "#,
+    )
+    .expect("keymap should parse");
+
+    let should_quit = handle_test_key_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+    );
+
+    assert!(should_quit);
+    assert!(app.notice.is_none());
 }
 
 #[test]
