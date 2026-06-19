@@ -24,6 +24,7 @@ pub enum DiffScope {
 pub enum DiffSource {
     #[default]
     Worktree,
+    Show(String),
     Base(String),
     Branch {
         base: String,
@@ -760,6 +761,10 @@ fn validate_options(options: &DiffOptions) -> DxResult<()> {
 }
 
 fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
+    if let DiffSource::Show(rev) = &options.source {
+        return Ok(git_show_args(rev));
+    }
+
     let mut args = vec![
         "diff".to_owned(),
         "--binary".to_owned(),
@@ -790,10 +795,24 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
             args.push(left.clone());
             args.push(right.clone());
         }
+        DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
     }
 
     Ok(args)
+}
+
+fn git_show_args(rev: &str) -> Vec<String> {
+    vec![
+        "show".to_owned(),
+        "--format=".to_owned(),
+        "--binary".to_owned(),
+        "--no-ext-diff".to_owned(),
+        "--no-color".to_owned(),
+        "--find-renames".to_owned(),
+        "--end-of-options".to_owned(),
+        rev.to_owned(),
+    ]
 }
 
 fn append_pathspecs(args: &mut Vec<String>, paths: &[PathBuf]) {
@@ -802,6 +821,10 @@ fn append_pathspecs(args: &mut Vec<String>, paths: &[PathBuf]) {
 }
 
 fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
+    if let DiffSource::Show(rev) = &options.source {
+        return Ok(git_show_numstat_args(rev));
+    }
+
     let mut args = vec![
         "diff".to_owned(),
         "--numstat".to_owned(),
@@ -833,10 +856,25 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
             args.push(left.clone());
             args.push(right.clone());
         }
+        DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
     }
 
     Ok(args)
+}
+
+fn git_show_numstat_args(rev: &str) -> Vec<String> {
+    vec![
+        "show".to_owned(),
+        "--format=".to_owned(),
+        "--numstat".to_owned(),
+        "-z".to_owned(),
+        "--no-ext-diff".to_owned(),
+        "--no-color".to_owned(),
+        "--find-renames".to_owned(),
+        "--end-of-options".to_owned(),
+        rev.to_owned(),
+    ]
 }
 
 fn worktree_base_revision(repo: &Path) -> DxResult<String> {
@@ -908,6 +946,7 @@ fn diff_title(options: &DiffOptions) -> String {
             DiffScope::Staged => "staged changes".to_owned(),
             DiffScope::Unstaged => "unstaged changes".to_owned(),
         },
+        DiffSource::Show(rev) => format!("show {rev}"),
         DiffSource::Base(base) => format!("{base}...HEAD"),
         DiffSource::Branch { base, head } => format!("{base}...{head}"),
         DiffSource::Range { left, right } => format!("{left}..{right}"),
@@ -2203,6 +2242,64 @@ mod tests {
         .expect("patch source should render");
 
         assert_eq!(output, patch);
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn show_source_renders_commit_patch() {
+        let test_dir = temp_test_dir("show-source");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        fs::write(repo.join("base.txt"), "base\nchanged\n").expect("file should change");
+        git(["add", "base.txt"], &repo);
+        git(["commit", "-q", "-m", "change"], &repo);
+
+        let expected = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args([
+                "show",
+                "--format=",
+                "--binary",
+                "--no-ext-diff",
+                "--no-color",
+                "--find-renames",
+                "--end-of-options",
+                "HEAD",
+            ])
+            .output()
+            .expect("git show should run");
+        assert!(
+            expected.status.success(),
+            "git show failed: {}",
+            String::from_utf8_lossy(&expected.stderr)
+        );
+
+        let actual = render_bytes(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Show("HEAD".to_owned()),
+            include_untracked: false,
+            ..DiffOptions::default()
+        })
+        .expect("show source should render");
+
+        assert_eq!(actual, expected.stdout);
+
+        let stat = String::from_utf8(
+            render_bytes(DiffOptions {
+                repo: Some(repo),
+                source: DiffSource::Show("HEAD".to_owned()),
+                include_untracked: false,
+                stat: true,
+                ..DiffOptions::default()
+            })
+            .expect("show source stats should render"),
+        )
+        .expect("stat should be utf-8");
+        assert!(stat.contains("base.txt"));
+        assert!(stat.contains("1 files changed, 1 insertions(+), 0 deletions(-)"));
+
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 

@@ -341,6 +341,7 @@ pub(crate) fn diff_type_label(options: &DiffOptions) -> &'static str {
     }
 
     match &options.source {
+        DiffSource::Show(_) => "Show",
         DiffSource::Range { .. } => "Range",
         DiffSource::Patch(_) => "Patch",
         DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
@@ -366,6 +367,7 @@ pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
             DiffScope::Staged => "HEAD → index".to_owned(),
             DiffScope::Unstaged => "index → working tree".to_owned(),
         },
+        DiffSource::Show(rev) => format!("show {rev}"),
         DiffSource::Base(base) => format!("HEAD → {base}"),
         DiffSource::Branch { base, head } => format!("{head} → {base}"),
         DiffSource::Range { left, right } => format!("{left} → {right}"),

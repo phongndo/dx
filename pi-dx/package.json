@@ -1,7 +1,7 @@
 {
   "name": "pi-dx",
   "version": "0.1.1",
-  "description": "Pi extension that opens the dx diff reviewer from /diff.",
+  "description": "Pi extension that opens the dx diff reviewer from slash commands.",
   "keywords": [
     "diff",
     "dx",

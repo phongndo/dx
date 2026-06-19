@@ -11,7 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     CliResult,
-    args::{DiffArgs, SyntaxAvailableArgs, SyntaxCommand},
+    args::{DiffArgs, PatchArgs, ShowArgs, SyntaxAvailableArgs, SyntaxCommand},
     write_stdout,
 };
 
@@ -113,32 +113,7 @@ pub(crate) fn syntax_available_filter(
     }
 }
 
-pub(crate) fn diff_options(mut args: DiffArgs) -> DxResult<dx_command::DiffOptions> {
-    if let Some(target) = args.pr.take() {
-        return pr_diff_options(args, &target);
-    }
-
-    if let Some(patch) = args.patch {
-        if args.base.is_some() || !args.revs.is_empty() {
-            return Err(DxError::Usage(
-                "use --patch without revisions or --base".to_owned(),
-            ));
-        }
-        if args.staged || args.unstaged || args.no_untracked {
-            return Err(DxError::Usage(
-                "--staged, --unstaged, and --no-untracked do not apply to --patch".to_owned(),
-            ));
-        }
-
-        return Ok(dx_command::DiffOptions {
-            repo: args.repo,
-            source: patch_source(patch)?,
-            scope: dx_command::DiffScope::All,
-            include_untracked: false,
-            stat: args.stat,
-        });
-    }
-
+pub(crate) fn diff_options(args: DiffArgs) -> DxResult<dx_command::DiffOptions> {
     let source = match (args.base, args.revs.as_slice()) {
         (Some(base), []) => dx_command::DiffSource::Base(base),
         (Some(_), _) => {
@@ -176,24 +151,42 @@ pub(crate) fn diff_options(mut args: DiffArgs) -> DxResult<dx_command::DiffOptio
     })
 }
 
-pub(crate) fn pr_diff_options(args: DiffArgs, target: &str) -> DxResult<dx_command::DiffOptions> {
-    if args.base.is_some() || !args.revs.is_empty() {
-        return Err(DxError::Usage(
-            "use --pr without revisions or --base".to_owned(),
-        ));
-    }
-    if args.staged || args.unstaged || args.no_untracked {
-        return Err(DxError::Usage(
-            "--staged, --unstaged, and --no-untracked do not apply to dx --pr".to_owned(),
-        ));
-    }
-    if args.patch.is_some() {
-        return Err(DxError::Usage(
-            "--patch does not apply to dx --pr".to_owned(),
-        ));
-    }
+pub(crate) fn show_options(args: ShowArgs) -> DxResult<dx_command::DiffOptions> {
+    let source = show_source(&args)?;
+    Ok(dx_command::DiffOptions {
+        repo: args.repo,
+        source,
+        scope: dx_command::DiffScope::All,
+        include_untracked: false,
+        stat: args.stat,
+    })
+}
 
-    dx_command::github_pr_diff_options(args.repo, target, args.stat)
+pub(crate) fn show_source(args: &ShowArgs) -> DxResult<dx_command::DiffSource> {
+    match args.targets.as_slice() {
+        [] => Ok(dx_command::DiffSource::Show("HEAD".to_owned())),
+        [rev] if rev != "review" => Ok(dx_command::DiffSource::Show(rev.clone())),
+        [target] if target == "review" => Err(DxError::Usage(
+            "dx show review requires a target".to_owned(),
+        )),
+        [kind, target] if kind == "review" => {
+            let options = dx_command::github_pr_diff_options(args.repo.clone(), target, args.stat)?;
+            Ok(options.source)
+        }
+        _ => Err(DxError::Usage(
+            "dx show accepts one revision or `review TARGET`".to_owned(),
+        )),
+    }
+}
+
+pub(crate) fn patch_options(args: PatchArgs) -> DxResult<dx_command::DiffOptions> {
+    Ok(dx_command::DiffOptions {
+        repo: args.repo,
+        source: patch_source(args.path)?,
+        scope: dx_command::DiffScope::All,
+        include_untracked: false,
+        stat: args.stat,
+    })
 }
 
 pub(crate) fn patch_source(path: PathBuf) -> DxResult<dx_command::DiffSource> {

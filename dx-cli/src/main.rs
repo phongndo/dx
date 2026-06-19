@@ -14,7 +14,7 @@ use dx_core::{DxError, DxResult};
 
 use crate::{
     args::{Cli, Command},
-    syntax::{diff_options, syntax},
+    syntax::{diff_options, patch_options, show_options, syntax},
     update::update,
 };
 
@@ -101,9 +101,11 @@ fn run() -> CliResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => run_diff(cli.diff),
+        None => run_diff(args::DiffArgs::default()),
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
+        Some(Command::Show(args)) => run_show(args),
+        Some(Command::Patch(args)) => run_patch(args),
         Some(Command::Syntax { command }) => syntax(command),
         Some(Command::Update(args)) => update(args),
     }
@@ -114,6 +116,29 @@ fn run_diff(args: args::DiffArgs) -> CliResult<()> {
     let live_updates = !args.no_watch;
     let syntax_enabled = !args.no_syntax;
     let options = diff_options(args)?;
+    run_review(options, live_updates, syntax_enabled, stat)
+}
+
+fn run_show(args: args::ShowArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let syntax_enabled = !args.no_syntax;
+    let options = show_options(args)?;
+    run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_patch(args: args::PatchArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let syntax_enabled = !args.no_syntax;
+    let options = patch_options(args)?;
+    run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_review(
+    options: dx_command::DiffOptions,
+    live_updates: bool,
+    syntax_enabled: bool,
+    stat: bool,
+) -> CliResult<()> {
     if io::stdout().is_terminal() && !stat {
         dx_tui::run_diff_with_live_updates_and_syntax(options, live_updates, syntax_enabled)?;
         Ok(())

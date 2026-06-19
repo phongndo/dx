@@ -1,7 +1,7 @@
 # pi-dx
 
-Pi extension that adds `/diff` and opens the external `dx` terminal diff
-reviewer from inside Pi.
+Pi extension that adds `/diff`, `/show`, and `/patch` commands and opens the
+external `dx` terminal diff reviewer from inside Pi.
 
 `dx` is not bundled with this package. Install `dx` separately and keep it on
 `PATH`, or set `PI_DX_BIN` to the executable path.
@@ -71,22 +71,27 @@ for this repository and workflow before the publish step can succeed.
 /diff --unstaged
 /diff --base main
 /diff main feature
-/diff --pr 123
-/diff --pr https://github.com/owner/repo/pull/123
-/diff --patch changes.diff
+/show
+/show HEAD~1
+/show review 123
+/show review https://github.com/owner/repo/pull/123
+/patch changes.diff
 ```
+
+Hosted reviews currently resolve GitHub pull requests.
 
 The external `dx` terminal UI opens immediately from interactive Pi, including
 while an agent turn is still running. Pi's TUI is restored when `dx` exits.
 
-`/diff --patch -` is intentionally rejected because Pi cannot pipe stdin into
-the external viewer from a slash command. Write the patch to a file and pass the
-file path instead.
+`/patch -` is intentionally rejected because Pi cannot pipe stdin into the
+external viewer from a slash command. Write the patch to a file and pass the file
+path instead.
 
 ## Current error behavior
 
 - Missing `dx`: shows an install hint.
 - Non-interactive Pi mode: refuses to run because `dx` needs a terminal.
-- No Git repo for Git-backed diffs: shows a clean error. Future agent turn diff
-  support can use this branch as the fallback path.
-- Malformed `/diff` quoting or non-zero `dx` exit: shows a Pi notification.
+- No Git repo for Git-backed diffs or revision shows: shows a clean error.
+  Future agent turn diff support can use this branch as the fallback path.
+- Malformed slash-command quoting or non-zero `dx` exit: shows a Pi
+  notification.

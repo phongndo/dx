@@ -18,17 +18,19 @@ options:
 
 examples:
   dx
-  dx --staged
-  dx --unstaged
-  dx --base main
-  dx main feature
-  dx --pr 123
-  dx --pr https://github.com/owner/repo/pull/123
-  dx --patch changes.diff
-  cat changes.diff | dx --patch -
-  dx --no-watch
-  dx --no-syntax
-  dx --stat
+  dx diff --staged
+  dx diff --unstaged
+  dx diff --base main
+  dx diff main feature
+  dx show
+  dx show HEAD~1
+  dx show review 123
+  dx show review https://github.com/owner/repo/pull/123
+  dx patch changes.diff
+  cat changes.diff | dx patch -
+  dx diff --no-watch
+  dx diff --no-syntax
+  dx diff --stat
   dx config
   dx syntax add ruby elixir";
 
@@ -48,8 +50,6 @@ pub(crate) const RELEASE_REPO: &str = "phongndo/dx";
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
-    #[command(flatten)]
-    pub(crate) diff: DiffArgs,
 }
 
 pub(crate) fn help_styles() -> Styles {
@@ -68,10 +68,28 @@ pub(crate) enum Command {
 examples:
   dx diff
   dx diff --base main
-  dx diff --pr 123
-  dx diff --pr https://github.com/owner/repo/pull/123"
+  dx diff --staged
+  dx diff main feature"
     )]
     Diff(DiffArgs),
+    #[command(
+        about = "Review a Git revision or hosted review",
+        after_help = "\
+examples:
+  dx show
+  dx show HEAD~1
+  dx show review 123
+  dx show review https://github.com/owner/repo/pull/123"
+    )]
+    Show(ShowArgs),
+    #[command(
+        about = "Review an existing unified diff",
+        after_help = "\
+examples:
+  dx patch changes.diff
+  cat changes.diff | dx patch -"
+    )]
+    Patch(PatchArgs),
     #[command(
         alias = "ts",
         alias = "tree-sitter",
@@ -161,13 +179,6 @@ pub(crate) struct SyntaxAvailableArgs {
 pub(crate) struct DiffArgs {
     #[arg(value_name = "REV", num_args = 0..=2)]
     pub(crate) revs: Vec<String>,
-    /// Fetch and review a GitHub pull request by number or URL.
-    #[arg(
-        long,
-        value_name = "NUMBER|URL",
-        conflicts_with_all = ["base", "revs", "staged", "unstaged", "no_untracked", "patch"]
-    )]
-    pub(crate) pr: Option<String>,
     #[arg(short = 'r', long)]
     pub(crate) repo: Option<PathBuf>,
     #[arg(short = 'b', long)]
@@ -178,12 +189,37 @@ pub(crate) struct DiffArgs {
     pub(crate) unstaged: bool,
     #[arg(long = "no-untracked")]
     pub(crate) no_untracked: bool,
-    /// Read an existing unified diff from FILE, or stdin when FILE is `-`.
-    #[arg(long, value_name = "FILE")]
-    pub(crate) patch: Option<PathBuf>,
     /// Disable live reload in the interactive diff viewer.
     #[arg(long = "no-watch")]
     pub(crate) no_watch: bool,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
+#[derive(Debug, Args, Default)]
+pub(crate) struct ShowArgs {
+    /// Revision to show, or `review TARGET` for a hosted review.
+    #[arg(value_name = "TARGET", num_args = 0..=2)]
+    pub(crate) targets: Vec<String>,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PatchArgs {
+    /// Unified diff file to review, or stdin when FILE is `-`.
+    #[arg(value_name = "FILE")]
+    pub(crate) path: PathBuf,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
     /// Disable syntax highlighting in the interactive diff viewer.
     #[arg(long = "no-syntax")]
     pub(crate) no_syntax: bool,

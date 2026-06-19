@@ -7,7 +7,8 @@ so workspace isolation and diff review can evolve as separate products.
 
 - Opens the current worktree diff in an interactive terminal UI.
 - Streams unified diff output when stdout is not a terminal, or with `--stat`.
-- Reviews staged, unstaged, branch, revision-range, patch-file, stdin, and GitHub PR diffs.
+- Reviews staged, unstaged, branch, revision-range, revision, patch-file,
+  stdin, and hosted review diffs (currently GitHub pull requests).
 - Watches local worktree-backed diffs and reloads the view as files change.
 - Supports syntax highlighting with bundled Tree-sitter languages and optional parser caches.
 
@@ -46,23 +47,26 @@ binaries and publish the GitHub release assets used by the shell installer.
 
 ```sh
 dx
-dx --staged
-dx --unstaged
-dx --no-untracked
-dx --base main
-dx main feature
-dx --pr 123
-dx --pr https://github.com/owner/repo/pull/123
-dx --patch changes.diff
-cat changes.diff | dx --patch -
-dx --no-watch
-dx --no-syntax
-dx --stat
+dx diff --staged
+dx diff --unstaged
+dx diff --no-untracked
+dx diff --base main
+dx diff main feature
+dx show
+dx show HEAD~1
+dx show review 123
+dx show review https://github.com/owner/repo/pull/123
+dx patch changes.diff
+cat changes.diff | dx patch -
+dx diff --no-watch
+dx diff --no-syntax
+dx diff --stat
 dx config
 ```
 
-`dx diff ...` is also accepted as a compatibility/discoverability alias, but
-plain `dx ...` is the primary interface.
+Plain `dx` is a shortcut for `dx diff`. Use top-level commands to select the
+diff source: `dx diff` for local comparisons, `dx show` for revisions and
+hosted reviews, and `dx patch` for existing unified diffs.
 
 ## Pi extension
 

@@ -1255,6 +1255,14 @@ pub(crate) fn full_file_source(
         (DiffSource::Worktree, DiffScope::Unstaged, DiffSide::New) => {
             FullFileSourceKind::Worktree { path }
         }
+        (DiffSource::Show(rev), DiffScope::All, DiffSide::Old) => FullFileSourceKind::GitRevision {
+            rev: format!("{rev}^"),
+            path,
+        },
+        (DiffSource::Show(rev), DiffScope::All, DiffSide::New) => FullFileSourceKind::GitRevision {
+            rev: rev.clone(),
+            path,
+        },
         (DiffSource::Base(base), DiffScope::All, DiffSide::Old) => {
             FullFileSourceKind::GitMergeBase {
                 base: base.clone(),

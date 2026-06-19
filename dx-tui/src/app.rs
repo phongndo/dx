@@ -1822,7 +1822,10 @@ impl DiffApp {
     }
 
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
-        if matches!(&self.options.source, DiffSource::Patch(_)) {
+        if matches!(
+            &self.options.source,
+            DiffSource::Patch(_) | DiffSource::Show(_)
+        ) {
             return Vec::new();
         }
 
