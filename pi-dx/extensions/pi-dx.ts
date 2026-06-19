@@ -57,9 +57,10 @@ async function handleDxCommand(
   }
 
   if (stdinPatchRequested(command, argv)) {
+    const source = command === "diff" ? "/diff --patch" : "/patch";
     report(
       ctx,
-      "/patch cannot read a patch from stdin inside Pi. Write the patch to a file and run /patch <file>.",
+      `${source} cannot read a patch from stdin inside Pi. Write the patch to a file and run /patch <file>.`,
       "error",
     );
     return;
@@ -380,15 +381,75 @@ export function dxInvocationNeedsGit(command: DxCommand, argv: string[]): boolea
     return false;
   }
 
+  if (command === "diff") {
+    const patch = longOptionFromArgs(argv, "--patch");
+    if (patch.present) {
+      return false;
+    }
+
+    const pr = longOptionFromArgs(argv, "--pr");
+    if (pr.present) {
+      return pr.value ? !isGitHubPullRequestUrl(pr.value) : false;
+    }
+  }
+
   if (command === "show") {
     const reviewIndex = argv.indexOf("review");
     if (reviewIndex !== -1) {
-      const target = argv[reviewIndex + 1];
+      const target = reviewTargetFromArgs(argv, reviewIndex);
       return target ? !isGitHubPullRequestUrl(target) : false;
     }
   }
 
   return true;
+}
+
+type ParsedOption = { present: false } | { present: true; value: string | undefined };
+
+function longOptionFromArgs(argv: string[], option: string): ParsedOption {
+  const attachedPrefix = `${option}=`;
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === "--") {
+      break;
+    }
+    if (arg === option) {
+      return { present: true, value: argv[index + 1] };
+    }
+    if (arg.startsWith(attachedPrefix)) {
+      return { present: true, value: arg.slice(attachedPrefix.length) };
+    }
+  }
+  return { present: false };
+}
+
+function reviewTargetFromArgs(argv: string[], reviewIndex: number): string | undefined {
+  return targetFromArgs(argv, reviewIndex + 1);
+}
+
+function patchTargetFromArgs(argv: string[]): string | undefined {
+  return targetFromArgs(argv, 0);
+}
+
+function targetFromArgs(argv: string[], startIndex: number): string | undefined {
+  for (let index = startIndex; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === "--") {
+      return argv[index + 1];
+    }
+    if (arg === "--stat" || arg === "-s" || arg === "--no-syntax") {
+      continue;
+    }
+    if (arg === "--repo" || arg === "-r") {
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || (arg.startsWith("-r") && arg !== "-r")) {
+      continue;
+    }
+    return arg;
+  }
+  return undefined;
 }
 
 function dxInvocationArgs(command: DxCommand, argv: string[]): string[] {
@@ -426,7 +487,14 @@ function repoPathValue(value: string | undefined): string | null {
 }
 
 function stdinPatchRequested(command: DxCommand, argv: string[]): boolean {
-  return command === "patch" && argv.includes("-");
+  if (command === "patch") {
+    return patchTargetFromArgs(argv) === "-";
+  }
+  if (command === "diff") {
+    const patch = longOptionFromArgs(argv, "--patch");
+    return patch.present && patch.value === "-";
+  }
+  return false;
 }
 
 function isGitHubPullRequestUrl(target: string): boolean {

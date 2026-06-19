@@ -50,6 +50,8 @@ pub(crate) const RELEASE_REPO: &str = "phongndo/dx";
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
+    #[command(flatten)]
+    pub(crate) diff: DiffArgs,
 }
 
 pub(crate) fn help_styles() -> Styles {
@@ -179,6 +181,13 @@ pub(crate) struct SyntaxAvailableArgs {
 pub(crate) struct DiffArgs {
     #[arg(value_name = "REV", num_args = 0..=2)]
     pub(crate) revs: Vec<String>,
+    /// Fetch and review a GitHub pull request by number or URL.
+    #[arg(
+        long,
+        value_name = "NUMBER|URL",
+        conflicts_with_all = ["base", "revs", "staged", "unstaged", "no_untracked", "patch"]
+    )]
+    pub(crate) pr: Option<String>,
     #[arg(short = 'r', long)]
     pub(crate) repo: Option<PathBuf>,
     #[arg(short = 'b', long)]
@@ -189,6 +198,9 @@ pub(crate) struct DiffArgs {
     pub(crate) unstaged: bool,
     #[arg(long = "no-untracked")]
     pub(crate) no_untracked: bool,
+    /// Read an existing unified diff from FILE, or stdin when FILE is `-`.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) patch: Option<PathBuf>,
     /// Disable live reload in the interactive diff viewer.
     #[arg(long = "no-watch")]
     pub(crate) no_watch: bool,
@@ -235,4 +247,61 @@ pub(crate) struct UpdateArgs {
     /// Directory to update. Defaults to the directory containing the invoked dx.
     #[arg(long, value_name = "DIR")]
     pub(crate) install_dir: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[test]
+    fn parses_top_level_diff_compatibility_args() {
+        let cli = parse(&["dx", "--staged", "--stat"]);
+        assert!(cli.command.is_none());
+        assert!(cli.diff.staged);
+        assert!(cli.diff.stat);
+
+        let cli = parse(&["dx", "main", "feature"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.revs, ["main", "feature"]);
+
+        let cli = parse(&["dx", "--patch", "changes.diff"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.patch, Some(PathBuf::from("changes.diff")));
+
+        let cli = parse(&["dx", "--pr", "123"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.pr.as_deref(), Some("123"));
+    }
+
+    #[test]
+    fn parses_source_subcommands() {
+        let cli = parse(&["dx", "diff", "--unstaged"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Diff(DiffArgs { unstaged: true, .. }))
+        ));
+
+        let cli = parse(&[
+            "dx",
+            "show",
+            "review",
+            "--stat",
+            "https://github.com/owner/repo/pull/123",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Show(ShowArgs { stat: true, .. }))
+        ));
+
+        let cli = parse(&["dx", "patch", "changes.diff"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Patch(PatchArgs { path, .. }))
+                if path.as_path() == std::path::Path::new("changes.diff")
+        ));
+    }
 }

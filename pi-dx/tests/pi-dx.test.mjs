@@ -62,6 +62,8 @@ test("parseCommandLine rejects unterminated quotes", () => {
 test("dxInvocationNeedsGit allows patch files", () => {
   assert.equal(dxInvocationNeedsGit("patch", ["changes.diff"]), false);
   assert.equal(dxInvocationNeedsGit("patch", ["--stat", "changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("diff", ["--patch", "changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("diff", ["--patch=changes.diff"]), false);
 });
 
 test("dxInvocationNeedsGit allows full GitHub pull request URLs", () => {
@@ -84,14 +86,76 @@ test("dxInvocationNeedsGit allows full GitHub pull request URLs", () => {
     ]),
     false,
   );
+  assert.equal(
+    dxInvocationNeedsGit("show", ["review", "--stat", "https://github.com/owner/repo/pull/123"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("show", [
+      "review",
+      "--repo",
+      "/tmp/not-a-repo",
+      "https://github.com/owner/repo/pull/123",
+    ]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("diff", ["--pr", "https://github.com/owner/repo/pull/123"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("diff", ["--pr=https://github.com/owner/repo/pull/123"]),
+    false,
+  );
 });
 
 test("dxInvocationNeedsGit requires git for diffs, revisions, and review numbers", () => {
   assert.equal(dxInvocationNeedsGit("diff", []), true);
   assert.equal(dxInvocationNeedsGit("diff", ["--staged"]), true);
+  assert.equal(dxInvocationNeedsGit("diff", ["--pr", "123"]), true);
   assert.equal(dxInvocationNeedsGit("show", []), true);
   assert.equal(dxInvocationNeedsGit("show", ["HEAD~1"]), true);
   assert.equal(dxInvocationNeedsGit("show", ["review", "123"]), true);
+});
+
+test("diff command rejects stdin patch sources before preflight", async () => {
+  let handler;
+  extension({
+    registerCommand(name, options) {
+      if (name === "diff") {
+        handler = options.handler;
+      }
+    },
+  });
+
+  const notifications = [];
+  let customCalled = false;
+
+  await handler("--patch -", {
+    mode: "tui",
+    cwd: packageRoot,
+    hasUI: true,
+    ui: {
+      notify(message, level) {
+        notifications.push({ message, level });
+      },
+      async custom() {
+        customCalled = true;
+      },
+    },
+    async waitForIdle() {
+      throw new Error("waitForIdle should not be called");
+    },
+  });
+
+  assert.equal(customCalled, false);
+  assert.deepEqual(notifications, [
+    {
+      message:
+        "/diff --patch cannot read a patch from stdin inside Pi. Write the patch to a file and run /patch <file>.",
+      level: "error",
+    },
+  ]);
 });
 
 test("version flags run top-level dx instead of slash subcommands", async () => {

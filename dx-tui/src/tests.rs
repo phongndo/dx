@@ -4122,6 +4122,13 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
         }
     );
 
+    let show = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    assert!(full_file_source(&repo, &show, &file, DiffSide::Old).is_none());
+    assert!(full_file_source(&repo, &show, &file, DiffSide::New).is_none());
+
     let patch = DiffOptions {
         source: DiffSource::Patch(dx_diff::PatchSource::Stdin(Arc::from(&b""[..]))),
         ..DiffOptions::default()

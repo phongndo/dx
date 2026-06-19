@@ -1224,7 +1224,7 @@ pub(crate) fn full_file_source(
     file: &dx_diff::DiffFile,
     side: DiffSide,
 ) -> Option<FullFileSource> {
-    if matches!(options.source, DiffSource::Patch(_)) {
+    if matches!(options.source, DiffSource::Patch(_) | DiffSource::Show(_)) {
         return None;
     }
     if !repo.is_dir() {
@@ -1233,6 +1233,7 @@ pub(crate) fn full_file_source(
 
     let path = file_path_for_side(file, side)?.to_owned();
     let kind = match (&options.source, options.scope, side) {
+        (DiffSource::Patch(_) | DiffSource::Show(_), _, _) => return None,
         (DiffSource::Worktree, DiffScope::All, DiffSide::Old) => FullFileSourceKind::GitRevision {
             rev: "HEAD".to_owned(),
             path,
@@ -1255,14 +1256,6 @@ pub(crate) fn full_file_source(
         (DiffSource::Worktree, DiffScope::Unstaged, DiffSide::New) => {
             FullFileSourceKind::Worktree { path }
         }
-        (DiffSource::Show(rev), DiffScope::All, DiffSide::Old) => FullFileSourceKind::GitRevision {
-            rev: format!("{rev}^"),
-            path,
-        },
-        (DiffSource::Show(rev), DiffScope::All, DiffSide::New) => FullFileSourceKind::GitRevision {
-            rev: rev.clone(),
-            path,
-        },
         (DiffSource::Base(base), DiffScope::All, DiffSide::Old) => {
             FullFileSourceKind::GitMergeBase {
                 base: base.clone(),

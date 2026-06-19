@@ -113,7 +113,32 @@ pub(crate) fn syntax_available_filter(
     }
 }
 
-pub(crate) fn diff_options(args: DiffArgs) -> DxResult<dx_command::DiffOptions> {
+pub(crate) fn diff_options(mut args: DiffArgs) -> DxResult<dx_command::DiffOptions> {
+    if let Some(target) = args.pr.take() {
+        return pr_diff_options(args, &target);
+    }
+
+    if let Some(patch) = args.patch {
+        if args.base.is_some() || !args.revs.is_empty() {
+            return Err(DxError::Usage(
+                "use --patch without revisions or --base".to_owned(),
+            ));
+        }
+        if args.staged || args.unstaged || args.no_untracked {
+            return Err(DxError::Usage(
+                "--staged, --unstaged, and --no-untracked do not apply to --patch".to_owned(),
+            ));
+        }
+
+        return Ok(dx_command::DiffOptions {
+            repo: args.repo,
+            source: patch_source(patch)?,
+            scope: dx_command::DiffScope::All,
+            include_untracked: false,
+            stat: args.stat,
+        });
+    }
+
     let source = match (args.base, args.revs.as_slice()) {
         (Some(base), []) => dx_command::DiffSource::Base(base),
         (Some(_), _) => {
@@ -149,6 +174,26 @@ pub(crate) fn diff_options(args: DiffArgs) -> DxResult<dx_command::DiffOptions> 
         include_untracked: !args.no_untracked,
         stat: args.stat,
     })
+}
+
+pub(crate) fn pr_diff_options(args: DiffArgs, target: &str) -> DxResult<dx_command::DiffOptions> {
+    if args.base.is_some() || !args.revs.is_empty() {
+        return Err(DxError::Usage(
+            "use --pr without revisions or --base".to_owned(),
+        ));
+    }
+    if args.staged || args.unstaged || args.no_untracked {
+        return Err(DxError::Usage(
+            "--staged, --unstaged, and --no-untracked do not apply to dx --pr".to_owned(),
+        ));
+    }
+    if args.patch.is_some() {
+        return Err(DxError::Usage(
+            "--patch does not apply to dx --pr".to_owned(),
+        ));
+    }
+
+    dx_command::github_pr_diff_options(args.repo, target, args.stat)
 }
 
 pub(crate) fn show_options(args: ShowArgs) -> DxResult<dx_command::DiffOptions> {

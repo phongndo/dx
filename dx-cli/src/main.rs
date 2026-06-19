@@ -101,7 +101,7 @@ fn run() -> CliResult<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        None => run_diff(args::DiffArgs::default()),
+        None => run_diff(cli.diff),
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
         Some(Command::Show(args)) => run_show(args),
