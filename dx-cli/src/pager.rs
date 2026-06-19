@@ -38,11 +38,13 @@ pub(crate) fn pager(args: PagerArgs) -> CliResult<()> {
 
     let env = PagerEnv::current();
     let stdout_tty = io::stdout().is_terminal();
+    let static_color =
+        static_pager_color_enabled(stdout_tty, &env, env::var_os("NO_COLOR").is_some());
     match pager_action(&input, stdout_tty, &env, controlling_terminal_available()) {
         PagerAction::Passthrough => write_stdout_bytes(&input),
         PagerAction::PlainTextPager => page_plain_text(&input),
-        PagerAction::StaticDiff => write_static_diff(&input, &args),
-        PagerAction::InteractiveDiff => run_interactive_diff(input, &args),
+        PagerAction::StaticDiff => write_static_diff(&input, &args, static_color),
+        PagerAction::InteractiveDiff => run_interactive_diff(input, &args, static_color),
     }
 }
 
@@ -83,10 +85,13 @@ fn pager_action(
     PagerAction::InteractiveDiff
 }
 
-fn write_static_diff(input: &[u8], args: &PagerArgs) -> CliResult<()> {
+fn static_pager_color_enabled(stdout_tty: bool, env: &PagerEnv, no_color: bool) -> bool {
+    !no_color && (stdout_tty || env.is_captured_pager_host())
+}
+
+fn write_static_diff(input: &[u8], args: &PagerArgs, color: bool) -> CliResult<()> {
     let patch = normalized_patch_input(input);
     let options = patch_options(patch);
-    let color = io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none();
     let rendered = match dx_tui::render_static_pager(
         options,
         dx_tui::StaticPagerOptions {
@@ -113,10 +118,10 @@ fn write_static_diff(input: &[u8], args: &PagerArgs) -> CliResult<()> {
     }
 }
 
-fn run_interactive_diff(input: Vec<u8>, args: &PagerArgs) -> CliResult<()> {
+fn run_interactive_diff(input: Vec<u8>, args: &PagerArgs, static_color: bool) -> CliResult<()> {
     let _stdin_override = match attach_controlling_terminal_to_stdin() {
         Ok(guard) => guard,
-        Err(_) => return write_static_diff(&input, args),
+        Err(_) => return write_static_diff(&input, args, static_color),
     };
     dx_tui::run_diff_with_live_updates_and_syntax(
         patch_options(normalized_patch_input(&input)),
@@ -214,7 +219,7 @@ fn command_invokes_dx_pager(command: &str) -> bool {
     executable_is_dx(&words[command_index])
         && words
             .get(command_index + 1)
-            .is_some_and(|argument| argument == "pager")
+            .is_some_and(|argument| matches!(argument.as_str(), "pager" | "page"))
 }
 
 fn first_shell_command_word(words: &[String]) -> Option<usize> {
@@ -536,6 +541,30 @@ mod tests {
     }
 
     #[test]
+    fn static_pager_colors_captured_hosts_without_stdout_tty() {
+        assert!(static_pager_color_enabled(
+            false,
+            &env(Some("dumb"), None, None, true),
+            false
+        ));
+        assert!(static_pager_color_enabled(
+            false,
+            &env(Some("dumb"), None, Some("dx pager"), false),
+            false
+        ));
+        assert!(!static_pager_color_enabled(
+            false,
+            &env(Some("dumb"), None, None, true),
+            true
+        ));
+        assert!(!static_pager_color_enabled(
+            false,
+            &env(Some("xterm-256color"), None, None, false),
+            false
+        ));
+    }
+
+    #[test]
     fn pager_passthroughs_diff_when_stdout_is_not_tty() {
         let action = pager_action(
             b"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n",
@@ -587,6 +616,14 @@ mod tests {
     fn plain_text_pager_replaces_self_referential_dx_pager() {
         assert_eq!(
             resolve_text_pager_command(Some("dx pager")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("dx page")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("/usr/local/bin/dx page --layout unified")),
             DEFAULT_TEXT_PAGER
         );
         assert_eq!(
