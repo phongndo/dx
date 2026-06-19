@@ -1,5 +1,6 @@
-import { spawnSync } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, dirname, join, parse, resolve as resolvePath } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const INSTALL_HINT =
@@ -67,8 +68,6 @@ async function handleDiffCommand(args: string, ctx: ExtensionCommandContext): Pr
     }
   }
 
-  await ctx.waitForIdle();
-
   const result = await runDxInTerminal(ctx, dx, argv);
   if (!result) {
     report(ctx, "dx did not return a result.", "error");
@@ -99,27 +98,49 @@ function checkDxBinary(dx: string): string | undefined {
     return `PI_DX_BIN is empty.\n\n${INSTALL_HINT}`;
   }
 
-  if (looksLikePath(dx)) {
-    try {
-      accessSync(dx, constants.X_OK);
-    } catch (error) {
-      return `dx executable is not available at PI_DX_BIN=${dx}: ${errorMessage(error)}\n\n${INSTALL_HINT}`;
+  if (!executableAvailable(dx)) {
+    return `dx executable was not found (${dx}).\n\n${INSTALL_HINT}`;
+  }
+}
+
+function executableAvailable(command: string): boolean {
+  if (looksLikePath(command)) {
+    return executablePathAvailable(command);
+  }
+
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    if (executablePathAvailable(join(directory || ".", command))) {
+      return true;
     }
   }
 
-  const result = spawnSync(dx, ["--version"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  return false;
+}
 
-  if (result.error) {
-    return `dx executable was not found (${dx}).\n\n${INSTALL_HINT}`;
+function executablePathAvailable(path: string): boolean {
+  return executablePathCandidates(path).some(canExecute);
+}
+
+function executablePathCandidates(path: string): string[] {
+  if (process.platform !== "win32") {
+    return [path];
   }
 
-  if (result.status !== 0) {
-    const stderr = result.stderr.trim();
-    const detail = stderr ? `\n\n${stderr}` : "";
-    return `dx was found but failed to start with status ${result.status}.${detail}`;
+  const extensions = (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const lowerPath = path.toLowerCase();
+  if (extensions.some((extension) => lowerPath.endsWith(extension.toLowerCase()))) {
+    return [path];
+  }
+
+  return [path, ...extensions.map((extension) => `${path}${extension}`)];
+}
+
+function canExecute(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -128,6 +149,10 @@ function looksLikePath(command: string): boolean {
 }
 
 function checkGitRepository(cwd: string, repoPath: string | undefined): string | undefined {
+  if (hasGitMarker(cwd, repoPath)) {
+    return undefined;
+  }
+
   const gitArgs = repoPath
     ? ["-C", repoPath, "rev-parse", "--is-inside-work-tree"]
     : ["rev-parse", "--is-inside-work-tree"];
@@ -151,29 +176,64 @@ function checkGitRepository(cwd: string, repoPath: string | undefined): string |
   }
 }
 
+function hasGitMarker(cwd: string, repoPath: string | undefined): boolean {
+  let current = resolvePath(cwd, repoPath ?? ".");
+  if (!isDirectory(current)) {
+    return false;
+  }
+
+  const root = parse(current).root;
+
+  while (true) {
+    if (canAccess(join(current, ".git"))) {
+      return true;
+    }
+
+    if (current === root) {
+      break;
+    }
+    current = dirname(current);
+  }
+
+  return false;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function canAccess(path: string): boolean {
+  try {
+    accessSync(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runDxInTerminal(
   ctx: ExtensionCommandContext,
   dx: string,
   argv: string[],
 ): Promise<DxRunResult | undefined> {
-  return ctx.ui.custom<DxRunResult>((tui, _theme, _keybindings, done) => {
+  return ctx.ui.custom<DxRunResult>(async (tui, _theme, _keybindings, done) => {
     let result: DxRunResult;
 
     try {
       tui.stop();
       process.stdout.write("\x1b[2J\x1b[H");
 
-      const child = spawnSync(dx, argv, {
+      const child = spawn(dx, argv, {
         cwd: ctx.cwd,
         env: process.env,
         stdio: "inherit",
       });
 
-      result = {
-        status: child.status,
-        signal: child.signal,
-        error: child.error ? errorMessage(child.error) : undefined,
-      };
+      result = await waitForChild(child);
     } catch (error) {
       result = {
         status: null,
@@ -187,6 +247,26 @@ async function runDxInTerminal(
 
     done(result);
     return { render: () => [], invalidate: () => {} };
+  });
+}
+
+function waitForChild(child: ReturnType<typeof spawn>): Promise<DxRunResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: DxRunResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(result);
+    };
+
+    child.once("error", (error) => {
+      finish({ status: null, signal: null, error: errorMessage(error) });
+    });
+    child.once("exit", (status, signal) => {
+      finish({ status, signal });
+    });
   });
 }
 
