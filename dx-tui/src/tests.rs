@@ -2637,6 +2637,29 @@ fn number_key_switches_diff_choice() {
 }
 
 #[test]
+fn number_key_ignores_unavailable_diff_choice_for_show_source() {
+    let options = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("origin/main".to_owned());
+    app.current_head = Some("feature".to_owned());
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE))
+        .expect("number shortcut should be handled");
+
+    assert!(!should_quit);
+    assert!(app.pending_diff_load.is_none());
+    assert_eq!(app.options, options);
+}
+
+#[test]
 fn diff_menu_options_preserve_repo_and_untracked_setting() {
     let options = DiffOptions {
         repo: Some(PathBuf::from("/repo")),

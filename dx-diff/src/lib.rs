@@ -875,8 +875,12 @@ fn git_show_numstat_args(rev: &str) -> Vec<String> {
         "--find-renames".to_owned(),
         "-m".to_owned(),
         "--end-of-options".to_owned(),
-        rev.to_owned(),
+        peeled_tag_target(rev),
     ]
+}
+
+fn peeled_tag_target(rev: &str) -> String {
+    format!("{rev}^{{}}")
 }
 
 fn worktree_base_revision(repo: &Path) -> DxResult<String> {
@@ -2303,6 +2307,33 @@ mod tests {
         assert!(stat.contains("base.txt"));
         assert!(stat.contains("1 files changed, 1 insertions(+), 0 deletions(-)"));
 
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn show_source_stat_peels_annotated_tag() {
+        let test_dir = temp_test_dir("show-annotated-tag-stat");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        fs::write(repo.join("base.txt"), "base\nnext\n").expect("file should change");
+        git(["commit", "-q", "-am", "change"], &repo);
+        git(["tag", "-a", "--no-sign", "v1.0", "-m", "release"], &repo);
+
+        let stat = String::from_utf8(
+            render_bytes(DiffOptions {
+                repo: Some(repo.clone()),
+                source: DiffSource::Show("v1.0".to_owned()),
+                include_untracked: false,
+                stat: true,
+                ..DiffOptions::default()
+            })
+            .expect("show source stats should render"),
+        )
+        .expect("stat should be utf-8");
+
+        assert!(stat.contains("base.txt"));
+        assert!(stat.contains("1 files changed, 1 insertions(+), 0 deletions(-)"));
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 

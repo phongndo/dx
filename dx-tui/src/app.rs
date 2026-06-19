@@ -1878,6 +1878,10 @@ impl DiffApp {
     }
 
     pub(crate) fn select_diff_choice(&mut self, choice: DiffChoice) {
+        if !self.diff_menu_choices().contains(&choice) {
+            return;
+        }
+
         let Some(options) = self.options_for_choice(choice) else {
             self.set_notice("base branch unavailable");
             return;
