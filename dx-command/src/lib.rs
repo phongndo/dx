@@ -2,7 +2,9 @@ mod config;
 mod diff;
 mod syntax;
 
-pub use dx_diff::{DiffOptions, DiffScope, DiffSource, PatchSource};
+pub use dx_diff::{
+    DiffOptions, DiffScope, DiffSet, DiffSetItem, DiffSource, PatchSource, diffset_from_file,
+};
 pub use dx_syntax::{
     SyntaxAddOptions, SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult,
     SyntaxDoctorReport, SyntaxLanguageStatus, SyntaxLimits, SyntaxMode, SyntaxRemoveResult,

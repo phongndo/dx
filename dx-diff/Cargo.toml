@@ -9,3 +9,5 @@ repository.workspace = true
 [dependencies]
 dx-core.workspace = true
 dx-git.workspace = true
+serde.workspace = true
+serde_json.workspace = true

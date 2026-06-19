@@ -10,7 +10,7 @@ use crate::{
     app::DiffApp,
     controls::{BranchMenu, DiffFilterKind, INPUT_CURSOR},
     render::{
-        menus::{diff_comparison_label, diff_selector_text},
+        menus::diff_comparison_label,
         style::{base_bg, statusline_bg},
         text::{fit, fit_with_ellipsis, format_count, progress_label},
     },
@@ -332,9 +332,10 @@ pub(crate) fn push_statusline_left_spans(
     app: &DiffApp,
     remaining: &mut usize,
 ) {
+    let selector_label = app.diff_selector_label();
     push_fitted_statusline_span(
         spans,
-        diff_selector_text(&app.options),
+        app.diff_selector_text(),
         Style::default()
             .fg(STATUSLINE_ACCENT_FG)
             .bg(STATUSLINE_ACCENT_BG)
@@ -347,7 +348,17 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.theme)),
         remaining,
     );
-    if app.is_branch_diff()
+    if let Some(detail) = app.diffset_item_selector_text() {
+        push_fitted_statusline_span(
+            spans,
+            detail,
+            Style::default()
+                .fg(app.theme.header)
+                .bg(statusline_bg(app.theme))
+                .add_modifier(Modifier::BOLD),
+            remaining,
+        );
+    } else if app.is_branch_diff()
         && let (Some(head), Some(base)) = (
             app.branch_selector_text(BranchMenu::Head),
             app.branch_selector_text(BranchMenu::Base),
@@ -380,14 +391,17 @@ pub(crate) fn push_statusline_left_spans(
             remaining,
         );
     } else {
-        push_fitted_statusline_span(
-            spans,
-            diff_comparison_label(&app.options),
-            Style::default()
-                .fg(app.theme.muted)
-                .bg(statusline_bg(app.theme)),
-            remaining,
-        );
+        let comparison = diff_comparison_label(&app.options);
+        if comparison != selector_label {
+            push_fitted_statusline_span(
+                spans,
+                comparison,
+                Style::default()
+                    .fg(app.theme.muted)
+                    .bg(statusline_bg(app.theme)),
+                remaining,
+            );
+        }
     }
     push_fitted_statusline_span(
         spans,

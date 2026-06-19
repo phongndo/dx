@@ -27,7 +27,8 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use dx_diff::{
-    Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileStatus, PatchSource,
+    Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSet, DiffSetItem, DiffSource,
+    FileStatus, PatchSource,
 };
 use dx_syntax::{
     ColorOverrides, DiffContextExpansion, DiffSettings, HighlightedLine, SyntaxClass,
@@ -2568,6 +2569,83 @@ fn statusline_header_right_aligns_current_file() {
 }
 
 #[test]
+fn diffset_statusline_shows_selected_diff_type_not_position() {
+    let options = DiffOptions {
+        source: DiffSource::Base("origin/main".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("origin/main".to_owned());
+    app.current_head = Some("feature".to_owned());
+    app.set_diffset(
+        DiffSet {
+            title: None,
+            default_item: Some("turns".to_owned()),
+            items: vec![DiffSetItem {
+                id: "turns".to_owned(),
+                label: "Turns".to_owned(),
+                type_label: None,
+                detail: None,
+                options: DiffOptions {
+                    source: DiffSource::Patch(PatchSource::Text {
+                        label: "Turns".to_owned(),
+                        patch: Arc::from(&b""[..]),
+                    }),
+                    ..DiffOptions::default()
+                },
+            }],
+        },
+        0,
+    );
+
+    let text = line_text(&statusline_header_line(&app, 80));
+
+    assert!(text.starts_with(" Branch "));
+    assert!(!text.starts_with(" 1/1 "));
+}
+
+#[test]
+fn diffset_statusline_keeps_item_detail_out_of_type_selector() {
+    let options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "1".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.set_diffset(
+        DiffSet {
+            title: None,
+            default_item: Some("prompt-1".to_owned()),
+            items: vec![DiffSetItem {
+                id: "prompt-1".to_owned(),
+                label: "1".to_owned(),
+                type_label: Some("Turns".to_owned()),
+                detail: Some("1".to_owned()),
+                options,
+            }],
+        },
+        0,
+    );
+
+    let line = statusline_header_line(&app, 80);
+    let text = line_text(&line);
+
+    assert_eq!(line.spans[0].content.as_ref(), " Turns ");
+    assert!(text.contains(" 1 ▾"));
+    assert!(!text.contains("write manifesto"));
+}
+
+#[test]
 fn diff_menu_lists_all_changes_first() {
     let mut app = DiffApp::new(
         DiffOptions::default(),
@@ -2588,12 +2666,202 @@ fn diff_menu_lists_all_changes_first() {
 }
 
 #[test]
+fn diffset_turns_precede_standard_diff_menu_choices() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("origin/main".to_owned());
+    app.set_diffset(
+        DiffSet {
+            title: None,
+            default_item: Some("current".to_owned()),
+            items: vec![
+                DiffSetItem {
+                    id: "current".to_owned(),
+                    label: "Current".to_owned(),
+                    type_label: None,
+                    detail: None,
+                    options: DiffOptions::default(),
+                },
+                DiffSetItem {
+                    id: "turns".to_owned(),
+                    label: "Turns".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("All".to_owned()),
+                    options: DiffOptions {
+                        source: DiffSource::Patch(PatchSource::Text {
+                            label: "Turns".to_owned(),
+                            patch: Arc::from(&b""[..]),
+                        }),
+                        ..DiffOptions::default()
+                    },
+                },
+                DiffSetItem {
+                    id: "turn-1".to_owned(),
+                    label: "1".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("1".to_owned()),
+                    options: DiffOptions {
+                        source: DiffSource::Patch(PatchSource::Text {
+                            label: "1".to_owned(),
+                            patch: Arc::from(&b""[..]),
+                        }),
+                        ..DiffOptions::default()
+                    },
+                },
+                DiffSetItem {
+                    id: "turn-2".to_owned(),
+                    label: "2".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("2".to_owned()),
+                    options: DiffOptions {
+                        source: DiffSource::Patch(PatchSource::Text {
+                            label: "2".to_owned(),
+                            patch: Arc::from(&b""[..]),
+                        }),
+                        ..DiffOptions::default()
+                    },
+                },
+            ],
+        },
+        0,
+    );
+
+    assert_eq!(
+        app.diff_menu_items(),
+        vec![
+            DiffMenuItem::DiffSet {
+                index: 1,
+                label: "Turns".to_owned(),
+            },
+            DiffMenuItem::Choice(DiffChoice::All),
+            DiffMenuItem::Choice(DiffChoice::Branch),
+            DiffMenuItem::Choice(DiffChoice::Unstaged),
+            DiffMenuItem::Choice(DiffChoice::Staged),
+        ]
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('1'),
+        Some(DiffMenuItem::DiffSet {
+            index: 1,
+            label: "Turns".to_owned(),
+        })
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('2'),
+        Some(DiffMenuItem::Choice(DiffChoice::All))
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('3'),
+        Some(DiffMenuItem::Choice(DiffChoice::Branch))
+    );
+}
+
+#[test]
+fn diffset_item_menu_filters_and_selects_typed_match() {
+    let turns_options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "Turns".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let first_options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "1".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let second_options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "2".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        turns_options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.set_diffset(
+        DiffSet {
+            title: None,
+            default_item: Some("turns".to_owned()),
+            items: vec![
+                DiffSetItem {
+                    id: "turns".to_owned(),
+                    label: "Turns".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("All".to_owned()),
+                    options: turns_options,
+                },
+                DiffSetItem {
+                    id: "turn-1".to_owned(),
+                    label: "1".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("1".to_owned()),
+                    options: first_options,
+                },
+                DiffSetItem {
+                    id: "turn-2".to_owned(),
+                    label: "2".to_owned(),
+                    type_label: Some("Turns".to_owned()),
+                    detail: Some("2".to_owned()),
+                    options: second_options.clone(),
+                },
+            ],
+        },
+        0,
+    );
+
+    app.toggle_diffset_item_menu();
+    app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
+        .expect("typed filter should be handled");
+
+    assert_eq!(app.diffset_item_menu_input, "2");
+    assert_eq!(app.diffset_item_menu_entries(), vec![(2, "2".to_owned())]);
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("Enter should select filtered item");
+
+    assert!(!app.diffset_item_menu_open);
+    assert_eq!(app.diffset_item_menu_input, "");
+    assert_eq!(
+        app.pending_diff_load.as_ref().map(|load| &load.options),
+        Some(&second_options)
+    );
+}
+
+#[test]
 fn diff_choice_number_shortcuts_match_menu_order() {
-    assert_eq!(diff_choice_shortcut('1'), Some(DiffChoice::All));
-    assert_eq!(diff_choice_shortcut('2'), Some(DiffChoice::Branch));
-    assert_eq!(diff_choice_shortcut('3'), Some(DiffChoice::Unstaged));
-    assert_eq!(diff_choice_shortcut('4'), Some(DiffChoice::Staged));
-    assert_eq!(diff_choice_shortcut('5'), None);
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("origin/main".to_owned());
+
+    assert_eq!(
+        app.diff_menu_item_shortcut('1'),
+        Some(DiffMenuItem::Choice(DiffChoice::All))
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('2'),
+        Some(DiffMenuItem::Choice(DiffChoice::Branch))
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('3'),
+        Some(DiffMenuItem::Choice(DiffChoice::Unstaged))
+    );
+    assert_eq!(
+        app.diff_menu_item_shortcut('4'),
+        Some(DiffMenuItem::Choice(DiffChoice::Staged))
+    );
+    assert_eq!(app.diff_menu_item_shortcut('5'), None);
 }
 
 #[test]

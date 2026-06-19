@@ -110,6 +110,10 @@ fn run() -> CliResult<()> {
 }
 
 fn run_diff(args: args::DiffArgs) -> CliResult<()> {
+    if args.diffset.is_some() {
+        return run_diffset(args);
+    }
+
     let stat = args.stat;
     let live_updates = !args.no_watch;
     let syntax_enabled = !args.no_syntax;
@@ -118,6 +122,29 @@ fn run_diff(args: args::DiffArgs) -> CliResult<()> {
         dx_tui::run_diff_with_live_updates_and_syntax(options, live_updates, syntax_enabled)?;
         Ok(())
     } else {
+        stream_diff_to_stdout(options)
+    }
+}
+
+fn run_diffset(args: args::DiffArgs) -> CliResult<()> {
+    let path = args
+        .diffset
+        .as_ref()
+        .ok_or_else(|| DxError::Usage("dx --diffset requires a manifest path".to_owned()))?;
+    let stat = args.stat;
+    let live_updates = !args.no_watch;
+    let syntax_enabled = !args.no_syntax;
+    let diffset = dx_command::diffset_from_file(path)?;
+
+    if io::stdout().is_terminal() && !stat {
+        dx_tui::run_diffset_with_live_updates_and_syntax(diffset, live_updates, syntax_enabled)?;
+        Ok(())
+    } else {
+        let item = diffset.default_item().ok_or_else(|| {
+            DxError::Usage("diffset manifest must contain at least one item".to_owned())
+        })?;
+        let mut options = item.options.clone();
+        options.stat = stat;
         stream_diff_to_stdout(options)
     }
 }

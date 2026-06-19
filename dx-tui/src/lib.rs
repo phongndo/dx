@@ -15,6 +15,6 @@ mod theme;
 
 pub use run::{
     benchmark_diff_view, run, run_diff, run_diff_with_live_updates,
-    run_diff_with_live_updates_and_syntax,
+    run_diff_with_live_updates_and_syntax, run_diffset_with_live_updates_and_syntax,
 };
 pub use theme::{DiffBenchmarkOptions, DiffBenchmarkReport, SyntaxBenchmarkReport};

@@ -54,6 +54,7 @@ dx main feature
 dx --pr 123
 dx --pr https://github.com/owner/repo/pull/123
 dx --patch changes.diff
+dx --diffset ai-session-diffs.json
 cat changes.diff | dx --patch -
 dx --no-watch
 dx --no-syntax
@@ -63,6 +64,21 @@ dx config
 
 `dx diff ...` is also accepted as a compatibility/discoverability alias, but
 plain `dx ...` is the primary interface.
+
+`dx --diffset <manifest.json>` opens a generic multi-diff timeline. The
+manifest can be produced by AI coding adapters or other tools and can mix a
+current worktree item with patch-file items.
+
+```json
+{
+  "version": 1,
+  "defaultItem": "turn-1",
+  "items": [
+    { "id": "current", "label": "Current", "kind": "worktree", "repo": "." },
+    { "id": "turn-1", "label": "T1", "kind": "patch", "patch": "turn-1.diff" }
+  ]
+}
+```
 
 ## Pi extension
 

@@ -10,7 +10,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use dx_core::{DxError, DxResult};
-use dx_diff::{Changeset, DiffOptions};
+use dx_diff::{Changeset, DiffOptions, DiffSet};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::{
@@ -47,6 +47,18 @@ pub fn run_diff_with_live_updates_and_syntax(
     ))?
 }
 
+pub fn run_diffset_with_live_updates_and_syntax(
+    diffset: DiffSet,
+    live_updates: bool,
+    syntax_enabled: bool,
+) -> DxResult<()> {
+    runtime::block_on(run_diffset_with_live_updates_and_syntax_async(
+        diffset,
+        live_updates,
+        syntax_enabled,
+    ))?
+}
+
 async fn run_diff_with_live_updates_and_syntax_async(
     options: DiffOptions,
     live_updates: bool,
@@ -68,6 +80,55 @@ async fn run_diff_with_live_updates_and_syntax_async(
         SyntaxStartupMode::Disabled
     };
     let mut app = DiffApp::new_with_syntax(options, changeset, layout, syntax_mode);
+
+    let mut cleanup = TerminalCleanup::install()?;
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+    let terminal_width = terminal.size()?.width;
+    if default_layout_for_width(terminal_width) != app.layout {
+        app.apply_responsive_layout(terminal_width);
+    }
+    let mut live_diff = None;
+    sync_live_diff(&mut live_diff, &mut app, live_updates);
+
+    let result = run_loop(&mut terminal, &mut app, live_updates, &mut live_diff).await;
+    let cleanup_result = cleanup.cleanup();
+
+    result?;
+    cleanup_result
+}
+
+async fn run_diffset_with_live_updates_and_syntax_async(
+    diffset: DiffSet,
+    live_updates: bool,
+    syntax_enabled: bool,
+) -> DxResult<()> {
+    let selected = diffset.default_index();
+    let options = diffset
+        .items
+        .get(selected)
+        .ok_or_else(|| {
+            DxError::Usage("diffset manifest must contain at least one item".to_owned())
+        })?
+        .options
+        .clone();
+    let load_options = options.clone();
+    let changeset = runtime::spawn_blocking(move || dx_diff::load_review_ref(&load_options))
+        .await
+        .map_err(|error| {
+            DxError::Io(io::Error::other(format!(
+                "initial diffset load worker stopped: {error}"
+            )))
+        })??;
+
+    let layout = default_layout_for_width(crossterm::terminal::size()?.0);
+    let syntax_mode = if syntax_enabled {
+        SyntaxStartupMode::Config
+    } else {
+        SyntaxStartupMode::Disabled
+    };
+    let mut app = DiffApp::new_with_syntax(options, changeset, layout, syntax_mode);
+    app.set_diffset(diffset, selected);
 
     let mut cleanup = TerminalCleanup::install()?;
     let backend = CrosstermBackend::new(io::stdout());

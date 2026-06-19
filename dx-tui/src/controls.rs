@@ -40,6 +40,21 @@ pub(crate) enum DiffChoice {
     Staged,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DiffMenuItem {
+    DiffSet { index: usize, label: String },
+    Choice(DiffChoice),
+}
+
+impl DiffMenuItem {
+    pub(crate) fn label(&self) -> &str {
+        match self {
+            Self::DiffSet { label, .. } => label,
+            Self::Choice(choice) => choice.label(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BranchMenu {
     Head,
@@ -69,16 +84,6 @@ impl DiffChoice {
             Self::Unstaged => "unstaged changes",
             Self::Staged => "staged changes",
         }
-    }
-}
-
-pub(crate) fn diff_choice_shortcut(character: char) -> Option<DiffChoice> {
-    match character {
-        '1' => Some(DiffChoice::All),
-        '2' => Some(DiffChoice::Branch),
-        '3' => Some(DiffChoice::Unstaged),
-        '4' => Some(DiffChoice::Staged),
-        _ => None,
     }
 }
 

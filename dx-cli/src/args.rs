@@ -25,6 +25,7 @@ examples:
   dx --pr 123
   dx --pr https://github.com/owner/repo/pull/123
   dx --patch changes.diff
+  dx --diffset ai-session-diffs.json
   cat changes.diff | dx --patch -
   dx --no-watch
   dx --no-syntax
@@ -181,6 +182,13 @@ pub(crate) struct DiffArgs {
     /// Read an existing unified diff from FILE, or stdin when FILE is `-`.
     #[arg(long, value_name = "FILE")]
     pub(crate) patch: Option<PathBuf>,
+    /// Read a multi-diff timeline manifest from FILE.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["pr", "patch", "base", "revs", "staged", "unstaged", "no_untracked"]
+    )]
+    pub(crate) diffset: Option<PathBuf>,
     /// Disable live reload in the interactive diff viewer.
     #[arg(long = "no-watch")]
     pub(crate) no_watch: bool,

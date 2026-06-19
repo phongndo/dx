@@ -14,17 +14,17 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use dx_core::DxResult;
-use dx_diff::{Changeset, DiffOptions, DiffScope, DiffSource, DiffStats};
+use dx_diff::{Changeset, DiffOptions, DiffScope, DiffSet, DiffSetItem, DiffSource, DiffStats};
 use dx_syntax::{HighlightedLine, SyntaxLimits, SyntaxSettings};
 use tokio::sync::{mpsc::Receiver, oneshot};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     controls::{
-        BranchMenu, CrosstermTerminal, DiffChoice, DiffFilterKind, DiffLayoutMode, INPUT_CURSOR,
-        branch_base_from_options, branch_head_from_options, branch_match_score,
+        BranchMenu, CrosstermTerminal, DiffChoice, DiffFilterKind, DiffLayoutMode, DiffMenuItem,
+        INPUT_CURSOR, branch_base_from_options, branch_head_from_options, branch_match_score,
         comparison_branches, current_head_label, default_branch_base, default_layout_for_width,
-        diff_choice_shortcut, diff_stats_for_files,
+        diff_stats_for_files,
     },
     editor::{EditorTarget, configured_editor, open_editor, repo_file_path},
     event_reader::TerminalEventReader,
@@ -35,7 +35,7 @@ use crate::{
     },
     render::{
         draw,
-        menus::{branch_menu_width, diff_menu_width, diff_selector_width},
+        menus::{branch_menu_width, diff_choice_from_options, diff_menu_width, diff_type_label},
         sidebar::max_file_sidebar_width,
         text::fit_padded,
     },
@@ -121,6 +121,12 @@ pub(crate) struct FilterWorker {
     grep_filter: String,
     jump_to_grep: bool,
     rx: oneshot::Receiver<DiffSearchResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DiffSetState {
+    pub(crate) items: Vec<DiffSetItem>,
+    pub(crate) selected: usize,
 }
 
 impl std::fmt::Debug for FilterWorker {
@@ -469,6 +475,7 @@ enum HunkFocusSearch {
 #[derive(Debug)]
 pub(crate) struct DiffApp {
     pub(crate) options: DiffOptions,
+    pub(crate) diffset: Option<DiffSetState>,
     pub(crate) base_changeset: Changeset,
     pub(crate) changeset: Changeset,
     pub(crate) search_index: Arc<DiffSearchIndex>,
@@ -491,6 +498,10 @@ pub(crate) struct DiffApp {
     pub(crate) file_sidebar_resizing: bool,
     pub(crate) help_menu_open: bool,
     pub(crate) diff_menu_open: bool,
+    pub(crate) diffset_item_menu_open: bool,
+    pub(crate) diffset_item_menu_input: String,
+    pub(crate) diffset_item_menu_scroll: usize,
+    pub(crate) diffset_item_menu_selected: usize,
     pub(crate) filter_input: Option<DiffFilterKind>,
     pub(crate) file_filter: String,
     pub(crate) file_filter_input: String,
@@ -628,6 +639,7 @@ impl DiffApp {
         let max_line_width = search_index.max_line_width();
         Self {
             options,
+            diffset: None,
             base_changeset: changeset.clone(),
             changeset,
             search_index,
@@ -650,6 +662,10 @@ impl DiffApp {
             file_sidebar_resizing: false,
             help_menu_open: false,
             diff_menu_open: false,
+            diffset_item_menu_open: false,
+            diffset_item_menu_input: String::new(),
+            diffset_item_menu_scroll: 0,
+            diffset_item_menu_selected: 0,
             filter_input: None,
             file_filter: String::new(),
             file_filter_input: String::new(),
@@ -807,6 +823,67 @@ impl DiffApp {
             }
         }
 
+        if self.diffset_item_menu_open {
+            match key.code {
+                KeyCode::Esc => {
+                    self.close_diffset_item_menu();
+                    return Ok(false);
+                }
+                KeyCode::Enter => {
+                    self.select_highlighted_diffset_item_match();
+                    return Ok(false);
+                }
+                KeyCode::Tab => {
+                    self.cycle_diffset_item_completion(1);
+                    return Ok(false);
+                }
+                KeyCode::BackTab => {
+                    self.cycle_diffset_item_completion(-1);
+                    return Ok(false);
+                }
+                KeyCode::Backspace => {
+                    self.pop_diffset_item_input();
+                    return Ok(false);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.clear_diffset_item_input();
+                    return Ok(false);
+                }
+                KeyCode::Down => {
+                    self.move_diffset_item_selection(1);
+                    return Ok(false);
+                }
+                KeyCode::Up => {
+                    self.move_diffset_item_selection(-1);
+                    return Ok(false);
+                }
+                KeyCode::PageDown => {
+                    self.move_diffset_item_selection(MAX_BRANCH_MENU_ROWS as isize);
+                    return Ok(false);
+                }
+                KeyCode::PageUp => {
+                    self.move_diffset_item_selection(-(MAX_BRANCH_MENU_ROWS as isize));
+                    return Ok(false);
+                }
+                KeyCode::Home => {
+                    self.set_diffset_item_selection(0);
+                    return Ok(false);
+                }
+                KeyCode::End => {
+                    self.set_diffset_item_selection(usize::MAX);
+                    return Ok(false);
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.push_diffset_item_input(character);
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+
         if key.code == KeyCode::Esc && self.close_error_log() {
             return Ok(false);
         }
@@ -815,9 +892,9 @@ impl DiffApp {
             if !key.modifiers.contains(KeyModifiers::CONTROL)
                 && !key.modifiers.contains(KeyModifiers::ALT)
             {
-                if let Some(choice) = diff_choice_shortcut(character) {
+                if let Some(item) = self.diff_menu_item_shortcut(character) {
                     self.diff_menu_open = false;
-                    self.select_diff_choice(choice);
+                    self.select_diff_menu_item(item);
                     return Ok(false);
                 }
             }
@@ -828,6 +905,12 @@ impl DiffApp {
             KeyCode::Char('q') => return Ok(true),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_or_focus_hunk(1),
             KeyCode::Up | KeyCode::Char('k') => self.scroll_or_focus_hunk(-1),
+            KeyCode::Left if self.diffset_navigation_available() => {
+                self.select_relative_diffset_item(-1);
+            }
+            KeyCode::Right if self.diffset_navigation_available() => {
+                self.select_relative_diffset_item(1);
+            }
             KeyCode::Left | KeyCode::Char('h') => {
                 self.scroll_horizontally_by(-(HORIZONTAL_SCROLL_STEP as isize));
             }
@@ -1172,10 +1255,31 @@ impl DiffApp {
     }
 
     pub(crate) fn handle_click(&mut self, column: u16, row: u16) {
-        let clicked_selector = row == 0 && column < diff_selector_width(&self.options);
+        let clicked_selector = row == 0 && column < self.diff_selector_width();
+        let clicked_diffset_item_selector = row == 0 && self.diffset_item_selector_at(column);
         let clicked_branch_selector = (row == 0)
             .then(|| self.branch_selector_at(column))
             .flatten();
+
+        if self.diffset_item_menu_open {
+            if let Some(index) = self.diffset_item_choice_at(column, row) {
+                self.select_diffset_item(index);
+                return;
+            }
+
+            if clicked_diffset_item_selector {
+                self.toggle_diffset_item_menu();
+                return;
+            }
+
+            self.close_diffset_item_menu();
+            if clicked_selector {
+                self.toggle_diff_menu();
+            } else if let Some(menu) = clicked_branch_selector {
+                self.toggle_branch_menu(menu);
+            }
+            return;
+        }
 
         if let Some(menu) = self.branch_menu_open {
             if let Some(branch) = self.branch_choice_at(menu, column, row) {
@@ -1192,14 +1296,16 @@ impl DiffApp {
             self.close_branch_menu();
             if clicked_selector {
                 self.toggle_diff_menu();
+            } else if clicked_diffset_item_selector {
+                self.toggle_diffset_item_menu();
             }
             return;
         }
 
         if self.diff_menu_open {
-            if let Some(choice) = self.diff_choice_at(column, row) {
+            if let Some(item) = self.diff_menu_item_at(column, row) {
                 self.diff_menu_open = false;
-                self.select_diff_choice(choice);
+                self.select_diff_menu_item(item);
                 return;
             }
 
@@ -1214,6 +1320,12 @@ impl DiffApp {
                 return;
             }
 
+            if clicked_diffset_item_selector {
+                self.diff_menu_open = false;
+                self.toggle_diffset_item_menu();
+                return;
+            }
+
             self.diff_menu_open = false;
             self.dirty = true;
             return;
@@ -1221,6 +1333,8 @@ impl DiffApp {
 
         if clicked_selector {
             self.toggle_diff_menu();
+        } else if clicked_diffset_item_selector {
+            self.toggle_diffset_item_menu();
         } else if let Some(menu) = clicked_branch_selector {
             self.toggle_branch_menu(menu);
         } else if !self.handle_file_sidebar_click(column, row) {
@@ -1457,12 +1571,54 @@ impl DiffApp {
     }
 
     pub(crate) fn toggle_diff_menu(&mut self) {
-        if self.diff_menu_choices().is_empty() {
+        if self.diff_menu_items().is_empty() {
             return;
         }
         self.diff_menu_open = !self.diff_menu_open;
+        self.close_diffset_item_menu();
         self.branch_menu_open = None;
         self.dirty = true;
+    }
+
+    pub(crate) fn toggle_diffset_item_menu(&mut self) {
+        if self.all_diffset_item_menu_entries().len() <= 1 {
+            return;
+        }
+        if self.diffset_item_menu_open {
+            self.close_diffset_item_menu();
+            return;
+        }
+
+        self.diffset_item_menu_open = !self.diffset_item_menu_open;
+        self.diff_menu_open = false;
+        self.branch_menu_open = None;
+        self.diffset_item_menu_input.clear();
+        self.diffset_item_menu_scroll = 0;
+        self.diffset_item_menu_selected = self
+            .all_diffset_item_menu_entries()
+            .iter()
+            .position(|(index, _)| {
+                self.diffset
+                    .as_ref()
+                    .is_some_and(|diffset| diffset.selected == *index)
+            })
+            .unwrap_or_default();
+        self.ensure_diffset_item_selection_visible();
+        self.dirty = true;
+    }
+
+    pub(crate) fn close_diffset_item_menu(&mut self) {
+        if self.diffset_item_menu_open
+            || !self.diffset_item_menu_input.is_empty()
+            || self.diffset_item_menu_scroll != 0
+            || self.diffset_item_menu_selected != 0
+        {
+            self.diffset_item_menu_open = false;
+            self.diffset_item_menu_input.clear();
+            self.diffset_item_menu_scroll = 0;
+            self.diffset_item_menu_selected = 0;
+            self.dirty = true;
+        }
     }
 
     pub(crate) fn close_branch_menu(&mut self) {
@@ -1489,6 +1645,7 @@ impl DiffApp {
 
         self.branch_menu_open = Some(menu);
         self.diff_menu_open = false;
+        self.close_diffset_item_menu();
         self.branch_menu_input.clear();
         self.branch_menu_selected = self
             .branch_ref(menu)
@@ -1782,6 +1939,289 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn diff_selector_label(&self) -> String {
+        if let Some(type_label) = self
+            .active_diffset_item()
+            .and_then(|item| item.type_label.as_deref())
+        {
+            return type_label.to_owned();
+        }
+
+        if let Some(choice) = diff_choice_from_options(&self.options) {
+            return choice.label().to_owned();
+        }
+
+        self.active_diffset_item()
+            .map(|item| item.label.clone())
+            .unwrap_or_else(|| diff_type_label(&self.options).to_owned())
+    }
+
+    pub(crate) fn diff_selector_detail(&self) -> Option<String> {
+        let item = self.active_diffset_item()?;
+        item.detail.clone().or_else(|| {
+            item.type_label
+                .as_ref()
+                .is_some_and(|type_label| type_label != &item.label)
+                .then(|| item.label.clone())
+        })
+    }
+
+    pub(crate) fn diffset_item_selector_text(&self) -> Option<String> {
+        let detail = self.diff_selector_detail()?;
+        if self.diffset_item_menu_open {
+            let input = format!("{}{}", self.diffset_item_menu_input, INPUT_CURSOR);
+            let width = detail.width().max(input.width());
+            return Some(format!(" {} ▾", fit_padded(&input, width)));
+        }
+
+        Some(format!(" {detail} ▾"))
+    }
+
+    pub(crate) fn diffset_item_selector_width(&self) -> Option<u16> {
+        self.diffset_item_selector_text()
+            .map(|text| text.width() as u16)
+    }
+
+    pub(crate) fn diffset_item_selector_start(&self) -> Option<u16> {
+        self.diffset_item_selector_width()?;
+        Some(
+            self.diff_selector_width()
+                .saturating_add(STATUSLINE_SELECTOR_GAP.width() as u16),
+        )
+    }
+
+    pub(crate) fn diffset_item_selector_at(&self, column: u16) -> bool {
+        let Some(start) = self.diffset_item_selector_start() else {
+            return false;
+        };
+        let Some(width) = self.diffset_item_selector_width() else {
+            return false;
+        };
+        column >= start && column < start.saturating_add(width)
+    }
+
+    pub(crate) fn all_diffset_item_menu_entries(&self) -> Vec<(usize, String)> {
+        let Some(active) = self.active_diffset_item() else {
+            return Vec::new();
+        };
+        let Some(active_type) = active.type_label.as_deref() else {
+            return Vec::new();
+        };
+
+        self.diffset
+            .as_ref()
+            .map(|diffset| {
+                diffset
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        (item.type_label.as_deref() == Some(active_type))
+                            .then(|| item.detail.clone().unwrap_or_else(|| item.label.clone()))
+                            .map(|label| (index, label))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn diffset_item_menu_entries(&self) -> Vec<(usize, String)> {
+        let entries = self.all_diffset_item_menu_entries();
+        let query = self.diffset_item_menu_input.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return entries;
+        }
+
+        let mut matches: Vec<_> = entries
+            .into_iter()
+            .enumerate()
+            .filter_map(|(entry_order, (index, label))| {
+                branch_match_score(&query, &label).map(|score| {
+                    let label_len = label.len();
+                    (score, label_len, entry_order, index, label)
+                })
+            })
+            .collect();
+        matches.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+                .then_with(|| left.4.cmp(&right.4))
+        });
+        matches
+            .into_iter()
+            .map(|(_, _, _, index, label)| (index, label))
+            .collect()
+    }
+
+    pub(crate) fn diffset_item_menu_width(&self) -> u16 {
+        let entry_width = self
+            .diffset_item_menu_entries()
+            .iter()
+            .map(|(_, label)| label.width() + 4)
+            .max()
+            .unwrap_or_default();
+        let input_width = self
+            .diffset_item_menu_input
+            .width()
+            .saturating_add(6)
+            .max(10);
+        entry_width.max(input_width) as u16
+    }
+
+    pub(crate) fn diffset_item_choice_at(&self, column: u16, row: u16) -> Option<usize> {
+        let start = self.diffset_item_selector_start()?;
+        let width = self.diffset_item_menu_width();
+        if column < start || column >= start.saturating_add(width) || row == 0 {
+            return None;
+        }
+
+        let row_index = usize::from(row - 1);
+        if row_index >= self.visible_diffset_item_menu_rows() {
+            return None;
+        }
+
+        self.filtered_diffset_item(row_index)
+            .map(|(index, _)| index)
+    }
+
+    pub(crate) fn filtered_diffset_item(&self, row_index: usize) -> Option<(usize, String)> {
+        self.diffset_item_menu_entries()
+            .get(self.diffset_item_menu_scroll.saturating_add(row_index))
+            .cloned()
+    }
+
+    pub(crate) fn move_diffset_item_selection(&mut self, delta: isize) {
+        let next = if delta < 0 {
+            self.diffset_item_menu_selected
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.diffset_item_menu_selected
+                .saturating_add(delta as usize)
+        };
+        self.set_diffset_item_selection(next);
+    }
+
+    pub(crate) fn set_diffset_item_selection(&mut self, selected: usize) {
+        let selected = selected.min(self.max_diffset_item_menu_selection());
+        if self.diffset_item_menu_selected != selected {
+            self.diffset_item_menu_selected = selected;
+            self.ensure_diffset_item_selection_visible();
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn cycle_diffset_item_completion(&mut self, delta: isize) {
+        let len = self.diffset_item_menu_entries().len();
+        if len == 0 {
+            return;
+        }
+
+        let next = if delta < 0 {
+            self.diffset_item_menu_selected
+                .checked_sub(1)
+                .unwrap_or(len.saturating_sub(1))
+        } else {
+            (self.diffset_item_menu_selected + 1) % len
+        };
+        self.set_diffset_item_selection(next);
+    }
+
+    pub(crate) fn ensure_diffset_item_selection_visible(&mut self) {
+        let max_scroll = self.max_diffset_item_menu_scroll();
+        if self.diffset_item_menu_selected < self.diffset_item_menu_scroll {
+            self.diffset_item_menu_scroll = self.diffset_item_menu_selected;
+        } else if self.diffset_item_menu_selected
+            >= self
+                .diffset_item_menu_scroll
+                .saturating_add(MAX_BRANCH_MENU_ROWS)
+        {
+            self.diffset_item_menu_scroll = self
+                .diffset_item_menu_selected
+                .saturating_add(1)
+                .saturating_sub(MAX_BRANCH_MENU_ROWS);
+        }
+        self.diffset_item_menu_scroll = self.diffset_item_menu_scroll.min(max_scroll);
+    }
+
+    pub(crate) fn max_diffset_item_menu_selection(&self) -> usize {
+        self.diffset_item_menu_entries().len().saturating_sub(1)
+    }
+
+    pub(crate) fn max_diffset_item_menu_scroll(&self) -> usize {
+        self.diffset_item_menu_entries()
+            .len()
+            .saturating_sub(MAX_BRANCH_MENU_ROWS)
+    }
+
+    pub(crate) fn visible_diffset_item_menu_rows(&self) -> usize {
+        self.diffset_item_menu_entries()
+            .len()
+            .min(MAX_BRANCH_MENU_ROWS)
+    }
+
+    pub(crate) fn diffset_item_menu_height(&self) -> usize {
+        self.visible_diffset_item_menu_rows()
+            .max(usize::from(self.diffset_item_menu_entries().is_empty()))
+    }
+
+    pub(crate) fn push_diffset_item_input(&mut self, character: char) {
+        self.diffset_item_menu_input.push(character);
+        self.diffset_item_menu_scroll = 0;
+        self.diffset_item_menu_selected = 0;
+        self.dirty = true;
+    }
+
+    pub(crate) fn pop_diffset_item_input(&mut self) {
+        if self.diffset_item_menu_input.pop().is_some() {
+            self.diffset_item_menu_scroll = 0;
+            self.diffset_item_menu_selected = 0;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn clear_diffset_item_input(&mut self) {
+        if !self.diffset_item_menu_input.is_empty()
+            || self.diffset_item_menu_scroll != 0
+            || self.diffset_item_menu_selected != 0
+        {
+            self.diffset_item_menu_input.clear();
+            self.diffset_item_menu_scroll = 0;
+            self.diffset_item_menu_selected = 0;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn select_highlighted_diffset_item_match(&mut self) {
+        let Some((index, _)) = self
+            .diffset_item_menu_entries()
+            .get(self.diffset_item_menu_selected)
+            .cloned()
+        else {
+            self.set_notice("no matching diff item");
+            return;
+        };
+        self.close_diffset_item_menu();
+        self.select_diffset_item(index);
+    }
+
+    pub(crate) fn diff_selector_text(&self) -> String {
+        format!(" {} ", self.diff_selector_label())
+    }
+
+    pub(crate) fn diff_selector_width(&self) -> u16 {
+        self.diff_selector_text().width() as u16
+    }
+
+    fn active_diffset_item(&self) -> Option<&DiffSetItem> {
+        self.diffset
+            .as_ref()?
+            .items
+            .iter()
+            .find(|item| item.options == self.options)
+    }
+
     pub(crate) fn branch_selector_width(&self, menu: BranchMenu) -> Option<u16> {
         self.branch_selector_text(menu)
             .map(|text| text.width() as u16)
@@ -1800,7 +2240,7 @@ impl DiffApp {
 
         let head_width = self.branch_selector_width(BranchMenu::Head)?;
         let selector_gap = STATUSLINE_SELECTOR_GAP.width() as u16;
-        let head_start = diff_selector_width(&self.options).saturating_add(selector_gap);
+        let head_start = self.diff_selector_width().saturating_add(selector_gap);
         match menu {
             BranchMenu::Head => Some(head_start),
             BranchMenu::Base => Some(
@@ -1811,18 +2251,88 @@ impl DiffApp {
         }
     }
 
-    pub(crate) fn diff_choice_at(&self, column: u16, row: u16) -> Option<DiffChoice> {
-        let choices = self.diff_menu_choices();
-        let width = diff_menu_width(&choices);
+    pub(crate) fn diff_menu_item_at(&self, column: u16, row: u16) -> Option<DiffMenuItem> {
+        let items = self.diff_menu_items();
+        let width = diff_menu_width(&items);
         if column >= width || row == 0 {
             return None;
         }
 
-        choices.get(usize::from(row - 1)).copied()
+        items.get(usize::from(row - 1)).cloned()
+    }
+
+    pub(crate) fn diff_menu_item_shortcut(&self, character: char) -> Option<DiffMenuItem> {
+        let number = character.to_digit(10)?;
+        if number == 0 {
+            return None;
+        }
+
+        self.diff_menu_items().get(number as usize - 1).cloned()
+    }
+
+    pub(crate) fn diff_menu_items(&self) -> Vec<DiffMenuItem> {
+        let mut items = Vec::new();
+        if let Some(diffset) = &self.diffset {
+            let active_type = self
+                .active_diffset_item()
+                .and_then(|item| item.type_label.as_deref());
+            let mut seen_type_labels = HashSet::new();
+            items.extend(
+                diffset
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, item)| {
+                        if diff_choice_from_options(&item.options) == Some(DiffChoice::All) {
+                            return None;
+                        }
+                        if item.type_label.is_some() {
+                            let type_label = item.type_label.as_ref()?;
+                            if !seen_type_labels.insert(type_label.clone()) {
+                                return None;
+                            }
+                            let index = if active_type == Some(type_label.as_str()) {
+                                diffset.selected
+                            } else {
+                                index
+                            };
+                            return Some(DiffMenuItem::DiffSet {
+                                index,
+                                label: type_label.clone(),
+                            });
+                        }
+
+                        Some(DiffMenuItem::DiffSet {
+                            index,
+                            label: item.label.clone(),
+                        })
+                    }),
+            );
+        }
+
+        items.extend(
+            self.diff_menu_choices()
+                .into_iter()
+                .map(DiffMenuItem::Choice),
+        );
+        items
+    }
+
+    pub(crate) fn diff_menu_item_active(&self, item: &DiffMenuItem) -> bool {
+        match item {
+            DiffMenuItem::DiffSet { index, .. } => self
+                .diffset
+                .as_ref()
+                .and_then(|diffset| diffset.items.get(*index))
+                .is_some_and(|item| item.options == self.options),
+            DiffMenuItem::Choice(choice) => {
+                diff_choice_from_options(&self.options) == Some(*choice)
+            }
+        }
     }
 
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
-        if matches!(&self.options.source, DiffSource::Patch(_)) {
+        if self.diffset.is_none() && matches!(&self.options.source, DiffSource::Patch(_)) {
             return Vec::new();
         }
 
@@ -1874,11 +2384,24 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn select_diff_menu_item(&mut self, item: DiffMenuItem) {
+        match item {
+            DiffMenuItem::DiffSet { index, .. } => self.select_diffset_item(index),
+            DiffMenuItem::Choice(choice) => self.select_diff_choice(choice),
+        }
+    }
+
     pub(crate) fn select_diff_choice(&mut self, choice: DiffChoice) {
         let Some(options) = self.options_for_choice(choice) else {
             self.set_notice("base branch unavailable");
             return;
         };
+
+        if let Some(index) = self.diffset_index_for_choice(choice)
+            && let Some(diffset) = self.diffset.as_mut()
+        {
+            diffset.selected = index;
+        }
 
         if options == self.options {
             self.dirty = true;
@@ -1895,7 +2418,7 @@ impl DiffApp {
     }
 
     pub(crate) fn options_for_choice(&self, choice: DiffChoice) -> Option<DiffOptions> {
-        let mut options = self.options.clone();
+        let mut options = self.diff_menu_base_options();
         match choice {
             DiffChoice::Branch => {
                 let base = self
@@ -1925,6 +2448,27 @@ impl DiffApp {
         }
 
         Some(options)
+    }
+
+    fn diff_menu_base_options(&self) -> DiffOptions {
+        self.diffset
+            .as_ref()
+            .and_then(|diffset| {
+                diffset
+                    .items
+                    .iter()
+                    .find(|item| diff_choice_from_options(&item.options) == Some(DiffChoice::All))
+                    .map(|item| item.options.clone())
+            })
+            .unwrap_or_else(|| self.options.clone())
+    }
+
+    fn diffset_index_for_choice(&self, choice: DiffChoice) -> Option<usize> {
+        self.diffset
+            .as_ref()?
+            .items
+            .iter()
+            .position(|item| diff_choice_from_options(&item.options) == Some(choice))
     }
 
     pub(crate) fn scroll_by(&mut self, delta: isize) {
@@ -3316,6 +3860,75 @@ impl DiffApp {
             "reload failed",
         );
         Ok(())
+    }
+
+    pub(crate) fn set_diffset(&mut self, diffset: DiffSet, selected: usize) {
+        let len = diffset.items.len();
+        self.diffset = Some(DiffSetState {
+            items: diffset.items,
+            selected: selected.min(len.saturating_sub(1)),
+        });
+    }
+
+    pub(crate) fn diffset_navigation_available(&self) -> bool {
+        self.diffset
+            .as_ref()
+            .is_some_and(|diffset| diffset.items.len() > 1)
+    }
+
+    pub(crate) fn select_relative_diffset_item(&mut self, delta: isize) {
+        let Some((next, _)) = self.next_diffset_item(delta) else {
+            return;
+        };
+
+        self.select_diffset_item(next);
+    }
+
+    pub(crate) fn select_diffset_item(&mut self, index: usize) {
+        let Some(item) = self
+            .diffset
+            .as_ref()
+            .and_then(|diffset| diffset.items.get(index))
+            .cloned()
+        else {
+            return;
+        };
+
+        if let Some(diffset) = self.diffset.as_mut() {
+            diffset.selected = index;
+        }
+        self.close_diffset_item_menu();
+
+        if item.options == self.options {
+            self.dirty = true;
+            return;
+        }
+
+        let label = item.label.clone();
+        self.start_diff_load(
+            item.options,
+            format!("loading {label}"),
+            label.clone(),
+            format!("failed to load {label}"),
+        );
+    }
+
+    fn next_diffset_item(&self, delta: isize) -> Option<(usize, DiffSetItem)> {
+        let diffset = self.diffset.as_ref()?;
+        let len = diffset.items.len();
+        if len <= 1 || delta == 0 {
+            return None;
+        }
+
+        let selected = diffset.selected.min(len - 1);
+        let steps = delta.unsigned_abs() % len;
+        let next = if delta.is_negative() {
+            (selected + len - steps) % len
+        } else {
+            (selected + steps) % len
+        };
+
+        diffset.items.get(next).cloned().map(|item| (next, item))
     }
 
     pub(crate) fn replace_changeset(&mut self, changeset: Changeset, notice: Option<&str>) {

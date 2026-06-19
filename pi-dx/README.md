@@ -1,7 +1,8 @@
 # pi-dx
 
 Pi extension that adds `/diff` and opens the external `dx` terminal diff
-reviewer from inside Pi.
+reviewer from inside Pi. With no arguments, `/diff` opens a session timeline
+diffset with the current worktree diff plus captured Pi prompt/turn diffs.
 
 `dx` is not bundled with this package. Install `dx` separately and keep it on
 `PATH`, or set `PI_DX_BIN` to the executable path.
@@ -74,10 +75,17 @@ for this repository and workflow before the publish step can succeed.
 /diff --pr 123
 /diff --pr https://github.com/owner/repo/pull/123
 /diff --patch changes.diff
+/diff --diffset ai-session-diffs.json
 ```
 
 The external `dx` terminal UI opens immediately from interactive Pi, including
-while an agent turn is still running. Pi's TUI is restored when `dx` exits.
+while an agent turn is still running. Pi's TUI is restored when `dx` exits. In
+the default timeline view, use left/right inside `dx` to switch between the
+current worktree diff and captured prompt/turn diffs.
+
+Pi turn capture is Git-backed and uses a temporary index, so it supports edits
+made through Pi `edit`, `write`, Codex-style `apply_patch` tools, and shell
+commands without staging files in your real index.
 
 `/diff --patch -` is intentionally rejected because Pi cannot pipe stdin into
 the external viewer from a slash command. Write the patch to a file and pass the
@@ -87,6 +95,6 @@ file path instead.
 
 - Missing `dx`: shows an install hint.
 - Non-interactive Pi mode: refuses to run because `dx` needs a terminal.
-- No Git repo for Git-backed diffs: shows a clean error. Future agent turn diff
-  support can use this branch as the fallback path.
+- No Git repo for Git-backed diffs: shows a clean error unless a captured patch
+  timeline is available.
 - Malformed `/diff` quoting or non-zero `dx` exit: shows a Pi notification.

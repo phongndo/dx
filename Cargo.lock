@@ -447,6 +447,8 @@ version = "0.2.0"
 dependencies = [
  "dx-core",
  "dx-git",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

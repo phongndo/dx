@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::DiffApp,
-    controls::DiffChoice,
+    controls::{DiffChoice, DiffMenuItem},
     render::{
         style::{base_bg, header_bg},
         text::fit_padded,
@@ -26,13 +26,13 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
         return;
     }
 
-    let choices = app.diff_menu_choices();
-    if choices.is_empty() {
+    let items = app.diff_menu_items();
+    if items.is_empty() {
         return;
     }
 
-    let width = diff_menu_width(&choices).min(area.width);
-    let height = (choices.len() as u16).min(area.height - 1);
+    let width = diff_menu_width(&items).min(area.width);
+    let height = (items.len() as u16).min(area.height - 1);
     if width == 0 || height == 0 {
         return;
     }
@@ -43,14 +43,13 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
         width,
         height,
     };
-    let selected = diff_choice_from_options(&app.options);
-    let lines: Vec<_> = choices
+    let lines: Vec<_> = items
         .into_iter()
         .take(height as usize)
-        .map(|choice| {
-            let active = selected == Some(choice);
+        .map(|item| {
+            let active = app.diff_menu_item_active(&item);
             let marker = if active { "✓" } else { " " };
-            let text = fit_padded(&format!(" {marker} {}", choice.label()), width as usize);
+            let text = fit_padded(&format!(" {marker} {}", item.label()), width as usize);
             let style = if active {
                 Style::default()
                     .fg(app.theme.header)
@@ -126,6 +125,82 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect)
                     &format!(" {marker} {branch_marker} {branch}"),
                     width as usize,
                 );
+                let mut style = if active || highlighted {
+                    Style::default()
+                        .fg(app.theme.header)
+                        .bg(header_bg(app.theme))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(app.theme.foreground)
+                        .bg(header_bg(app.theme))
+                };
+                if highlighted {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+                Line::from(Span::styled(text, style))
+            })
+            .collect()
+    };
+
+    frame.render_widget(Clear, menu_area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(header_bg(app.theme))),
+        menu_area,
+    );
+}
+
+pub(crate) fn draw_diffset_item_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
+    if !app.diffset_item_menu_open || area.height <= 1 {
+        return;
+    }
+
+    let x = app
+        .diffset_item_selector_start()
+        .unwrap_or_default()
+        .min(area.width);
+    let width = app
+        .diffset_item_menu_width()
+        .min(area.width.saturating_sub(x));
+    let height = (app.diffset_item_menu_height() as u16).min(area.height - 1);
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let menu_area = Rect {
+        x: area.x + x,
+        y: area.y + 1,
+        width,
+        height,
+    };
+    let entries = app.diffset_item_menu_entries();
+    let lines: Vec<_> = if entries.is_empty() {
+        vec![Line::from(Span::styled(
+            fit_padded("   no matches", width as usize),
+            Style::default()
+                .fg(app.theme.muted)
+                .bg(header_bg(app.theme)),
+        ))]
+    } else {
+        entries
+            .into_iter()
+            .enumerate()
+            .skip(app.diffset_item_menu_scroll)
+            .take(height as usize)
+            .map(|(row_index, (index, label))| {
+                let active = app
+                    .diffset
+                    .as_ref()
+                    .is_some_and(|diffset| diffset.selected == index);
+                let highlighted = row_index == app.diffset_item_menu_selected;
+                let marker = if active {
+                    "✓"
+                } else if highlighted {
+                    "›"
+                } else {
+                    " "
+                };
+                let text = fit_padded(&format!(" {marker} {label}"), width as usize);
                 let mut style = if active || highlighted {
                     Style::default()
                         .fg(app.theme.header)
@@ -327,10 +402,12 @@ pub(crate) fn help_menu_empty_spans(width: usize, bg: Color) -> Vec<Span<'static
     vec![Span::styled(" ".repeat(width), Style::default().bg(bg))]
 }
 
+#[cfg(test)]
 pub(crate) fn diff_selector_text(options: &DiffOptions) -> String {
     format!(" {} ", diff_type_label(options))
 }
 
+#[cfg(test)]
 pub(crate) fn diff_selector_width(options: &DiffOptions) -> u16 {
     diff_selector_text(options).width() as u16
 }
@@ -375,10 +452,10 @@ pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
     }
 }
 
-pub(crate) fn diff_menu_width(choices: &[DiffChoice]) -> u16 {
-    choices
+pub(crate) fn diff_menu_width(items: &[DiffMenuItem]) -> u16 {
+    items
         .iter()
-        .map(|choice| choice.label().width() + 4)
+        .map(|item| item.label().width() + 4)
         .max()
         .unwrap_or_default() as u16
 }

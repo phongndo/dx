@@ -9,6 +9,7 @@ use std::{
 };
 
 use dx_core::{DxError, DxResult};
+use serde::Deserialize;
 
 const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
 
@@ -62,6 +63,64 @@ impl Default for DiffOptions {
             stat: false,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffSet {
+    pub title: Option<String>,
+    pub default_item: Option<String>,
+    pub items: Vec<DiffSetItem>,
+}
+
+impl DiffSet {
+    pub fn default_index(&self) -> usize {
+        self.default_item
+            .as_deref()
+            .and_then(|default_item| self.items.iter().position(|item| item.id == default_item))
+            .unwrap_or_default()
+    }
+
+    pub fn default_item(&self) -> Option<&DiffSetItem> {
+        self.items.get(self.default_index())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffSetItem {
+    pub id: String,
+    pub label: String,
+    pub type_label: Option<String>,
+    pub detail: Option<String>,
+    pub options: DiffOptions,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawDiffSet {
+    version: Option<u64>,
+    title: Option<String>,
+    #[serde(default, alias = "default")]
+    default_item: Option<String>,
+    items: Vec<RawDiffSetItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawDiffSetItem {
+    id: Option<String>,
+    label: Option<String>,
+    type_label: Option<String>,
+    detail: Option<String>,
+    kind: String,
+    repo: Option<PathBuf>,
+    patch: Option<PathBuf>,
+    scope: Option<String>,
+    base: Option<String>,
+    head: Option<String>,
+    left: Option<String>,
+    right: Option<String>,
+    include_untracked: Option<bool>,
+    no_untracked: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,6 +325,136 @@ impl DiffViewModel {
             .checked_sub(1)
             .and_then(|index| self.hunk_start_rows.get(index))
             .copied()
+    }
+}
+
+pub fn diffset_from_file(path: impl AsRef<Path>) -> DxResult<DiffSet> {
+    let path = path.as_ref();
+    let contents = fs::read(path)?;
+    let raw: RawDiffSet = serde_json::from_slice(&contents)?;
+    diffset_from_raw(raw, path.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+fn diffset_from_raw(raw: RawDiffSet, base_dir: &Path) -> DxResult<DiffSet> {
+    if let Some(version) = raw.version
+        && version != 1
+    {
+        return Err(DxError::Usage(format!(
+            "unsupported diffset version {version}; expected version 1"
+        )));
+    }
+    if raw.items.is_empty() {
+        return Err(DxError::Usage(
+            "diffset manifest must contain at least one item".to_owned(),
+        ));
+    }
+
+    let mut items = Vec::with_capacity(raw.items.len());
+    for (index, raw_item) in raw.items.into_iter().enumerate() {
+        items.push(diffset_item_from_raw(raw_item, index, base_dir)?);
+    }
+
+    Ok(DiffSet {
+        title: raw.title,
+        default_item: raw.default_item,
+        items,
+    })
+}
+
+fn diffset_item_from_raw(
+    raw: RawDiffSetItem,
+    index: usize,
+    base_dir: &Path,
+) -> DxResult<DiffSetItem> {
+    let kind = raw.kind.trim();
+    let id = raw
+        .id
+        .unwrap_or_else(|| format!("{}-{}", kind.replace('_', "-"), index + 1));
+    let label = raw.label.clone().unwrap_or_else(|| id.clone());
+    let repo = raw
+        .repo
+        .as_ref()
+        .map(|path| resolve_diffset_path(base_dir, path));
+    let include_untracked = raw
+        .include_untracked
+        .unwrap_or(!raw.no_untracked.unwrap_or(false));
+    let scope = diffset_scope(raw.scope.as_deref())?;
+
+    let source = match kind {
+        "patch" => {
+            let patch = raw.patch.as_ref().ok_or_else(|| {
+                DxError::Usage(format!("diffset item {id} is missing patch path"))
+            })?;
+            let patch = fs::read(resolve_diffset_path(base_dir, patch))?;
+            DiffSource::Patch(PatchSource::Text {
+                label: label.clone(),
+                patch: Arc::from(patch.into_boxed_slice()),
+            })
+        }
+        "worktree" | "current" => DiffSource::Worktree,
+        "base" => DiffSource::Base(raw.base.ok_or_else(|| {
+            DxError::Usage(format!("diffset item {id} is missing base revision"))
+        })?),
+        "branch" => DiffSource::Branch {
+            base: raw.base.ok_or_else(|| {
+                DxError::Usage(format!("diffset item {id} is missing base revision"))
+            })?,
+            head: raw.head.ok_or_else(|| {
+                DxError::Usage(format!("diffset item {id} is missing head revision"))
+            })?,
+        },
+        "range" => DiffSource::Range {
+            left: raw.left.ok_or_else(|| {
+                DxError::Usage(format!("diffset item {id} is missing left revision"))
+            })?,
+            right: raw.right.ok_or_else(|| {
+                DxError::Usage(format!("diffset item {id} is missing right revision"))
+            })?,
+        },
+        _ => {
+            return Err(DxError::Usage(format!(
+                "unsupported diffset item kind {kind:?}"
+            )));
+        }
+    };
+
+    if matches!(source, DiffSource::Patch(_)) && scope != DiffScope::All {
+        return Err(DxError::Usage(format!(
+            "diffset patch item {id} cannot use staged or unstaged scope"
+        )));
+    }
+
+    Ok(DiffSetItem {
+        id,
+        label,
+        type_label: raw.type_label,
+        detail: raw.detail,
+        options: DiffOptions {
+            repo,
+            source,
+            scope,
+            include_untracked: !matches!(kind, "patch") && include_untracked,
+            stat: false,
+        },
+    })
+}
+
+fn resolve_diffset_path(base_dir: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    }
+}
+
+fn diffset_scope(scope: Option<&str>) -> DxResult<DiffScope> {
+    match scope.unwrap_or("all") {
+        "all" => Ok(DiffScope::All),
+        "staged" => Ok(DiffScope::Staged),
+        "unstaged" => Ok(DiffScope::Unstaged),
+        value => Err(DxError::Usage(format!(
+            "unsupported diffset scope {value:?}; expected all, staged, or unstaged"
+        ))),
     }
 }
 
@@ -2203,6 +2392,45 @@ mod tests {
         .expect("patch source should render");
 
         assert_eq!(output, patch);
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn diffset_manifest_loads_patch_items_relative_to_manifest() {
+        let test_dir = temp_test_dir("diffset-manifest");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        let patch_path = test_dir.join("turn-1.diff");
+        let patch =
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+        fs::write(&patch_path, patch).expect("patch file should be written");
+        let manifest_path = test_dir.join("diffset.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+  "version": 1,
+  "title": "AI session diffs",
+  "defaultItem": "turn-1",
+  "items": [
+    { "id": "turn-1", "label": "T1", "kind": "patch", "patch": "turn-1.diff" }
+  ]
+}
+"#,
+        )
+        .expect("manifest should be written");
+
+        let diffset = diffset_from_file(&manifest_path).expect("diffset should load");
+
+        assert_eq!(diffset.title.as_deref(), Some("AI session diffs"));
+        assert_eq!(diffset.default_index(), 0);
+        assert_eq!(diffset.items.len(), 1);
+        assert_eq!(diffset.items[0].id, "turn-1");
+        assert_eq!(diffset.items[0].label, "T1");
+        let changeset = load_review_ref(&diffset.items[0].options).unwrap();
+        assert_eq!(changeset.title, "T1");
+        assert_eq!(changeset.files.len(), 1);
+        assert_eq!(changeset.files[0].additions, 1);
+        assert_eq!(changeset.files[0].deletions, 1);
+
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 
