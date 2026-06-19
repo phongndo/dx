@@ -267,6 +267,14 @@ impl Keymap {
             .any(|sequence| sequence.0.len() == 2 && sequence.0.first() == Some(&self.leader))
     }
 
+    pub(crate) fn leader_label(&self) -> String {
+        key_display_label(&self.leader)
+    }
+
+    pub(crate) fn global_action_label(&self, action: GlobalAction) -> String {
+        sequence_list_display_label(self.global_sequences(action))
+    }
+
     pub(crate) fn matches_menu(&self, action: MenuAction, key: KeyEvent) -> bool {
         let key = KeyPress::from(key);
         self.menu_sequences(action)
@@ -424,6 +432,64 @@ fn sequence_label(sequence: &KeySequence) -> String {
         .map(key_label)
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn sequence_list_display_label(sequences: &[KeySequence]) -> String {
+    if sequences.is_empty() {
+        return "unbound".to_owned();
+    }
+
+    sequences
+        .iter()
+        .map(sequence_display_label)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn sequence_display_label(sequence: &KeySequence) -> String {
+    sequence
+        .0
+        .iter()
+        .map(key_display_label)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn key_display_label(key: &KeyPress) -> String {
+    let mut parts = Vec::new();
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        parts.push("Ctrl".to_owned());
+    }
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        parts.push("Alt".to_owned());
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        parts.push("Shift".to_owned());
+    }
+    let has_modifier = !parts.is_empty();
+    let key_label = match key.code {
+        KeyCode::Char(' ') => "Space".to_owned(),
+        KeyCode::Char(character) if has_modifier && character.is_ascii_alphabetic() => {
+            character.to_ascii_uppercase().to_string()
+        }
+        KeyCode::Char(character) => character.to_string(),
+        KeyCode::Enter => "Enter".to_owned(),
+        KeyCode::Esc => "Esc".to_owned(),
+        KeyCode::Tab => "Tab".to_owned(),
+        KeyCode::BackTab => "Shift-Tab".to_owned(),
+        KeyCode::Up => "Up".to_owned(),
+        KeyCode::Down => "Down".to_owned(),
+        KeyCode::Left => "Left".to_owned(),
+        KeyCode::Right => "Right".to_owned(),
+        KeyCode::Home => "Home".to_owned(),
+        KeyCode::End => "End".to_owned(),
+        KeyCode::PageUp => "PgUp".to_owned(),
+        KeyCode::PageDown => "PgDn".to_owned(),
+        KeyCode::Backspace => "Backspace".to_owned(),
+        _ => format!("{:?}", key.code),
+    };
+    parts.push(key_label);
+    parts.join("-")
 }
 
 fn key_label(key: &KeyPress) -> String {

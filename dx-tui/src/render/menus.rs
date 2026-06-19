@@ -10,6 +10,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::{DiffApp, OptionsMenuItem, color_scheme_label, context_expansion_label},
     controls::{DiffChoice, INPUT_CURSOR},
+    keymap::Keymap,
     render::{
         style::{base_bg, header_bg},
         text::fit_padded,
@@ -17,7 +18,7 @@ use crate::{
     theme::{
         DiffTheme, HELP_KEY_COLUMN_WIDTH, HELP_MENU_COLUMN_GAP, HELP_MENU_HORIZONTAL_PADDING,
         HELP_MENU_LEFT_ROWS, HELP_MENU_RIGHT_ROWS, HELP_MENU_TWO_COLUMN_MIN_WIDTH,
-        HELP_MENU_VERTICAL_PADDING, HELP_MENU_WIDTH, HelpMenuRow,
+        HELP_MENU_VERTICAL_PADDING, HELP_MENU_WIDTH, HelpMenuKey, HelpMenuRow,
     },
 };
 
@@ -537,6 +538,7 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
             inner.width as usize,
             inner.height as usize,
             app.theme,
+            &app.keymap,
         )))
         .style(Style::default().bg(help_menu_bg(app.theme))),
         inner,
@@ -584,10 +586,15 @@ pub(crate) fn help_menu_description_color(theme: DiffTheme) -> Color {
     theme.foreground
 }
 
-pub(crate) fn help_menu_lines(width: usize, height: usize, theme: DiffTheme) -> Vec<Line<'static>> {
+pub(crate) fn help_menu_lines(
+    width: usize,
+    height: usize,
+    theme: DiffTheme,
+    keymap: &Keymap,
+) -> Vec<Line<'static>> {
     if help_menu_uses_two_columns(width) {
         return (0..height.min(help_menu_content_rows(width)))
-            .map(|index| help_menu_columns_line(index, width, theme))
+            .map(|index| help_menu_columns_line(index, width, theme, keymap))
             .collect();
     }
 
@@ -595,7 +602,7 @@ pub(crate) fn help_menu_lines(width: usize, height: usize, theme: DiffTheme) -> 
         .iter()
         .chain(HELP_MENU_RIGHT_ROWS)
         .take(height)
-        .map(|row| Line::from(help_menu_row_spans(*row, width, theme)))
+        .map(|row| Line::from(help_menu_row_spans(*row, width, theme, keymap)))
         .collect()
 }
 
@@ -603,6 +610,7 @@ pub(crate) fn help_menu_columns_line(
     index: usize,
     width: usize,
     theme: DiffTheme,
+    keymap: &Keymap,
 ) -> Line<'static> {
     let gap_width = HELP_MENU_COLUMN_GAP.min(width);
     let left_width = width.saturating_sub(gap_width) / 2;
@@ -610,12 +618,12 @@ pub(crate) fn help_menu_columns_line(
     let bg = help_menu_bg(theme);
 
     let mut spans = help_menu_row_at(HELP_MENU_LEFT_ROWS, index)
-        .map(|row| help_menu_row_spans(row, left_width, theme))
+        .map(|row| help_menu_row_spans(row, left_width, theme, keymap))
         .unwrap_or_else(|| help_menu_empty_spans(left_width, bg));
     spans.push(Span::styled(" ".repeat(gap_width), Style::default().bg(bg)));
     spans.extend(
         help_menu_row_at(HELP_MENU_RIGHT_ROWS, index)
-            .map(|row| help_menu_row_spans(row, right_width, theme))
+            .map(|row| help_menu_row_spans(row, right_width, theme, keymap))
             .unwrap_or_else(|| help_menu_empty_spans(right_width, bg)),
     );
 
@@ -642,6 +650,7 @@ pub(crate) fn help_menu_row_spans(
     row: HelpMenuRow,
     width: usize,
     theme: DiffTheme,
+    keymap: &Keymap,
 ) -> Vec<Span<'static>> {
     let bg = help_menu_bg(theme);
     match row {
@@ -653,11 +662,12 @@ pub(crate) fn help_menu_row_spans(
                 .add_modifier(Modifier::BOLD),
         )],
         HelpMenuRow::Binding(keys, description) => {
+            let key_label = help_menu_key_label(keys, keymap);
             let key_width = HELP_KEY_COLUMN_WIDTH.min(width);
             let description_width = width.saturating_sub(key_width);
             vec![
                 Span::styled(
-                    fit_padded(&format!("  {keys}"), key_width),
+                    fit_padded(&format!("  {key_label}"), key_width),
                     Style::default()
                         .fg(help_menu_key_color(theme))
                         .bg(bg)
@@ -671,6 +681,19 @@ pub(crate) fn help_menu_row_spans(
                 ),
             ]
         }
+    }
+}
+
+pub(crate) fn help_menu_key_label(key: HelpMenuKey, keymap: &Keymap) -> String {
+    match key {
+        HelpMenuKey::Static(label) => label.to_owned(),
+        HelpMenuKey::Leader => keymap.leader_label(),
+        HelpMenuKey::Global(action) => keymap.global_action_label(action),
+        HelpMenuKey::GlobalPair(first, second) => format!(
+            "{}/{}",
+            keymap.global_action_label(first),
+            keymap.global_action_label(second)
+        ),
     }
 }
 

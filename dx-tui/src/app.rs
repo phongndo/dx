@@ -1738,7 +1738,6 @@ impl DiffApp {
     }
 
     pub(crate) fn invalidate_diff_cache(&mut self) {
-        self.pending_diff_load = None;
         self.clear_cached_diff_choices();
     }
 

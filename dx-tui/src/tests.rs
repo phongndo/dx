@@ -45,7 +45,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthStr;
 
 #[test]
@@ -2646,7 +2646,13 @@ fn error_log_separator_fills_width() {
 #[test]
 fn help_menu_lines_list_keybindings() {
     let width = 80;
-    let lines = help_menu_lines(width, help_menu_content_rows(width), DiffTheme::default());
+    let keymap = Keymap::default();
+    let lines = help_menu_lines(
+        width,
+        help_menu_content_rows(width),
+        DiffTheme::default(),
+        &keymap,
+    );
     let text: Vec<_> = lines.iter().map(line_text).collect();
 
     assert_eq!(lines.len(), help_menu_content_rows(width));
@@ -2664,6 +2670,48 @@ fn help_menu_lines_list_keybindings() {
     assert!(!text.iter().any(|line| line.contains("s, Space s")));
     assert!(text.iter().any(|line| line.contains("Backspace")));
     assert!(text.iter().any(|line| line.contains("Ctrl-U")));
+}
+
+#[test]
+fn help_menu_lines_use_configured_keymap_labels() {
+    let width = 80;
+    let keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        leader = ","
+        help = "ctrl-h"
+        quit = "q"
+        file_browser = ", v"
+        layout = ", l"
+        "#,
+    )
+    .expect("keymap should parse");
+    let lines = help_menu_lines(
+        width,
+        help_menu_content_rows(width),
+        DiffTheme::default(),
+        &keymap,
+    );
+    let text: Vec<_> = lines.iter().map(line_text).collect();
+
+    assert!(text.iter().any(|line| line.contains("Ctrl-H")));
+    assert!(
+        text.iter()
+            .any(|line| line.contains(",") && line.contains("leader"))
+    );
+    assert!(
+        text.iter()
+            .any(|line| line.contains("  q") && line.contains("quit"))
+    );
+    assert!(
+        text.iter()
+            .any(|line| line.contains(", v") && line.contains("file sidebar"))
+    );
+    assert!(
+        text.iter()
+            .any(|line| line.contains(", l") && line.contains("split / unified"))
+    );
+    assert!(!text.iter().any(|line| line.contains("Space q")));
 }
 
 #[test]
@@ -2686,11 +2734,17 @@ fn help_menu_uses_diff_theme_colors() {
     assert_eq!(help_menu_bg(theme), theme.background);
     assert_eq!(help_menu_title_color(theme), section_color);
 
-    let section = help_menu_row_spans(HelpMenuRow::Section("Section"), 20, theme);
+    let keymap = Keymap::default();
+    let section = help_menu_row_spans(HelpMenuRow::Section("Section"), 20, theme, &keymap);
     assert_eq!(section[0].style.fg, Some(section_color));
     assert_eq!(section[0].style.bg, Some(theme.background));
 
-    let binding = help_menu_row_spans(HelpMenuRow::Binding("?", "help"), 20, theme);
+    let binding = help_menu_row_spans(
+        HelpMenuRow::Binding(HelpMenuKey::Static("?"), "help"),
+        20,
+        theme,
+        &keymap,
+    );
     assert_eq!(binding[0].style.fg, Some(key_color));
     assert_eq!(binding[0].style.bg, Some(theme.background));
     assert_eq!(binding[1].style.fg, Some(theme.foreground));
@@ -3686,19 +3740,24 @@ fn reload_invalidates_cached_diff_choices() {
 }
 
 #[test]
-fn cache_invalidation_cancels_stale_pending_diff_load() {
+fn cache_invalidation_preserves_pending_diff_load() {
     let mut app = DiffApp::new(
         DiffOptions::default(),
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
-    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
-        .expect("tab should queue diff load");
-    assert!(app.pending_diff_load.is_some());
+    let pending_options = DiffOptions {
+        scope: DiffScope::Unstaged,
+        ..DiffOptions::default()
+    };
+    app.pending_diff_load = Some(pending_diff_load(pending_options.clone()));
 
     app.invalidate_diff_cache();
 
-    assert!(app.pending_diff_load.is_none());
+    assert_eq!(
+        app.pending_diff_load.as_ref().map(|load| &load.options),
+        Some(&pending_options)
+    );
 }
 
 #[test]
@@ -5516,6 +5575,17 @@ fn changeset_with_files(paths: &[&str]) -> Changeset {
         title: "test".to_owned(),
         files,
         raw_patch: Vec::new(),
+    }
+}
+
+fn pending_diff_load(options: DiffOptions) -> PendingDiffLoad {
+    let (_tx, rx) = oneshot::channel();
+    PendingDiffLoad {
+        options,
+        success_notice: "loaded".to_owned(),
+        error_prefix: "load failed".to_owned(),
+        refresh_branch_metadata: false,
+        rx,
     }
 }
 
