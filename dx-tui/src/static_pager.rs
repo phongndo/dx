@@ -213,27 +213,22 @@ fn sanitize_terminal_fragment(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut index = 0;
     while index < bytes.len() {
-        match bytes[index] {
-            0x1b => skip_escape(bytes, &mut index),
-            b'\t' => {
-                output.push('\t');
-                index += 1;
-            }
-            0x00..=0x1f | 0x7f => {
-                let Some(character) = text[index..].chars().next() else {
-                    break;
-                };
-                output.extend(character.escape_default());
-                index += character.len_utf8();
-            }
-            _ => {
-                let Some(character) = text[index..].chars().next() else {
-                    break;
-                };
-                output.push(character);
-                index += character.len_utf8();
-            }
+        if bytes[index] == 0x1b {
+            skip_escape(bytes, &mut index);
+            continue;
         }
+
+        let Some(character) = text[index..].chars().next() else {
+            break;
+        };
+        if character == '\t' {
+            output.push('\t');
+        } else if character.is_control() {
+            output.extend(character.escape_default());
+        } else {
+            output.push(character);
+        }
+        index += character.len_utf8();
     }
     output
 }
@@ -411,6 +406,27 @@ mod tests {
 
         assert!(output.contains("old\\r"));
         assert!(output.contains("+old"));
+    }
+
+    #[test]
+    fn static_pager_escapes_utf8_c1_controls() {
+        let mut changeset = fixture_changeset();
+        changeset.files[0].hunks[0].lines[1].text = "safe\u{009b}31m".to_owned();
+
+        let output = render_static_changeset(
+            DiffOptions::default(),
+            changeset,
+            StaticPagerOptions {
+                width: 80,
+                layout: StaticPagerLayout::Unified,
+                color: false,
+                syntax: false,
+                ..StaticPagerOptions::default()
+            },
+        );
+
+        assert!(!output.contains('\u{009b}'));
+        assert!(output.contains("safe\\u{9b}31m"));
     }
 
     #[test]

@@ -20,6 +20,7 @@ dx-command.workspace = true
 dx-core.workspace = true
 dx-diff.workspace = true
 dx-tui.workspace = true
+shlex.workspace = true
 unicode-width.workspace = true
 
 [target.'cfg(unix)'.dependencies]

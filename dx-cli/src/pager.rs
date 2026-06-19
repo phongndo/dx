@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     env,
     ffi::OsString,
     fs::OpenOptions,
@@ -21,6 +22,7 @@ use crate::{
 const DEFAULT_TEXT_PAGER: &str = "less -R";
 const DEFAULT_STATIC_WIDTH: usize = 120;
 const MIN_STATIC_WIDTH: usize = 20;
+const PLAIN_TEXT_PAGER_GUARD: &str = "DX_PAGER_PLAIN_TEXT_FALLBACK";
 
 pub(crate) fn pager(args: PagerArgs) -> CliResult<()> {
     if io::stdin().is_terminal() {
@@ -156,7 +158,12 @@ fn patch_options(patch: Vec<u8>) -> dx_command::DiffOptions {
 }
 
 fn page_plain_text(input: &[u8]) -> CliResult<()> {
-    let pager_command = env::var("PAGER").unwrap_or_else(|_| DEFAULT_TEXT_PAGER.to_owned());
+    if env::var_os(PLAIN_TEXT_PAGER_GUARD).is_some() {
+        return write_stdout_bytes(input);
+    }
+
+    let configured_pager = env::var("PAGER").ok();
+    let pager_command = resolve_text_pager_command(configured_pager.as_deref());
     match spawn_shell_command(&pager_command) {
         Ok(mut child) => {
             if let Some(mut stdin) = child.stdin.take()
@@ -184,12 +191,89 @@ fn page_plain_text(input: &[u8]) -> CliResult<()> {
     }
 }
 
+fn resolve_text_pager_command(configured_pager: Option<&str>) -> Cow<'_, str> {
+    let pager_command = configured_pager
+        .filter(|command| !command.trim().is_empty())
+        .unwrap_or(DEFAULT_TEXT_PAGER);
+
+    if command_invokes_dx_pager(pager_command) {
+        Cow::Borrowed(DEFAULT_TEXT_PAGER)
+    } else {
+        Cow::Borrowed(pager_command)
+    }
+}
+
+fn command_invokes_dx_pager(command: &str) -> bool {
+    let Some(words) = shlex::split(command) else {
+        return false;
+    };
+    let Some(command_index) = first_shell_command_word(&words) else {
+        return false;
+    };
+
+    executable_is_dx(&words[command_index])
+        && words
+            .get(command_index + 1)
+            .is_some_and(|argument| argument == "pager")
+}
+
+fn first_shell_command_word(words: &[String]) -> Option<usize> {
+    let mut index = 0;
+    while index < words.len() {
+        match words[index].as_str() {
+            "command" | "exec" => index += 1,
+            "env" => {
+                index += 1;
+                while index < words.len() {
+                    match words[index].as_str() {
+                        "--" => {
+                            index += 1;
+                            break;
+                        }
+                        "-u" | "--unset" => index += 2,
+                        "-i" | "--ignore-environment" => index += 1,
+                        option if option.starts_with("--unset=") => index += 1,
+                        option if option.starts_with('-') => index += 1,
+                        assignment if is_env_assignment(assignment) => index += 1,
+                        _ => break,
+                    }
+                }
+            }
+            assignment if is_env_assignment(assignment) => index += 1,
+            _ => return Some(index),
+        }
+    }
+    None
+}
+
+fn is_env_assignment(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+}
+
+fn executable_is_dx(program: &str) -> bool {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let stem = name
+        .strip_suffix(".exe")
+        .or_else(|| name.strip_suffix(".EXE"))
+        .unwrap_or(name);
+    stem.eq_ignore_ascii_case("dx")
+}
+
 #[cfg(unix)]
 fn spawn_shell_command(command: &str) -> io::Result<std::process::Child> {
     let shell = env::var_os("SHELL").unwrap_or_else(|| OsString::from("/bin/sh"));
     Command::new(shell)
         .arg("-c")
         .arg(command)
+        .env(PLAIN_TEXT_PAGER_GUARD, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -201,6 +285,7 @@ fn spawn_shell_command(command: &str) -> io::Result<std::process::Child> {
     Command::new("cmd")
         .arg("/C")
         .arg(command)
+        .env(PLAIN_TEXT_PAGER_GUARD, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -318,7 +403,7 @@ fn controlling_terminal_available() -> bool {
 
 #[cfg(not(unix))]
 fn controlling_terminal_available() -> bool {
-    true
+    false
 }
 
 #[cfg(unix)]
@@ -336,7 +421,10 @@ fn attach_controlling_terminal_to_stdin() -> io::Result<Option<StdinOverride>> {
 
 #[cfg(not(unix))]
 fn attach_controlling_terminal_to_stdin() -> io::Result<Option<StdinOverride>> {
-    Ok(None)
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "attaching redirected pager stdin to the controlling terminal is unsupported on this platform",
+    ))
 }
 
 #[cfg(unix)]
@@ -493,6 +581,42 @@ mod tests {
         );
 
         assert_eq!(action, PagerAction::PlainTextPager);
+    }
+
+    #[test]
+    fn plain_text_pager_replaces_self_referential_dx_pager() {
+        assert_eq!(
+            resolve_text_pager_command(Some("dx pager")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("/usr/local/bin/dx pager --layout unified")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("env TERM=xterm-256color dx pager")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("command dx pager")),
+            DEFAULT_TEXT_PAGER
+        );
+        assert_eq!(
+            resolve_text_pager_command(Some("PAGER=cat exec dx pager")),
+            DEFAULT_TEXT_PAGER
+        );
+    }
+
+    #[test]
+    fn plain_text_pager_preserves_non_self_pager_commands() {
+        assert_eq!(resolve_text_pager_command(None), DEFAULT_TEXT_PAGER);
+        assert_eq!(resolve_text_pager_command(Some("")), DEFAULT_TEXT_PAGER);
+        assert_eq!(resolve_text_pager_command(Some("less -FRX")), "less -FRX");
+        assert_eq!(
+            resolve_text_pager_command(Some("delta --paging=always")),
+            "delta --paging=always"
+        );
+        assert_eq!(resolve_text_pager_command(Some("dx diff")), "dx diff");
     }
 
     #[test]
