@@ -810,6 +810,7 @@ fn git_show_args(rev: &str) -> Vec<String> {
         "--no-ext-diff".to_owned(),
         "--no-color".to_owned(),
         "--find-renames".to_owned(),
+        "-m".to_owned(),
         "--end-of-options".to_owned(),
         rev.to_owned(),
     ]
@@ -872,6 +873,7 @@ fn git_show_numstat_args(rev: &str) -> Vec<String> {
         "--no-ext-diff".to_owned(),
         "--no-color".to_owned(),
         "--find-renames".to_owned(),
+        "-m".to_owned(),
         "--end-of-options".to_owned(),
         rev.to_owned(),
     ]
@@ -2265,6 +2267,7 @@ mod tests {
                 "--no-ext-diff",
                 "--no-color",
                 "--find-renames",
+                "-m",
                 "--end-of-options",
                 "HEAD",
             ])
@@ -2299,6 +2302,66 @@ mod tests {
         .expect("stat should be utf-8");
         assert!(stat.contains("base.txt"));
         assert!(stat.contains("1 files changed, 1 insertions(+), 0 deletions(-)"));
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn show_source_renders_merge_commit_as_parseable_parent_diffs() {
+        let test_dir = temp_test_dir("show-merge-source");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        git(["checkout", "-q", "-b", "left"], &repo);
+        fs::write(repo.join("base.txt"), "left\n").expect("left file should change");
+        git(["commit", "-q", "-am", "left"], &repo);
+
+        git(["checkout", "-q", "-b", "right", "HEAD~1"], &repo);
+        fs::write(repo.join("base.txt"), "right\n").expect("right file should change");
+        git(["commit", "-q", "-am", "right"], &repo);
+
+        git(["checkout", "-q", "left"], &repo);
+        let merge = Command::new("git")
+            .current_dir(&repo)
+            .args(["merge", "--no-ff", "right", "-m", "merge"])
+            .output()
+            .expect("git merge should run");
+        assert!(!merge.status.success(), "merge should conflict");
+        fs::write(repo.join("base.txt"), "merged\n").expect("merge should be resolved");
+        git(["add", "base.txt"], &repo);
+        git(["commit", "-q", "--no-edit"], &repo);
+
+        let changeset = load(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Show("HEAD".to_owned()),
+            include_untracked: false,
+            ..DiffOptions::default()
+        })
+        .expect("show source should load merge diff");
+
+        assert_eq!(changeset.files.len(), 2);
+        assert!(
+            changeset.files.iter().all(|file| !file.hunks.is_empty()),
+            "merge parent diffs should parse into hunks"
+        );
+        let raw_patch = String::from_utf8_lossy(&changeset.raw_patch);
+        assert!(raw_patch.contains("diff --git a/base.txt b/base.txt"));
+        assert!(!raw_patch.contains("diff --cc"));
+        assert!(!raw_patch.contains("@@@"));
+
+        let stat = String::from_utf8(
+            render_bytes(DiffOptions {
+                repo: Some(repo),
+                source: DiffSource::Show("HEAD".to_owned()),
+                include_untracked: false,
+                stat: true,
+                ..DiffOptions::default()
+            })
+            .expect("show source stats should render"),
+        )
+        .expect("stat should be utf-8");
+        assert!(stat.contains("2 files changed, 2 insertions(+), 2 deletions(-)"));
 
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }

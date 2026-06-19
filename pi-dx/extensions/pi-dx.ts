@@ -86,7 +86,7 @@ async function handleDxCommand(
     }
   }
 
-  const result = await runDxInTerminal(ctx, dx, [command, ...argv]);
+  const result = await runDxInTerminal(ctx, dx, dxInvocationArgs(command, argv));
   if (!result) {
     report(ctx, "dx did not return a result.", "error");
     return;
@@ -372,7 +372,7 @@ export function parseCommandLine(input: string): string[] {
 }
 
 export function dxInvocationNeedsGit(command: DxCommand, argv: string[]): boolean {
-  if (argv.some((arg) => ["--help", "-h", "--version", "-V"].includes(arg))) {
+  if (argv.some((arg) => ["--help", "-h"].includes(arg) || isVersionFlag(arg))) {
     return false;
   }
 
@@ -389,6 +389,19 @@ export function dxInvocationNeedsGit(command: DxCommand, argv: string[]): boolea
   }
 
   return true;
+}
+
+function dxInvocationArgs(command: DxCommand, argv: string[]): string[] {
+  const versionFlag = argv.find(isVersionFlag);
+  if (versionFlag) {
+    return [versionFlag];
+  }
+
+  return [command, ...argv];
+}
+
+function isVersionFlag(arg: string): boolean {
+  return arg === "--version" || arg === "-V";
 }
 
 function repoPathFromArgs(argv: string[]): string | null | undefined {

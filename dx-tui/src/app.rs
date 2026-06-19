@@ -2130,7 +2130,10 @@ impl DiffApp {
     }
 
     pub(crate) fn focused_hunk_editor_target(&self) -> Option<EditorTarget> {
-        if matches!(self.options.source, DiffSource::Patch(_)) {
+        if matches!(
+            self.options.source,
+            DiffSource::Patch(_) | DiffSource::Show(_)
+        ) {
             return None;
         }
 
@@ -2149,7 +2152,10 @@ impl DiffApp {
     }
 
     pub(crate) fn focused_hunk_editor_reload_request(&self) -> Option<EditorReloadRequest> {
-        if matches!(self.options.source, DiffSource::Patch(_)) {
+        if matches!(
+            self.options.source,
+            DiffSource::Patch(_) | DiffSource::Show(_)
+        ) {
             return None;
         }
 

@@ -887,6 +887,23 @@ fn focused_hunk_editor_target_skips_deleted_files() {
 }
 
 #[test]
+fn focused_hunk_editor_target_skips_show_sources() {
+    let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
+    let mut app = DiffApp::new(
+        DiffOptions {
+            source: DiffSource::Show("HEAD~1".to_owned()),
+            ..DiffOptions::default()
+        },
+        changeset,
+        DiffLayoutMode::Unified,
+    );
+    app.set_viewport_rows(5);
+
+    assert_eq!(app.focused_hunk_editor_target(), None);
+    assert_eq!(app.focused_hunk_editor_reload_request(), None);
+}
+
+#[test]
 fn editor_command_helpers_choose_line_arguments() {
     assert_eq!(
         split_editor_command("nvim -f").unwrap(),

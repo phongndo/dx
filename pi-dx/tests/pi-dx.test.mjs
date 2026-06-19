@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -92,6 +92,93 @@ test("dxInvocationNeedsGit requires git for diffs, revisions, and review numbers
   assert.equal(dxInvocationNeedsGit("show", []), true);
   assert.equal(dxInvocationNeedsGit("show", ["HEAD~1"]), true);
   assert.equal(dxInvocationNeedsGit("show", ["review", "123"]), true);
+});
+
+test("version flags run top-level dx instead of slash subcommands", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "pi-dx-test-"));
+  const dxPath = join(tempDir, "dx");
+  const argsPath = join(tempDir, "args.json");
+  const oldPiDxBin = process.env.PI_DX_BIN;
+  const oldArgsPath = process.env.PI_DX_TEST_ARGS;
+
+  try {
+    await writeFile(
+      dxPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.PI_DX_TEST_ARGS, JSON.stringify(process.argv.slice(2)));
+process.exit(0);
+`,
+    );
+    await chmod(dxPath, 0o755);
+
+    process.env.PI_DX_BIN = dxPath;
+    process.env.PI_DX_TEST_ARGS = argsPath;
+
+    const handlers = new Map();
+    extension({
+      registerCommand(name, options) {
+        handlers.set(name, options.handler);
+      },
+    });
+
+    for (const [command, flag] of [
+      ["diff", "--version"],
+      ["show", "-V"],
+      ["patch", "--version"],
+    ]) {
+      const notifications = [];
+      let customCalled = false;
+      await writeFile(argsPath, "[]");
+
+      await handlers.get(command)(flag, {
+        mode: "tui",
+        cwd: tempDir,
+        hasUI: true,
+        ui: {
+          notify(message, level) {
+            notifications.push({ message, level });
+          },
+          async custom(render) {
+            customCalled = true;
+            let result;
+            await render(
+              {
+                stop() {},
+                start() {},
+                requestRender() {},
+              },
+              undefined,
+              undefined,
+              (value) => {
+                result = value;
+              },
+            );
+            return result;
+          },
+        },
+        async waitForIdle() {
+          throw new Error("waitForIdle should not be called");
+        },
+      });
+
+      assert.equal(customCalled, true, `expected /${command} to run dx`);
+      assert.deepEqual(notifications, []);
+      assert.deepEqual(JSON.parse(await readFile(argsPath, "utf8")), [flag]);
+    }
+  } finally {
+    if (oldPiDxBin === undefined) {
+      delete process.env.PI_DX_BIN;
+    } else {
+      process.env.PI_DX_BIN = oldPiDxBin;
+    }
+    if (oldArgsPath === undefined) {
+      delete process.env.PI_DX_TEST_ARGS;
+    } else {
+      process.env.PI_DX_TEST_ARGS = oldArgsPath;
+    }
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("diff command preflight honors attached short repo arguments without waiting for idle", async () => {
