@@ -762,7 +762,7 @@ fn validate_options(options: &DiffOptions) -> DxResult<()> {
 
 fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
     if let DiffSource::Show(rev) = &options.source {
-        return Ok(git_show_args(rev));
+        return git_show_args(repo, rev);
     }
 
     let mut args = vec![
@@ -802,8 +802,8 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
     Ok(args)
 }
 
-fn git_show_args(rev: &str) -> Vec<String> {
-    vec![
+fn git_show_args(repo: &Path, rev: &str) -> DxResult<Vec<String>> {
+    Ok(vec![
         "show".to_owned(),
         "--format=".to_owned(),
         "--binary".to_owned(),
@@ -812,8 +812,8 @@ fn git_show_args(rev: &str) -> Vec<String> {
         "--find-renames".to_owned(),
         "-m".to_owned(),
         "--end-of-options".to_owned(),
-        rev.to_owned(),
-    ]
+        show_target(repo, rev)?,
+    ])
 }
 
 fn append_pathspecs(args: &mut Vec<String>, paths: &[PathBuf]) {
@@ -823,7 +823,7 @@ fn append_pathspecs(args: &mut Vec<String>, paths: &[PathBuf]) {
 
 fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
     if let DiffSource::Show(rev) = &options.source {
-        return Ok(git_show_numstat_args(rev));
+        return git_show_numstat_args(repo, rev);
     }
 
     let mut args = vec![
@@ -864,8 +864,8 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
     Ok(args)
 }
 
-fn git_show_numstat_args(rev: &str) -> Vec<String> {
-    vec![
+fn git_show_numstat_args(repo: &Path, rev: &str) -> DxResult<Vec<String>> {
+    Ok(vec![
         "show".to_owned(),
         "--format=".to_owned(),
         "--numstat".to_owned(),
@@ -875,12 +875,27 @@ fn git_show_numstat_args(rev: &str) -> Vec<String> {
         "--find-renames".to_owned(),
         "-m".to_owned(),
         "--end-of-options".to_owned(),
-        peeled_tag_target(rev),
-    ]
+        show_target(repo, rev)?,
+    ])
 }
 
-fn peeled_tag_target(rev: &str) -> String {
-    format!("{rev}^{{}}")
+fn show_target(repo: &Path, rev: &str) -> DxResult<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["cat-file", "-t", "--end-of-options"])
+        .arg(rev)
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(rev.to_owned());
+    }
+
+    if String::from_utf8_lossy(&output.stdout).trim() == "tag" {
+        Ok(format!("{rev}^{{}}"))
+    } else {
+        Ok(rev.to_owned())
+    }
 }
 
 fn worktree_base_revision(repo: &Path) -> DxResult<String> {
@@ -2329,6 +2344,69 @@ mod tests {
                 ..DiffOptions::default()
             })
             .expect("show source stats should render"),
+        )
+        .expect("stat should be utf-8");
+
+        assert!(stat.contains("base.txt"));
+        assert!(stat.contains("1 files changed, 1 insertions(+), 0 deletions(-)"));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn show_source_patch_peels_annotated_tag() {
+        let test_dir = temp_test_dir("show-annotated-tag-patch");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        fs::write(repo.join("base.txt"), "base\nnext\n").expect("file should change");
+        git(["commit", "-q", "-am", "change"], &repo);
+        git(
+            [
+                "tag",
+                "-a",
+                "--no-sign",
+                "v1.0",
+                "-m",
+                "release tag metadata",
+            ],
+            &repo,
+        );
+
+        let patch = String::from_utf8(
+            render_bytes(DiffOptions {
+                repo: Some(repo.clone()),
+                source: DiffSource::Show("v1.0".to_owned()),
+                include_untracked: false,
+                ..DiffOptions::default()
+            })
+            .expect("show source patch should render"),
+        )
+        .expect("patch should be utf-8");
+
+        assert!(patch.starts_with("diff --git a/base.txt b/base.txt"));
+        assert!(!patch.contains("tag v1.0"));
+        assert!(!patch.contains("release tag metadata"));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn show_source_stat_preserves_valid_revspec() {
+        let test_dir = temp_test_dir("show-revspec-stat");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        fs::write(repo.join("base.txt"), "base\nnext\n").expect("file should change");
+        git(["commit", "-q", "-am", "change"], &repo);
+
+        let stat = String::from_utf8(
+            render_bytes(DiffOptions {
+                repo: Some(repo.clone()),
+                source: DiffSource::Show("HEAD^!".to_owned()),
+                include_untracked: false,
+                stat: true,
+                ..DiffOptions::default()
+            })
+            .expect("show source stats should render valid revspec"),
         )
         .expect("stat should be utf-8");
 
