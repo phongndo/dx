@@ -187,6 +187,7 @@ pub(crate) async fn run_loop(
     let mut events = TerminalEventReader::start("dx-diff-events")?;
 
     loop {
+        drain_live_diff_invalidation(app, live_diff.as_ref());
         sync_live_diff(live_diff, app, live_updates);
         app.expire_notice(Instant::now());
         drain_live_reloads(
@@ -244,6 +245,12 @@ fn handle_ready_events(
     Ok(false)
 }
 
+pub(crate) fn drain_live_diff_invalidation(app: &mut DiffApp, live_diff: Option<&LiveDiff>) {
+    if live_diff.is_some_and(|live_diff| live_diff.take_invalidated()) {
+        app.mark_live_reload_pending();
+    }
+}
+
 pub(crate) fn sync_live_diff(
     live_diff: &mut Option<LiveDiff>,
     app: &mut DiffApp,
@@ -298,9 +305,9 @@ pub(crate) fn drain_live_reloads(
     while let Ok(reload) = live_reload_rx.try_recv() {
         match reload {
             LiveDiffReload::Started => {
-                app.invalidate_diff_cache();
-                app.live_reload_pending = true;
-                app.dirty = true;
+                if !app.live_reload_pending {
+                    app.mark_live_reload_pending();
+                }
             }
             LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset, None),
             LiveDiffReload::Loaded(Err(error)) => {
@@ -317,6 +324,8 @@ pub(crate) fn handle_event(
     live_diff: &mut Option<LiveDiff>,
     events: &mut TerminalEventReader,
 ) -> DxResult<bool> {
+    drain_live_diff_invalidation(app, live_diff.as_ref());
+
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
         Event::Key(key)
@@ -991,10 +1000,23 @@ impl DiffApp {
 
         if self.help_menu_open {
             if key.code == KeyCode::Esc
-                || is_plain_char_key(key, '?')
+                || self.keymap.matches_single(GlobalAction::Help, key)
                 || is_plain_char_key(key, 'q')
             {
                 self.close_help_menu();
+                return Ok(false);
+            }
+            if self.leader_pending {
+                self.leader_pending = false;
+                self.dirty = true;
+                if self.keymap.matches_leader(GlobalAction::Help, key) {
+                    self.close_help_menu();
+                }
+                return Ok(false);
+            }
+            if self.keymap.is_leader(key) && self.keymap.has_leader_sequence(GlobalAction::Help) {
+                self.leader_pending = true;
+                self.dirty = true;
                 return Ok(false);
             }
             return Ok(false);
@@ -1376,8 +1398,15 @@ impl DiffApp {
     pub(crate) fn close_help_menu(&mut self) {
         if self.help_menu_open {
             self.help_menu_open = false;
+            self.leader_pending = false;
             self.dirty = true;
         }
+    }
+
+    pub(crate) fn mark_live_reload_pending(&mut self) {
+        self.invalidate_diff_cache();
+        self.live_reload_pending = true;
+        self.dirty = true;
     }
 
     pub(crate) fn set_notice(&mut self, text: impl Into<String>) {
@@ -1722,6 +1751,7 @@ impl DiffApp {
     fn diff_cache_invalidator_active(&self) -> bool {
         self.live_updates_allowed
             && self.live_updates_enabled
+            && !self.live_reload_pending
             && live_diff_supported(&self.options)
             && self.live_diff_failed_options.as_ref() != Some(&self.options)
     }

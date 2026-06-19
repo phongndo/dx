@@ -2076,6 +2076,54 @@ fn question_mark_key_toggles_help_menu() {
 }
 
 #[test]
+fn configured_help_key_toggles_help_menu_closed() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        help = "h"
+        "#,
+    )
+    .expect("keymap should parse");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+        .expect("configured help key should open help");
+    assert!(app.help_menu_open);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+        .expect("configured help key should close help");
+    assert!(!app.help_menu_open);
+}
+
+#[test]
+fn configured_leader_help_key_toggles_help_menu_closed() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        help = "space h"
+        "#,
+    )
+    .expect("keymap should parse");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .expect("leader should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+        .expect("leader help should open help");
+    assert!(app.help_menu_open);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .expect("leader should be handled while help is open");
+    assert!(app.leader_pending);
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+        .expect("leader help should close help");
+    assert!(!app.help_menu_open);
+    assert!(!app.leader_pending);
+}
+
+#[test]
 fn q_key_does_not_quit_without_leader() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -3485,6 +3533,36 @@ fn cached_diff_choice_is_not_reused_without_live_invalidator() {
     assert_eq!(app.options, DiffOptions::default());
     assert_eq!(visible_paths(&app), vec!["all.rs"]);
     assert!(app.diff_cache.is_empty());
+}
+
+#[test]
+fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_files(&["all.rs"]),
+        DiffLayoutMode::Unified,
+    );
+    let unstaged = DiffOptions {
+        scope: DiffScope::Unstaged,
+        ..DiffOptions::default()
+    };
+    app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["stale.rs"]));
+    app.mark_live_reload_pending();
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .expect("tab should cycle diff type");
+
+    assert!(!should_quit);
+    let load = app
+        .pending_diff_load
+        .as_ref()
+        .expect("tab should queue a fresh diff load");
+    assert_eq!(load.options, unstaged);
+    assert_eq!(app.options, DiffOptions::default());
+    assert_eq!(visible_paths(&app), vec!["all.rs"]);
+    assert!(app.diff_cache.is_empty());
+    assert!(app.live_reload_pending);
 }
 
 #[test]

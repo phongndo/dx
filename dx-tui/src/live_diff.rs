@@ -26,6 +26,7 @@ pub(crate) struct LiveDiff {
     pub(crate) reload_rx: Receiver<LiveDiffReload>,
     paused: Arc<AtomicBool>,
     pending_while_paused: Arc<AtomicBool>,
+    invalidated: Arc<AtomicBool>,
 }
 
 impl LiveDiff {
@@ -39,6 +40,8 @@ impl LiveDiff {
         let watcher_paused = Arc::clone(&paused);
         let pending_while_paused = Arc::new(AtomicBool::new(false));
         let watcher_pending_while_paused = Arc::clone(&pending_while_paused);
+        let invalidated = Arc::new(AtomicBool::new(false));
+        let watcher_invalidated = Arc::clone(&invalidated);
 
         let mut watcher =
             notify::recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
@@ -47,6 +50,7 @@ impl LiveDiff {
                         queue_changed_or_record_pending(
                             &watcher_paused,
                             &watcher_pending_while_paused,
+                            &watcher_invalidated,
                             &watcher_tx,
                         );
                     }
@@ -85,7 +89,12 @@ impl LiveDiff {
             reload_rx,
             paused,
             pending_while_paused,
+            invalidated,
         })
+    }
+
+    pub(crate) fn take_invalidated(&self) -> bool {
+        self.invalidated.swap(false, Ordering::AcqRel)
     }
 
     pub(crate) fn set_paused(&self, paused: bool) {
@@ -313,8 +322,11 @@ async fn send_live_reload(sender: &Sender<LiveDiffReload>, reload: LiveDiffReloa
 fn queue_changed_or_record_pending(
     paused: &AtomicBool,
     pending_while_paused: &AtomicBool,
+    invalidated: &AtomicBool,
     control_tx: &Sender<LiveDiffCommand>,
 ) {
+    invalidated.store(true, Ordering::Release);
+
     if paused.load(Ordering::Acquire) {
         pending_while_paused.store(true, Ordering::Release);
         if paused.load(Ordering::Acquire) {
@@ -375,11 +387,13 @@ mod tests {
     fn paused_live_diff_records_and_flushes_pending_reload() {
         let paused = AtomicBool::new(true);
         let pending = AtomicBool::new(false);
+        let invalidated = AtomicBool::new(false);
         let (tx, mut rx) = mpsc::channel(2);
 
-        queue_changed_or_record_pending(&paused, &pending, &tx);
+        queue_changed_or_record_pending(&paused, &pending, &invalidated, &tx);
 
         assert!(pending.load(Ordering::Acquire));
+        assert!(invalidated.load(Ordering::Acquire));
         assert!(matches!(
             rx.try_recv(),
             Err(tokio::sync::mpsc::error::TryRecvError::Empty)
@@ -388,6 +402,20 @@ mod tests {
         paused.store(false, Ordering::Release);
         flush_pending_paused_reload(&pending, &tx);
 
+        assert!(!pending.load(Ordering::Acquire));
+        assert!(matches!(rx.try_recv(), Ok(LiveDiffCommand::Changed)));
+    }
+
+    #[test]
+    fn changed_live_diff_marks_invalidated_before_reload_starts() {
+        let paused = AtomicBool::new(false);
+        let pending = AtomicBool::new(false);
+        let invalidated = AtomicBool::new(false);
+        let (tx, mut rx) = mpsc::channel(2);
+
+        queue_changed_or_record_pending(&paused, &pending, &invalidated, &tx);
+
+        assert!(invalidated.load(Ordering::Acquire));
         assert!(!pending.load(Ordering::Acquire));
         assert!(matches!(rx.try_recv(), Ok(LiveDiffCommand::Changed)));
     }

@@ -261,6 +261,12 @@ impl Keymap {
             .any(|sequence| sequence.0.as_slice() == [self.leader, key])
     }
 
+    pub(crate) fn has_leader_sequence(&self, action: GlobalAction) -> bool {
+        self.global_sequences(action)
+            .iter()
+            .any(|sequence| sequence.0.len() == 2 && sequence.0.first() == Some(&self.leader))
+    }
+
     pub(crate) fn matches_menu(&self, action: MenuAction, key: KeyEvent) -> bool {
         let key = KeyPress::from(key);
         self.menu_sequences(action)
