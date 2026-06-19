@@ -1,7 +1,6 @@
 # dx
 
-`dx` is a keyboard-first terminal Git diff reviewer. It was split out of `hz`
-so workspace isolation and diff review can evolve as separate products.
+`dx` is a performant keyboard-first terminal Git diff reviewer.
 
 ## What dx does
 
