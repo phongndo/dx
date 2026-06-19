@@ -77,7 +77,7 @@ test("dxInvocationNeedsGit requires git for regular diffs and pull request numbe
   assert.equal(dxInvocationNeedsGit(["--pr", "123"]), true);
 });
 
-test("diff command preflight honors attached short repo arguments", async () => {
+test("diff command preflight honors attached short repo arguments without waiting for idle", async () => {
   const tempDir = await mkdtemp(join(tmpdir(), "pi-dx-test-"));
   const binDir = join(tempDir, "bin");
   const repoDir = join(tempDir, "repo");
@@ -147,10 +147,10 @@ process.exit(1);
           notify(message, level) {
             notifications.push({ message, level });
           },
-          custom(render) {
+          async custom(render) {
             customCalled = true;
             let result;
-            render(
+            await render(
               {
                 stop() {},
                 start() {},
@@ -170,7 +170,7 @@ process.exit(1);
         },
       });
 
-      assert.equal(waitForIdleCalled, true, `expected ${args} to pass Git preflight`);
+      assert.equal(waitForIdleCalled, false, `expected ${args} to open without waiting for idle`);
       assert.equal(customCalled, true, `expected ${args} to run dx`);
       assert.deepEqual(notifications, []);
     }
@@ -189,6 +189,97 @@ process.exit(1);
       delete process.env.PI_DX_TEST_EXPECTED_REPO;
     } else {
       process.env.PI_DX_TEST_EXPECTED_REPO = oldExpectedRepo;
+    }
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("diff command uses filesystem git marker fast path", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "pi-dx-test-"));
+  const binDir = join(tempDir, "bin");
+  const repoDir = join(tempDir, "repo");
+  const outsideDir = join(tempDir, "outside");
+  const dxPath = join(binDir, "dx");
+  const gitPath = join(binDir, "git");
+  const oldPiDxBin = process.env.PI_DX_BIN;
+  const oldPath = process.env.PATH;
+
+  try {
+    await mkdir(binDir);
+    await mkdir(repoDir);
+    await mkdir(join(repoDir, ".git"));
+    await mkdir(outsideDir);
+    await writeFile(
+      dxPath,
+      `#!/usr/bin/env node
+process.exit(0);
+`,
+    );
+    await writeFile(
+      gitPath,
+      `#!/usr/bin/env node
+process.exit(1);
+`,
+    );
+    await chmod(dxPath, 0o755);
+    await chmod(gitPath, 0o755);
+
+    process.env.PI_DX_BIN = "dx";
+    process.env.PATH = `${binDir}${delimiter}${oldPath ?? ""}`;
+
+    const notifications = [];
+    let customCalled = false;
+    let handler;
+
+    extension({
+      registerCommand(_name, options) {
+        handler = options.handler;
+      },
+    });
+
+    await handler(`--repo=${repoDir}`, {
+      mode: "tui",
+      cwd: outsideDir,
+      hasUI: true,
+      ui: {
+        notify(message, level) {
+          notifications.push({ message, level });
+        },
+        async custom(render) {
+          customCalled = true;
+          let result;
+          await render(
+            {
+              stop() {},
+              start() {},
+              requestRender() {},
+            },
+            undefined,
+            undefined,
+            (value) => {
+              result = value;
+            },
+          );
+          return result;
+        },
+      },
+      async waitForIdle() {
+        throw new Error("waitForIdle should not be called");
+      },
+    });
+
+    assert.equal(customCalled, true, "expected /diff to run dx");
+    assert.deepEqual(notifications, []);
+  } finally {
+    if (oldPiDxBin === undefined) {
+      delete process.env.PI_DX_BIN;
+    } else {
+      process.env.PI_DX_BIN = oldPiDxBin;
+    }
+    if (oldPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = oldPath;
     }
     await rm(tempDir, { recursive: true, force: true });
   }

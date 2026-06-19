@@ -76,6 +76,9 @@ for this repository and workflow before the publish step can succeed.
 /diff --patch changes.diff
 ```
 
+The external `dx` terminal UI opens immediately from interactive Pi, including
+while an agent turn is still running. Pi's TUI is restored when `dx` exits.
+
 `/diff --patch -` is intentionally rejected because Pi cannot pipe stdin into
 the external viewer from a slash command. Write the patch to a file and pass the
 file path instead.
