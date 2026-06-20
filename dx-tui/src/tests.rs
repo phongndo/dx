@@ -844,7 +844,6 @@ fn replace_loaded_diff_clears_manual_hunk_focus() {
     app.replace_loaded_diff(
         DiffOptions::default(),
         changeset_with_hunks_at(repo.clone(), &[100, 200, 300]),
-        None,
     );
 
     assert_eq!(app.manual_hunk_focus, None);
@@ -1005,10 +1004,6 @@ fn ctrl_g_without_editor_launch_preserves_queued_events() {
     .expect("Ctrl-G should be handled");
 
     assert!(!should_quit);
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no editable focused hunk")
-    );
     assert_eq!(events.try_read().unwrap(), Some(queued_quit));
 }
 
@@ -1109,7 +1104,7 @@ fn path_changeset_replaces_only_edited_file() {
     let replacement = changeset_with_files(&["b.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.replace_path_changeset(Path::new("b.rs"), replacement, None);
+    app.replace_path_changeset(Path::new("b.rs"), replacement);
 
     assert_eq!(visible_paths(&app), vec!["a.rs", "b.rs", "c.rs"]);
     assert_eq!(app.changeset.files[0].hunks[0].lines[0].text, "line 0");
@@ -1124,7 +1119,7 @@ fn path_changeset_removes_file_when_diff_disappears() {
     replacement.repo = PathBuf::from("/repo");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.replace_path_changeset(Path::new("b.rs"), replacement, None);
+    app.replace_path_changeset(Path::new("b.rs"), replacement);
 
     assert_eq!(visible_paths(&app), vec!["a.rs", "c.rs"]);
 }
@@ -1647,12 +1642,7 @@ fn explicit_diff_load_returns_before_replacing_changeset() {
         ..DiffOptions::default()
     };
 
-    app.start_diff_load(
-        options,
-        "loading test patch",
-        "test patch",
-        "diff unavailable",
-    );
+    app.start_diff_load(options, "diff unavailable");
 
     assert!(app.pending_diff_load.is_some());
     assert_eq!(app.changeset.files[0].display_path(), "src/lib.rs");
@@ -2333,10 +2323,13 @@ fn replace_changeset_keeps_remapped_file_sidebar_selection_visible() {
 
     assert_eq!(app.file_sidebar_scroll, 3);
 
-    app.replace_changeset(
-        changeset_with_files(&["new.rs", "other.rs", "third.rs", "fourth.rs", "fifth.rs"]),
-        None,
-    );
+    app.replace_changeset(changeset_with_files(&[
+        "new.rs",
+        "other.rs",
+        "third.rs",
+        "fourth.rs",
+        "fifth.rs",
+    ]));
 
     assert_eq!(app.selected_file, 0);
     assert_eq!(app.file_sidebar_scroll, 0);
@@ -2493,35 +2486,6 @@ fn file_sidebar_separator_drag_resizes_sidebar() {
     .expect("resize should end");
 
     assert!(!app.file_sidebar_resizing);
-}
-
-#[test]
-fn notices_expire_after_ttl() {
-    let changeset = changeset_with_context_lines(1);
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-
-    app.set_notice("reloaded");
-    let expires_at = app.notice.as_ref().unwrap().expires_at;
-    assert_eq!(app.notice.as_ref().unwrap().text, "reloaded");
-    app.dirty = false;
-
-    app.expire_notice(expires_at - Duration::from_millis(1));
-    assert!(app.notice.is_some());
-    assert!(!app.dirty);
-
-    app.expire_notice(expires_at);
-    assert!(app.notice.is_none());
-    assert!(app.dirty);
-}
-
-#[test]
-fn statusline_renders_notice_text() {
-    let changeset = changeset_with_context_lines(1);
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-
-    app.set_notice("editor closed; reloading");
-
-    assert!(line_text(&statusline_header_line(&app, 120)).contains("editor closed; reloading"));
 }
 
 #[test]
@@ -2700,11 +2664,7 @@ fn branch_choice_survives_switching_to_worktree_scope() {
     app.branch_base = Some("origin/main".to_owned());
     app.branch_head = Some("feature/header".to_owned());
 
-    app.replace_loaded_diff(
-        DiffOptions::default(),
-        changeset_with_context_lines(1),
-        None,
-    );
+    app.replace_loaded_diff(DiffOptions::default(), changeset_with_context_lines(1));
 
     assert_eq!(app.branch_base.as_deref(), Some("origin/main"));
     assert_eq!(app.branch_head.as_deref(), Some("feature/header"));

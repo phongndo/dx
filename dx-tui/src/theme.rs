@@ -31,7 +31,6 @@ pub(crate) const UNIFIED_GUTTER_WIDTH: usize = 13;
 pub(crate) const DIFF_INDICATOR: &str = "▌";
 pub(crate) const EMPTY_DIFF_FILL: char = '╱';
 pub(crate) const EMPTY_DIFF_FILL_SPACING: usize = 3;
-pub(crate) const NOTICE_TTL: Duration = Duration::from_millis(1_500);
 pub(crate) const MAX_SYNTAX_RESULTS_PER_FRAME: usize = 64;
 pub(crate) const SYNTAX_THEME_ID: u64 = 0;
 pub(crate) const MAX_INLINE_DIFF_LINE_BYTES: usize = 4 * 1024;
