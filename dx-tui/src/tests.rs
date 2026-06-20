@@ -2534,6 +2534,31 @@ fn esc_closes_error_log_without_quitting() {
 }
 
 #[test]
+fn esc_closes_error_log_and_clears_pending_leader() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_error_log("reload failed");
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .expect("leader should be handled");
+    assert!(app.leader_pending);
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .expect("Esc should close error log");
+
+    assert!(!should_quit);
+    assert!(app.error_log.is_none());
+    assert!(!app.leader_pending);
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
+        .expect("q should not be handled as a leader suffix");
+
+    assert!(!should_quit);
+}
+
+#[test]
 fn esc_closes_diff_menu_before_error_log() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);

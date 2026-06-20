@@ -1426,6 +1426,7 @@ impl DiffApp {
 
     pub(crate) fn close_error_log(&mut self) -> bool {
         if self.error_log.take().is_some() {
+            self.leader_pending = false;
             self.error_log_resizing = false;
             self.rendered_error_log_separator_row = None;
             self.dirty = true;
