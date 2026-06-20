@@ -395,10 +395,17 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.theme)),
         remaining,
     );
-    if app.pending_diff_load.is_some() {
+    let diff_load_status = if app.pending_diff_load.is_some() {
+        Some("loading diff")
+    } else if app.live_reload_pending {
+        Some("refreshing diff")
+    } else {
+        None
+    };
+    if let Some(label) = diff_load_status {
         push_fitted_statusline_span(
             spans,
-            "loading diff",
+            label,
             Style::default()
                 .fg(app.theme.notice)
                 .bg(statusline_bg(app.theme))

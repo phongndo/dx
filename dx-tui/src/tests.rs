@@ -3125,6 +3125,20 @@ fn statusline_header_shows_pending_diff_load() {
 }
 
 #[test]
+fn statusline_header_shows_pending_live_reload() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.mark_live_reload_pending();
+
+    let line = statusline_header_line(&app, 80);
+    let text = line_text(&line);
+
+    assert_eq!(text.width(), 80);
+    assert!(text.contains("refreshing diff"));
+    assert!(!text.contains("loading diff"));
+}
+
+#[test]
 fn diff_menu_lists_all_changes_first() {
     let mut app = DiffApp::new(
         DiffOptions::default(),
