@@ -788,14 +788,14 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
         }
         DiffSource::Branch { base, head } => {
             args.push("--end-of-options".to_owned());
-            let base = existing_revision(repo, base, "base")?;
-            let head = existing_revision(repo, head, "head")?;
+            let base = existing_commitish_revision(repo, base, "base")?;
+            let head = existing_commitish_revision(repo, head, "head")?;
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(existing_revision(repo, left, "")?);
-            args.push(existing_revision(repo, right, "")?);
+            args.push(existing_treeish_revision(repo, left, "")?);
+            args.push(existing_treeish_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -852,14 +852,14 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
         }
         DiffSource::Branch { base, head } => {
             args.push("--end-of-options".to_owned());
-            let base = existing_revision(repo, base, "base")?;
-            let head = existing_revision(repo, head, "head")?;
+            let base = existing_commitish_revision(repo, base, "base")?;
+            let head = existing_commitish_revision(repo, head, "head")?;
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(existing_revision(repo, left, "")?);
-            args.push(existing_revision(repo, right, "")?);
+            args.push(existing_treeish_revision(repo, left, "")?);
+            args.push(existing_treeish_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -902,8 +902,16 @@ fn show_target(repo: &Path, rev: &str) -> DxResult<String> {
     }
 }
 
-fn existing_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
-    if commitish_exists(repo, rev)? {
+fn existing_commitish_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
+    existing_revision(repo, rev, kind, "commit")
+}
+
+fn existing_treeish_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
+    existing_revision(repo, rev, kind, "tree")
+}
+
+fn existing_revision(repo: &Path, rev: &str, kind: &str, object_kind: &str) -> DxResult<String> {
+    if revision_exists(repo, rev, object_kind)? {
         return Ok(rev.to_owned());
     }
 
@@ -947,11 +955,15 @@ fn merge_base_revision(repo: &Path, base: &str) -> DxResult<String> {
 }
 
 fn commitish_exists(repo: &Path, rev: &str) -> DxResult<bool> {
+    revision_exists(repo, rev, "commit")
+}
+
+fn revision_exists(repo: &Path, rev: &str, object_kind: &str) -> DxResult<bool> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
-        .arg(format!("{rev}^{{commit}}"))
+        .arg(format!("{rev}^{{{object_kind}}}"))
         .output()?;
     Ok(output.status.success())
 }
@@ -2079,6 +2091,63 @@ mod tests {
     }
 
     #[test]
+    fn range_diff_accepts_treeish_revisions() {
+        let test_dir = temp_test_dir("range-treeish-revisions");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        let base_tree = git_output(["rev-parse", "HEAD^{tree}"], &repo);
+        fs::write(repo.join("base.txt"), "changed\n").expect("base file should change");
+        git(["add", "base.txt"], &repo);
+        git(["commit", "-q", "-m", "change base"], &repo);
+
+        let patch = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: base_tree,
+                right: "HEAD".to_owned(),
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        })
+        .expect("tree object range should render");
+        assert!(patch.contains("+changed"));
+
+        let stat = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD~1^{tree}".to_owned(),
+                right: "HEAD".to_owned(),
+            },
+            include_untracked: false,
+            stat: true,
+            ..DiffOptions::default()
+        })
+        .expect("tree-ish range stat should render");
+        assert!(stat.contains("base.txt"));
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn base_branch_diff_keeps_commitish_validation() {
+        let test_dir = temp_test_dir("base-treeish-revision");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        let error = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Base("HEAD^{tree}".to_owned()),
+            ..DiffOptions::default()
+        })
+        .expect_err("merge-base diffs should still require commit-ish base revisions");
+
+        assert_eq!(error.to_string(), "unknown base revision `HEAD^{tree}`");
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
     fn load_review_ref_path_limits_tracked_and_untracked_files() {
         let test_dir = temp_test_dir("path-scoped-review");
         let repo = test_dir.join("repo");
@@ -2884,5 +2953,19 @@ mod tests {
             "git apply failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn git_output<const N: usize>(args: [&str; N], cwd: &Path) -> String {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 }

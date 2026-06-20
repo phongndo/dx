@@ -186,7 +186,12 @@ fn reject_likely_unknown_command(args: &args::DiffArgs) -> CliResult<()> {
     }
 
     let rev = &args.revs[0];
-    match revision_status(args.repo.as_deref(), rev) {
+    let revision_kind = if args.revs.len() == 1 {
+        RevisionKind::Commit
+    } else {
+        RevisionKind::Tree
+    };
+    match revision_status(args.repo.as_deref(), rev, revision_kind) {
         RevisionStatus::Exists => return Ok(()),
         RevisionStatus::Missing => {}
         RevisionStatus::Unknown if looks_like_command(rev) => {}
@@ -203,6 +208,21 @@ enum RevisionStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RevisionKind {
+    Commit,
+    Tree,
+}
+
+impl RevisionKind {
+    fn peel(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Tree => "tree",
+        }
+    }
+}
+
 fn unknown_command_or_revision_error(rev: &str) -> clap::Error {
     Cli::command().error(
         ErrorKind::InvalidSubcommand,
@@ -210,14 +230,14 @@ fn unknown_command_or_revision_error(rev: &str) -> clap::Error {
     )
 }
 
-fn revision_status(repo: Option<&Path>, rev: &str) -> RevisionStatus {
+fn revision_status(repo: Option<&Path>, rev: &str, kind: RevisionKind) -> RevisionStatus {
     let mut command = ProcessCommand::new("git");
     if let Some(repo) = repo {
         command.arg("-C").arg(repo);
     }
     command
         .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
-        .arg(format!("{rev}^{{commit}}"));
+        .arg(format!("{rev}^{{{}}}", kind.peel()));
 
     match command.output() {
         Ok(output) if output.status.success() => RevisionStatus::Exists,
@@ -281,7 +301,11 @@ fn stream_diff_to_stdout(options: dx_command::DiffOptions) -> CliResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use clap::Parser;
 
@@ -289,6 +313,39 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "dx-cli-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time should be after unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn init_repo(repo: &Path) {
+        fs::create_dir_all(repo).expect("repo directory should be created");
+        git(["init", "-q"], repo);
+        git(["config", "user.email", "test@example.com"], repo);
+        git(["config", "user.name", "Test"], repo);
+        fs::write(repo.join("base.txt"), "base\n").expect("base file should be written");
+        git(["add", "base.txt"], repo);
+        git(["commit", "-q", "-m", "init"], repo);
+    }
+
+    fn git<const N: usize>(args: [&str; N], cwd: &Path) {
+        let output = ProcessCommand::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("git should run");
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -339,5 +396,38 @@ mod tests {
             ..args::DiffArgs::default()
         })
         .expect("non-command targets should not hide repository errors");
+    }
+
+    #[test]
+    fn two_revision_preflight_accepts_treeish_left_operand() {
+        let test_dir = temp_test_dir("range-treeish-preflight");
+        let repo = test_dir.join("repo");
+        init_repo(&repo);
+
+        reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["HEAD^{tree}".to_owned(), "HEAD".to_owned()],
+            repo: Some(repo),
+            ..args::DiffArgs::default()
+        })
+        .expect("plain range operands should accept tree-ish revisions");
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn single_revision_preflight_keeps_commitish_validation() {
+        let test_dir = temp_test_dir("single-commitish-preflight");
+        let repo = test_dir.join("repo");
+        init_repo(&repo);
+
+        let error = reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["HEAD^{tree}".to_owned()],
+            repo: Some(repo),
+            ..args::DiffArgs::default()
+        })
+        .expect_err("single-revision base diffs should still require commit-ish revisions");
+
+        assert!(matches!(error, CliError::Clap(_)));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 }
