@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -10,28 +10,35 @@ import extension, { dxInvocationNeedsGit, parseCommandLine } from "../extensions
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-test("extension registers /diff", () => {
-  let registered;
+test("extension registers dx source commands", () => {
+  const registered = [];
   extension({
     registerCommand(name, options) {
-      registered = { name, description: options.description };
+      registered.push({ name, description: options.description });
     },
   });
 
-  assert.deepEqual(registered, { name: "diff", description: "Open the current diff in dx" });
+  assert.deepEqual(registered, [
+    { name: "diff", description: "Open the current diff in dx" },
+    { name: "show", description: "Open a revision or hosted review in dx" },
+    { name: "patch", description: "Open a patch file in dx" },
+  ]);
 });
 
-test("package manifest loads /diff extension", async () => {
+test("package manifest loads dx source commands", async () => {
   const agentDir = await mkdtemp(join(tmpdir(), "pi-dx-test-"));
 
   try {
     const result = await discoverAndLoadExtensions([packageRoot], packageRoot, agentDir);
     assert.deepEqual(result.errors, []);
 
-    const diffExtension = result.extensions.find((loadedExtension) =>
-      loadedExtension.commands.has("diff"),
+    const loaded = result.extensions.find(
+      (loadedExtension) =>
+        loadedExtension.commands.has("diff") &&
+        loadedExtension.commands.has("show") &&
+        loadedExtension.commands.has("patch"),
     );
-    assert.ok(diffExtension, "expected package manifest to load the /diff extension");
+    assert.ok(loaded, "expected package manifest to load dx source commands");
   } finally {
     await rm(agentDir, { recursive: true, force: true });
   }
@@ -42,39 +49,200 @@ test("parseCommandLine splits whitespace", () => {
 });
 
 test("parseCommandLine preserves quoted arguments", () => {
-  assert.deepEqual(parseCommandLine('--patch "changes with spaces.diff"'), [
-    "--patch",
-    "changes with spaces.diff",
+  assert.deepEqual(parseCommandLine('review "changes with spaces"'), [
+    "review",
+    "changes with spaces",
   ]);
 });
 
 test("parseCommandLine rejects unterminated quotes", () => {
-  assert.throws(() => parseCommandLine('--patch "missing'), /Unterminated double quote/);
+  assert.throws(() => parseCommandLine('review "missing'), /Unterminated double quote/);
 });
 
 test("dxInvocationNeedsGit allows patch files", () => {
-  assert.equal(dxInvocationNeedsGit(["--patch", "changes.diff"]), false);
-  assert.equal(dxInvocationNeedsGit(["--patch=changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("patch", ["changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("patch", ["--stat", "changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("diff", ["--patch", "changes.diff"]), false);
+  assert.equal(dxInvocationNeedsGit("diff", ["--patch=changes.diff"]), false);
 });
 
 test("dxInvocationNeedsGit allows full GitHub pull request URLs", () => {
-  assert.equal(dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123"]), false);
-  assert.equal(dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/"]), false);
   assert.equal(
-    dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/files"]),
+    dxInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123"]),
     false,
   );
-  assert.equal(dxInvocationNeedsGit(["--pr=github.com/owner/repo/pull/123/files"]), false);
   assert.equal(
-    dxInvocationNeedsGit(["--pr", "https://github.com/owner/repo/pull/123/files?diff=split"]),
+    dxInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123/"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123/files"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("show", [
+      "review",
+      "https://github.com/owner/repo/pull/123/files?diff=split",
+    ]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("show", ["review", "--stat", "https://github.com/owner/repo/pull/123"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("show", [
+      "review",
+      "--repo",
+      "/tmp/not-a-repo",
+      "https://github.com/owner/repo/pull/123",
+    ]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("diff", ["--pr", "https://github.com/owner/repo/pull/123"]),
+    false,
+  );
+  assert.equal(
+    dxInvocationNeedsGit("diff", ["--pr=https://github.com/owner/repo/pull/123"]),
     false,
   );
 });
 
-test("dxInvocationNeedsGit requires git for regular diffs and pull request numbers", () => {
-  assert.equal(dxInvocationNeedsGit([]), true);
-  assert.equal(dxInvocationNeedsGit(["--staged"]), true);
-  assert.equal(dxInvocationNeedsGit(["--pr", "123"]), true);
+test("dxInvocationNeedsGit requires git for diffs, revisions, and review numbers", () => {
+  assert.equal(dxInvocationNeedsGit("diff", []), true);
+  assert.equal(dxInvocationNeedsGit("diff", ["--staged"]), true);
+  assert.equal(dxInvocationNeedsGit("diff", ["--pr", "123"]), true);
+  assert.equal(dxInvocationNeedsGit("show", []), true);
+  assert.equal(dxInvocationNeedsGit("show", ["HEAD~1"]), true);
+  assert.equal(dxInvocationNeedsGit("show", ["review", "123"]), true);
+});
+
+test("diff command rejects stdin patch sources before preflight", async () => {
+  let handler;
+  extension({
+    registerCommand(name, options) {
+      if (name === "diff") {
+        handler = options.handler;
+      }
+    },
+  });
+
+  const notifications = [];
+  let customCalled = false;
+
+  await handler("--patch -", {
+    mode: "tui",
+    cwd: packageRoot,
+    hasUI: true,
+    ui: {
+      notify(message, level) {
+        notifications.push({ message, level });
+      },
+      async custom() {
+        customCalled = true;
+      },
+    },
+    async waitForIdle() {
+      throw new Error("waitForIdle should not be called");
+    },
+  });
+
+  assert.equal(customCalled, false);
+  assert.deepEqual(notifications, [
+    {
+      message:
+        "/diff --patch cannot read a patch from stdin inside Pi. Write the patch to a file and run /patch <file>.",
+      level: "error",
+    },
+  ]);
+});
+
+test("version flags run top-level dx instead of slash subcommands", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "pi-dx-test-"));
+  const dxPath = join(tempDir, "dx");
+  const argsPath = join(tempDir, "args.json");
+  const oldPiDxBin = process.env.PI_DX_BIN;
+  const oldArgsPath = process.env.PI_DX_TEST_ARGS;
+
+  try {
+    await writeFile(
+      dxPath,
+      `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.PI_DX_TEST_ARGS, JSON.stringify(process.argv.slice(2)));
+process.exit(0);
+`,
+    );
+    await chmod(dxPath, 0o755);
+
+    process.env.PI_DX_BIN = dxPath;
+    process.env.PI_DX_TEST_ARGS = argsPath;
+
+    const handlers = new Map();
+    extension({
+      registerCommand(name, options) {
+        handlers.set(name, options.handler);
+      },
+    });
+
+    for (const [command, flag] of [
+      ["diff", "--version"],
+      ["show", "-V"],
+      ["patch", "--version"],
+    ]) {
+      const notifications = [];
+      let customCalled = false;
+      await writeFile(argsPath, "[]");
+
+      await handlers.get(command)(flag, {
+        mode: "tui",
+        cwd: tempDir,
+        hasUI: true,
+        ui: {
+          notify(message, level) {
+            notifications.push({ message, level });
+          },
+          async custom(render) {
+            customCalled = true;
+            let result;
+            await render(
+              {
+                stop() {},
+                start() {},
+                requestRender() {},
+              },
+              undefined,
+              undefined,
+              (value) => {
+                result = value;
+              },
+            );
+            return result;
+          },
+        },
+        async waitForIdle() {
+          throw new Error("waitForIdle should not be called");
+        },
+      });
+
+      assert.equal(customCalled, true, `expected /${command} to run dx`);
+      assert.deepEqual(notifications, []);
+      assert.deepEqual(JSON.parse(await readFile(argsPath, "utf8")), [flag]);
+    }
+  } finally {
+    if (oldPiDxBin === undefined) {
+      delete process.env.PI_DX_BIN;
+    } else {
+      process.env.PI_DX_BIN = oldPiDxBin;
+    }
+    if (oldArgsPath === undefined) {
+      delete process.env.PI_DX_TEST_ARGS;
+    } else {
+      process.env.PI_DX_TEST_ARGS = oldArgsPath;
+    }
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("diff command preflight honors attached short repo arguments without waiting for idle", async () => {
@@ -134,8 +302,10 @@ process.exit(1);
       let handler;
 
       extension({
-        registerCommand(_name, options) {
-          handler = options.handler;
+        registerCommand(name, options) {
+          if (name === "diff") {
+            handler = options.handler;
+          }
         },
       });
 
@@ -232,8 +402,10 @@ process.exit(1);
     let handler;
 
     extension({
-      registerCommand(_name, options) {
-        handler = options.handler;
+      registerCommand(name, options) {
+        if (name === "diff") {
+          handler = options.handler;
+        }
       },
     });
 

@@ -18,18 +18,20 @@ options:
 
 examples:
   dx
-  dx --staged
-  dx --unstaged
-  dx --base main
-  dx main feature
-  dx --pr 123
-  dx --pr https://github.com/owner/repo/pull/123
-  dx --patch changes.diff
-  cat changes.diff | dx --patch -
+  dx diff --staged
+  dx diff --unstaged
+  dx diff --base main
+  dx diff main feature
+  dx show
+  dx show HEAD~1
+  dx show review 123
+  dx show review https://github.com/owner/repo/pull/123
+  dx patch changes.diff
+  cat changes.diff | dx patch -
   git diff | dx pager
-  dx --no-watch
-  dx --no-syntax
-  dx --stat
+  dx diff --no-watch
+  dx diff --no-syntax
+  dx diff --stat
   dx config
   dx syntax add ruby elixir";
 
@@ -69,8 +71,8 @@ pub(crate) enum Command {
 examples:
   dx diff
   dx diff --base main
-  dx diff --pr 123
-  dx diff --pr https://github.com/owner/repo/pull/123"
+  dx diff --staged
+  dx diff main feature"
     )]
     Diff(DiffArgs),
     #[command(
@@ -82,6 +84,24 @@ examples:
   git diff | dx pager"
     )]
     Pager(PagerArgs),
+    #[command(
+        about = "Review a Git revision or hosted review",
+        after_help = "\
+examples:
+  dx show
+  dx show HEAD~1
+  dx show review 123
+  dx show review https://github.com/owner/repo/pull/123"
+    )]
+    Show(ShowArgs),
+    #[command(
+        about = "Review an existing unified diff",
+        after_help = "\
+examples:
+  dx patch changes.diff
+  cat changes.diff | dx patch -"
+    )]
+    Patch(PatchArgs),
     #[command(
         alias = "ts",
         alias = "tree-sitter",
@@ -220,6 +240,34 @@ pub(crate) enum PagerLayoutArg {
     Unified,
 }
 
+#[derive(Debug, Args, Default)]
+pub(crate) struct ShowArgs {
+    /// Revision to show, or `review TARGET` for a hosted review.
+    #[arg(value_name = "TARGET", num_args = 0..=2)]
+    pub(crate) targets: Vec<String>,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PatchArgs {
+    /// Unified diff file to review, or stdin when FILE is `-`.
+    #[arg(value_name = "FILE")]
+    pub(crate) path: PathBuf,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
 #[derive(Debug, Args)]
 pub(crate) struct UpdateArgs {
     /// Release version to install, without or with the leading v.
@@ -228,4 +276,61 @@ pub(crate) struct UpdateArgs {
     /// Directory to update. Defaults to the directory containing the invoked dx.
     #[arg(long, value_name = "DIR")]
     pub(crate) install_dir: Option<PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[test]
+    fn parses_top_level_diff_compatibility_args() {
+        let cli = parse(&["dx", "--staged", "--stat"]);
+        assert!(cli.command.is_none());
+        assert!(cli.diff.staged);
+        assert!(cli.diff.stat);
+
+        let cli = parse(&["dx", "main", "feature"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.revs, ["main", "feature"]);
+
+        let cli = parse(&["dx", "--patch", "changes.diff"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.patch, Some(PathBuf::from("changes.diff")));
+
+        let cli = parse(&["dx", "--pr", "123"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.diff.pr.as_deref(), Some("123"));
+    }
+
+    #[test]
+    fn parses_source_subcommands() {
+        let cli = parse(&["dx", "diff", "--unstaged"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Diff(DiffArgs { unstaged: true, .. }))
+        ));
+
+        let cli = parse(&[
+            "dx",
+            "show",
+            "review",
+            "--stat",
+            "https://github.com/owner/repo/pull/123",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Show(ShowArgs { stat: true, .. }))
+        ));
+
+        let cli = parse(&["dx", "patch", "changes.diff"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Patch(PatchArgs { path, .. }))
+                if path.as_path() == std::path::Path::new("changes.diff")
+        ));
+    }
 }

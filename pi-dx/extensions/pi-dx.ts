@@ -15,18 +15,36 @@ type DxRunResult = {
   error?: string;
 };
 
+type DxCommand = "diff" | "show" | "patch";
+
 export default function piDx(pi: ExtensionAPI) {
   pi.registerCommand("diff", {
     description: "Open the current diff in dx",
     handler: async (args, ctx) => {
-      await handleDiffCommand(args, ctx);
+      await handleDxCommand("diff", args, ctx);
+    },
+  });
+  pi.registerCommand("show", {
+    description: "Open a revision or hosted review in dx",
+    handler: async (args, ctx) => {
+      await handleDxCommand("show", args, ctx);
+    },
+  });
+  pi.registerCommand("patch", {
+    description: "Open a patch file in dx",
+    handler: async (args, ctx) => {
+      await handleDxCommand("patch", args, ctx);
     },
   });
 }
 
-async function handleDiffCommand(args: string, ctx: ExtensionCommandContext): Promise<void> {
+async function handleDxCommand(
+  command: DxCommand,
+  args: string,
+  ctx: ExtensionCommandContext,
+): Promise<void> {
   if (ctx.mode !== "tui") {
-    report(ctx, "/diff requires Pi interactive TUI mode.", "error");
+    report(ctx, `/${command} requires Pi interactive TUI mode.`, "error");
     return;
   }
 
@@ -38,10 +56,11 @@ async function handleDiffCommand(args: string, ctx: ExtensionCommandContext): Pr
     return;
   }
 
-  if (stdinPatchRequested(argv)) {
+  if (stdinPatchRequested(command, argv)) {
+    const source = command === "diff" ? "/diff --patch" : "/patch";
     report(
       ctx,
-      "/diff cannot read a patch from stdin inside Pi. Write the patch to a file and run /diff --patch <file>.",
+      `${source} cannot read a patch from stdin inside Pi. Write the patch to a file and run /patch <file>.`,
       "error",
     );
     return;
@@ -54,21 +73,21 @@ async function handleDiffCommand(args: string, ctx: ExtensionCommandContext): Pr
     return;
   }
 
-  if (dxInvocationNeedsGit(argv)) {
+  if (dxInvocationNeedsGit(command, argv)) {
     const repoPath = repoPathFromArgs(argv);
     if (repoPath === null) {
-      report(ctx, "/diff --repo requires a repository path.", "error");
+      report(ctx, `/${command} --repo requires a repository path.`, "error");
       return;
     }
 
-    const gitError = checkGitRepository(ctx.cwd, repoPath);
+    const gitError = checkGitRepository(command, ctx.cwd, repoPath);
     if (gitError) {
       report(ctx, gitError, "error");
       return;
     }
   }
 
-  const result = await runDxInTerminal(ctx, dx, argv);
+  const result = await runDxInTerminal(ctx, dx, dxInvocationArgs(command, argv));
   if (!result) {
     report(ctx, "dx did not return a result.", "error");
     return;
@@ -148,7 +167,11 @@ function looksLikePath(command: string): boolean {
   return command.includes("/") || command.includes("\\");
 }
 
-function checkGitRepository(cwd: string, repoPath: string | undefined): string | undefined {
+function checkGitRepository(
+  command: DxCommand,
+  cwd: string,
+  repoPath: string | undefined,
+): string | undefined {
   if (hasGitMarker(cwd, repoPath)) {
     return undefined;
   }
@@ -163,14 +186,14 @@ function checkGitRepository(cwd: string, repoPath: string | undefined): string |
   });
 
   if (result.error) {
-    return `git is required for the default /diff mode but was not found: ${errorMessage(result.error)}`;
+    return `git is required for /${command} but was not found: ${errorMessage(result.error)}`;
   }
 
   if (result.status !== 0 || result.stdout.trim() !== "true") {
     const target = repoPath ? `repository path ${repoPath}` : cwd;
     return (
       `No Git repository found at ${target}.\n\n` +
-      "/diff currently opens Git-backed dx diffs unless you pass --patch <file> or a full GitHub PR URL. " +
+      "/diff and /show use Git-backed dx sources unless you run /patch <file> or /show review <full GitHub PR URL>. " +
       "Agent turn diffs are not implemented yet."
     );
   }
@@ -338,7 +361,7 @@ export function parseCommandLine(input: string): string[] {
 
   if (quote) {
     throw new Error(
-      `Unterminated ${quote === "'" ? "single" : "double"} quote in /diff arguments.`,
+      `Unterminated ${quote === "'" ? "single" : "double"} quote in slash command arguments.`,
     );
   }
 
@@ -349,28 +372,97 @@ export function parseCommandLine(input: string): string[] {
   return args;
 }
 
-export function dxInvocationNeedsGit(argv: string[]): boolean {
-  if (argv.some((arg) => ["--help", "-h", "--version", "-V"].includes(arg))) {
+export function dxInvocationNeedsGit(command: DxCommand, argv: string[]): boolean {
+  if (argv.some((arg) => ["--help", "-h"].includes(arg) || isVersionFlag(arg))) {
     return false;
   }
 
-  for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index];
-    if (arg === "--patch" || arg?.startsWith("--patch=")) {
+  if (command === "patch") {
+    return false;
+  }
+
+  if (command === "diff") {
+    const patch = longOptionFromArgs(argv, "--patch");
+    if (patch.present) {
       return false;
     }
 
-    if (arg === "--pr") {
-      const target = argv[index + 1];
-      return target ? !isGitHubPullRequestUrl(target) : false;
+    const pr = longOptionFromArgs(argv, "--pr");
+    if (pr.present) {
+      return pr.value ? !isGitHubPullRequestUrl(pr.value) : false;
     }
+  }
 
-    if (arg?.startsWith("--pr=")) {
-      return !isGitHubPullRequestUrl(arg.slice("--pr=".length));
+  if (command === "show") {
+    const reviewIndex = argv.indexOf("review");
+    if (reviewIndex !== -1) {
+      const target = reviewTargetFromArgs(argv, reviewIndex);
+      return target ? !isGitHubPullRequestUrl(target) : false;
     }
   }
 
   return true;
+}
+
+type ParsedOption = { present: false } | { present: true; value: string | undefined };
+
+function longOptionFromArgs(argv: string[], option: string): ParsedOption {
+  const attachedPrefix = `${option}=`;
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === "--") {
+      break;
+    }
+    if (arg === option) {
+      return { present: true, value: argv[index + 1] };
+    }
+    if (arg.startsWith(attachedPrefix)) {
+      return { present: true, value: arg.slice(attachedPrefix.length) };
+    }
+  }
+  return { present: false };
+}
+
+function reviewTargetFromArgs(argv: string[], reviewIndex: number): string | undefined {
+  return targetFromArgs(argv, reviewIndex + 1);
+}
+
+function patchTargetFromArgs(argv: string[]): string | undefined {
+  return targetFromArgs(argv, 0);
+}
+
+function targetFromArgs(argv: string[], startIndex: number): string | undefined {
+  for (let index = startIndex; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === "--") {
+      return argv[index + 1];
+    }
+    if (arg === "--stat" || arg === "-s" || arg === "--no-syntax") {
+      continue;
+    }
+    if (arg === "--repo" || arg === "-r") {
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--repo=") || (arg.startsWith("-r") && arg !== "-r")) {
+      continue;
+    }
+    return arg;
+  }
+  return undefined;
+}
+
+function dxInvocationArgs(command: DxCommand, argv: string[]): string[] {
+  const versionFlag = argv.find(isVersionFlag);
+  if (versionFlag) {
+    return [versionFlag];
+  }
+
+  return [command, ...argv];
+}
+
+function isVersionFlag(arg: string): boolean {
+  return arg === "--version" || arg === "-V";
 }
 
 function repoPathFromArgs(argv: string[]): string | null | undefined {
@@ -394,15 +486,13 @@ function repoPathValue(value: string | undefined): string | null {
   return value ? value : null;
 }
 
-function stdinPatchRequested(argv: string[]): boolean {
-  for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index];
-    if (arg === "--patch" && argv[index + 1] === "-") {
-      return true;
-    }
-    if (arg === "--patch=-") {
-      return true;
-    }
+function stdinPatchRequested(command: DxCommand, argv: string[]): boolean {
+  if (command === "patch") {
+    return patchTargetFromArgs(argv) === "-";
+  }
+  if (command === "diff") {
+    const patch = longOptionFromArgs(argv, "--patch");
+    return patch.present && patch.value === "-";
   }
   return false;
 }

@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "dx-bench"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "dx-diff",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "dx-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "crossterm",
@@ -429,7 +429,7 @@ dependencies = [
 
 [[package]]
 name = "dx-command"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dx-core",
  "dx-diff",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "dx-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "dx-diff"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dx-core",
  "dx-git",
@@ -455,14 +455,14 @@ dependencies = [
 
 [[package]]
 name = "dx-git"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dx-core",
 ]
 
 [[package]]
 name = "dx-syntax"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dx-core",
  "serde",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "dx-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossterm",
  "dx-core",

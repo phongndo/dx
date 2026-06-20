@@ -887,6 +887,23 @@ fn focused_hunk_editor_target_skips_deleted_files() {
 }
 
 #[test]
+fn focused_hunk_editor_target_skips_show_sources() {
+    let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
+    let mut app = DiffApp::new(
+        DiffOptions {
+            source: DiffSource::Show("HEAD~1".to_owned()),
+            ..DiffOptions::default()
+        },
+        changeset,
+        DiffLayoutMode::Unified,
+    );
+    app.set_viewport_rows(5);
+
+    assert_eq!(app.focused_hunk_editor_target(), None);
+    assert_eq!(app.focused_hunk_editor_reload_request(), None);
+}
+
+#[test]
 fn editor_command_helpers_choose_line_arguments() {
     assert_eq!(
         split_editor_command("nvim -f").unwrap(),
@@ -2620,6 +2637,29 @@ fn number_key_switches_diff_choice() {
 }
 
 #[test]
+fn number_key_ignores_unavailable_diff_choice_for_show_source() {
+    let options = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("origin/main".to_owned());
+    app.current_head = Some("feature".to_owned());
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE))
+        .expect("number shortcut should be handled");
+
+    assert!(!should_quit);
+    assert!(app.pending_diff_load.is_none());
+    assert_eq!(app.options, options);
+}
+
+#[test]
 fn diff_menu_options_preserve_repo_and_untracked_setting() {
     let options = DiffOptions {
         repo: Some(PathBuf::from("/repo")),
@@ -4104,6 +4144,13 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             path: "new.rs".to_owned(),
         }
     );
+
+    let show = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    assert!(full_file_source(&repo, &show, &file, DiffSide::Old).is_none());
+    assert!(full_file_source(&repo, &show, &file, DiffSide::New).is_none());
 
     let patch = DiffOptions {
         source: DiffSource::Patch(dx_diff::PatchSource::Stdin(Arc::from(&b""[..]))),

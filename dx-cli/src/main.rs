@@ -16,7 +16,7 @@ use dx_core::{DxError, DxResult};
 use crate::{
     args::{Cli, Command},
     pager::pager,
-    syntax::{diff_options, syntax},
+    syntax::{diff_options, patch_options, show_options, syntax},
     update::update,
 };
 
@@ -109,15 +109,45 @@ fn is_clean_exit_error(error: &CliError) -> bool {
 
 fn run() -> CliResult<()> {
     let cli = Cli::parse();
+    run_cli(cli)
+}
 
+fn run_cli(cli: Cli) -> CliResult<()> {
+    reject_pre_subcommand_diff_args(&cli)?;
     match cli.command {
         None => run_diff(cli.diff),
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
         Some(Command::Pager(args)) => pager(args),
+        Some(Command::Show(args)) => run_show(args),
+        Some(Command::Patch(args)) => run_patch(args),
         Some(Command::Syntax { command }) => syntax(command),
         Some(Command::Update(args)) => update(args),
     }
+}
+
+fn reject_pre_subcommand_diff_args(cli: &Cli) -> DxResult<()> {
+    if cli.command.is_some() && has_diff_args(&cli.diff) {
+        return Err(DxError::Usage(
+            "top-level diff options cannot be used before a subcommand; move supported options after the subcommand".to_owned(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn has_diff_args(args: &args::DiffArgs) -> bool {
+    !args.revs.is_empty()
+        || args.pr.is_some()
+        || args.repo.is_some()
+        || args.base.is_some()
+        || args.staged
+        || args.unstaged
+        || args.no_untracked
+        || args.patch.is_some()
+        || args.no_watch
+        || args.no_syntax
+        || args.stat
 }
 
 fn run_diff(args: args::DiffArgs) -> CliResult<()> {
@@ -125,6 +155,29 @@ fn run_diff(args: args::DiffArgs) -> CliResult<()> {
     let live_updates = !args.no_watch;
     let syntax_enabled = !args.no_syntax;
     let options = diff_options(args)?;
+    run_review(options, live_updates, syntax_enabled, stat)
+}
+
+fn run_show(args: args::ShowArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let syntax_enabled = !args.no_syntax;
+    let options = show_options(args)?;
+    run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_patch(args: args::PatchArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let syntax_enabled = !args.no_syntax;
+    let options = patch_options(args)?;
+    run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_review(
+    options: dx_command::DiffOptions,
+    live_updates: bool,
+    syntax_enabled: bool,
+    stat: bool,
+) -> CliResult<()> {
     if io::stdout().is_terminal() && !stat {
         dx_tui::run_diff_with_live_updates_and_syntax(options, live_updates, syntax_enabled)?;
         Ok(())
@@ -138,5 +191,41 @@ fn stream_diff_to_stdout(options: dx_command::DiffOptions) -> CliResult<()> {
         Ok(()) => Ok(()),
         Err(DxError::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[test]
+    fn rejects_top_level_diff_options_before_source_subcommands() {
+        let error = run_cli(parse(&["dx", "--stat", "show", "HEAD"]))
+            .expect_err("top-level --stat should be rejected before show");
+        assert!(
+            error
+                .to_string()
+                .contains("top-level diff options cannot be used before a subcommand")
+        );
+
+        let error = run_cli(parse(&[
+            "dx",
+            "--repo",
+            "/tmp/repo",
+            "patch",
+            "changes.diff",
+        ]))
+        .expect_err("top-level --repo should be rejected before patch");
+        assert!(
+            error
+                .to_string()
+                .contains("top-level diff options cannot be used before a subcommand")
+        );
     }
 }
