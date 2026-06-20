@@ -794,8 +794,8 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(existing_treeish_revision(repo, left, "")?);
-            args.push(existing_treeish_revision(repo, right, "")?);
+            args.push(existing_object_revision(repo, left, "")?);
+            args.push(existing_object_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -858,8 +858,8 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(existing_treeish_revision(repo, left, "")?);
-            args.push(existing_treeish_revision(repo, right, "")?);
+            args.push(existing_object_revision(repo, left, "")?);
+            args.push(existing_object_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -906,8 +906,17 @@ fn existing_commitish_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<S
     existing_revision(repo, rev, kind, "commit")
 }
 
-fn existing_treeish_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
-    existing_revision(repo, rev, kind, "tree")
+fn existing_object_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
+    if resolve_revision(repo, rev)?.is_some() {
+        return Ok(rev.to_owned());
+    }
+
+    let label = if kind.is_empty() {
+        "revision".to_owned()
+    } else {
+        format!("{kind} revision")
+    };
+    Err(DxError::Usage(format!("unknown {label} `{rev}`")))
 }
 
 fn existing_revision(repo: &Path, rev: &str, kind: &str, object_kind: &str) -> DxResult<String> {
@@ -2184,6 +2193,45 @@ mod tests {
         .expect("rev:path tree range should render");
 
         assert!(patch.contains("+two"));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn range_diff_accepts_rev_path_blob_revisions() {
+        let test_dir = temp_test_dir("range-rev-path-blob-revisions");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        fs::write(repo.join("file.txt"), "one\n").expect("file should be written");
+        git(["add", "file.txt"], &repo);
+        git(["commit", "-q", "-m", "add file"], &repo);
+
+        fs::write(repo.join("file.txt"), "two\n").expect("file should change");
+        git(["add", "file.txt"], &repo);
+        git(["commit", "-q", "-m", "change file"], &repo);
+
+        let options = DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD~1:file.txt".to_owned(),
+                right: "HEAD:file.txt".to_owned(),
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        };
+
+        let patch = render(options.clone()).expect("rev:path blob range should render");
+        assert!(patch.contains("-one"));
+        assert!(patch.contains("+two"));
+
+        let stat = render(DiffOptions {
+            stat: true,
+            ..options
+        })
+        .expect("rev:path blob range stat should render");
+        assert!(stat.contains("file.txt"));
+
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 

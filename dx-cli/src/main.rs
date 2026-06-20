@@ -189,7 +189,7 @@ fn reject_likely_unknown_command(args: &args::DiffArgs) -> CliResult<()> {
     let revision_kind = if args.revs.len() == 1 {
         RevisionKind::Commit
     } else {
-        RevisionKind::Tree
+        RevisionKind::Object
     };
     match revision_status(args.repo.as_deref(), rev, revision_kind) {
         RevisionStatus::Exists => return Ok(()),
@@ -211,14 +211,14 @@ enum RevisionStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RevisionKind {
     Commit,
-    Tree,
+    Object,
 }
 
 impl RevisionKind {
-    fn peel(self) -> &'static str {
+    fn peel(self) -> Option<&'static str> {
         match self {
-            Self::Commit => "commit",
-            Self::Tree => "tree",
+            Self::Commit => Some("commit"),
+            Self::Object => None,
         }
     }
 }
@@ -238,8 +238,11 @@ fn revision_status(repo: Option<&Path>, rev: &str, kind: RevisionKind) -> Revisi
             RevisionStatus::Unknown
         };
     };
+    let Some(peel) = kind.peel() else {
+        return RevisionStatus::Exists;
+    };
 
-    match revision_object_matches(repo, &object, kind) {
+    match revision_object_matches(repo, &object, peel) {
         Some(true) => RevisionStatus::Exists,
         Some(false) => RevisionStatus::Missing,
         None => RevisionStatus::Unknown,
@@ -268,14 +271,14 @@ fn resolve_revision(repo: Option<&Path>, rev: &str) -> Option<String> {
     }
 }
 
-fn revision_object_matches(repo: Option<&Path>, object: &str, kind: RevisionKind) -> Option<bool> {
+fn revision_object_matches(repo: Option<&Path>, object: &str, peel: &str) -> Option<bool> {
     let mut command = ProcessCommand::new("git");
     if let Some(repo) = repo {
         command.arg("-C").arg(repo);
     }
     command
         .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
-        .arg(format!("{object}^{{{}}}", kind.peel()));
+        .arg(format!("{object}^{{{peel}}}"));
 
     match command.output() {
         Ok(output) => Some(output.status.success()),
@@ -470,6 +473,28 @@ mod tests {
             ..args::DiffArgs::default()
         })
         .expect("plain range operands should accept rev:path tree revisions");
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn two_revision_preflight_accepts_rev_path_blob_operand() {
+        let test_dir = temp_test_dir("range-rev-path-blob-preflight");
+        let repo = test_dir.join("repo");
+        init_repo(&repo);
+        fs::write(repo.join("file.txt"), "one\n").expect("file should be written");
+        git(["add", "file.txt"], &repo);
+        git(["commit", "-q", "-m", "add file"], &repo);
+        fs::write(repo.join("file.txt"), "two\n").expect("file should change");
+        git(["add", "file.txt"], &repo);
+        git(["commit", "-q", "-m", "change file"], &repo);
+
+        reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["HEAD~1:file.txt".to_owned(), "HEAD:file.txt".to_owned()],
+            repo: Some(repo),
+            ..args::DiffArgs::default()
+        })
+        .expect("plain range operands should accept rev:path blob revisions");
 
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
