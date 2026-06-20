@@ -2532,6 +2532,7 @@ impl DiffApp {
 
     pub(crate) fn apply_options_menu(&mut self) -> DxResult<()> {
         let draft = self.options_menu_draft;
+        let live_reload_reenabled = draft.live_updates_enabled && !self.live_updates_enabled;
         self.options_menu_open = false;
         self.color_scheme_picker_open = false;
 
@@ -2572,6 +2573,14 @@ impl DiffApp {
             options.include_untracked = draft.include_untracked;
             self.invalidate_diff_cache();
             self.start_uncached_diff_load(options, "reloading", "reloaded", "reload failed");
+        } else if live_reload_reenabled {
+            self.invalidate_diff_cache();
+            self.start_uncached_diff_load(
+                self.options.clone(),
+                "reloading",
+                "reloaded",
+                "reload failed",
+            );
         } else {
             self.dirty = true;
         }

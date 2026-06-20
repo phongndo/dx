@@ -3463,6 +3463,28 @@ fn options_menu_live_reload_toggles_without_reloading_diff() {
 }
 
 #[test]
+fn options_menu_reenabling_live_reload_reloads_diff() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.live_updates_enabled = false;
+
+    app.open_options_menu();
+    app.move_options_menu_selection(3);
+    assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
+    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+        .expect("space should toggle live reload draft");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should apply options");
+
+    assert!(app.live_updates_enabled);
+    let load = app
+        .pending_diff_load
+        .as_ref()
+        .expect("reenabling live reload should queue a fresh load");
+    assert_eq!(load.options, DiffOptions::default());
+}
+
+#[test]
 fn options_menu_does_not_enable_live_reload_when_watch_is_disabled() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
