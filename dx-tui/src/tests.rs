@@ -3624,6 +3624,38 @@ fn cached_tab_key_switches_diff_choice_without_loading() {
 }
 
 #[test]
+fn cached_current_diff_rebuilds_model_while_filter_apply_is_pending() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_files(&["all.rs", "filtered.rs"]),
+        DiffLayoutMode::Unified,
+    );
+    let unstaged = DiffOptions {
+        scope: DiffScope::Unstaged,
+        ..DiffOptions::default()
+    };
+    app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["unstaged.rs"]));
+
+    app.file_filter = "filtered".to_owned();
+    app.apply_filters(false);
+    assert_eq!(visible_paths(&app), vec!["filtered.rs"]);
+
+    app.file_filter.clear();
+    app.file_filter_input.clear();
+    app.filter_searching = true;
+
+    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .expect("tab should switch to cached diff type");
+    assert_eq!(app.options, unstaged);
+    assert_eq!(visible_paths(&app), vec!["unstaged.rs"]);
+
+    app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
+        .expect("shift-tab should switch back to cached current diff type");
+    assert_eq!(app.options, DiffOptions::default());
+    assert_eq!(visible_paths(&app), vec!["all.rs", "filtered.rs"]);
+}
+
+#[test]
 fn cached_diff_choice_is_not_reused_without_live_invalidator() {
     let mut app = DiffApp::new(
         DiffOptions::default(),

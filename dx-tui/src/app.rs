@@ -1768,7 +1768,8 @@ impl DiffApp {
         let search_index = Arc::clone(&self.search_index);
         let total_stats = self.total_stats.clone();
         let max_line_width = search_index.max_line_width();
-        let can_reuse_current_model = !self.filters_active() && self.context_expansions.is_empty();
+        let can_reuse_current_model =
+            !self.filters_active() && !self.filter_busy() && self.context_expansions.is_empty();
         let context_expansions = HashMap::new();
         let unified_model = if can_reuse_current_model && self.layout == DiffLayoutMode::Unified {
             self.model.clone()
