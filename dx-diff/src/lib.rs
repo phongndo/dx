@@ -788,12 +788,14 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
         }
         DiffSource::Branch { base, head } => {
             args.push("--end-of-options".to_owned());
+            let base = existing_revision(repo, base, "base")?;
+            let head = existing_revision(repo, head, "head")?;
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(left.clone());
-            args.push(right.clone());
+            args.push(existing_revision(repo, left, "")?);
+            args.push(existing_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -850,12 +852,14 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
         }
         DiffSource::Branch { base, head } => {
             args.push("--end-of-options".to_owned());
+            let base = existing_revision(repo, base, "base")?;
+            let head = existing_revision(repo, head, "head")?;
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
             args.push("--end-of-options".to_owned());
-            args.push(left.clone());
-            args.push(right.clone());
+            args.push(existing_revision(repo, left, "")?);
+            args.push(existing_revision(repo, right, "")?);
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -898,6 +902,19 @@ fn show_target(repo: &Path, rev: &str) -> DxResult<String> {
     }
 }
 
+fn existing_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
+    if commitish_exists(repo, rev)? {
+        return Ok(rev.to_owned());
+    }
+
+    let label = if kind.is_empty() {
+        "revision".to_owned()
+    } else {
+        format!("{kind} revision")
+    };
+    Err(DxError::Usage(format!("unknown {label} `{rev}`")))
+}
+
 fn worktree_base_revision(repo: &Path) -> DxResult<String> {
     if has_head(repo)? {
         Ok("HEAD".to_owned())
@@ -907,6 +924,10 @@ fn worktree_base_revision(repo: &Path) -> DxResult<String> {
 }
 
 fn merge_base_revision(repo: &Path, base: &str) -> DxResult<String> {
+    if !commitish_exists(repo, base)? {
+        return Err(DxError::Usage(format!("unknown base revision `{base}`")));
+    }
+
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -923,6 +944,16 @@ fn merge_base_revision(repo: &Path, base: &str) -> DxResult<String> {
         ));
     }
     Ok(revision)
+}
+
+fn commitish_exists(repo: &Path, rev: &str) -> DxResult<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+        .arg(format!("{rev}^{{commit}}"))
+        .output()?;
+    Ok(output.status.success())
 }
 
 fn empty_tree_revision(repo: &Path) -> DxResult<String> {
@@ -2005,6 +2036,45 @@ mod tests {
         assert!(paths.contains(&"committed.txt"));
         assert!(paths.contains(&"staged.txt"));
         assert!(paths.contains(&"untracked.txt"));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn base_branch_diff_reports_unknown_base_revision() {
+        let test_dir = temp_test_dir("unknown-base-revision");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        let error = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Base("missing-branch".to_owned()),
+            ..DiffOptions::default()
+        })
+        .expect_err("missing base should fail before git merge-base");
+
+        assert_eq!(error.to_string(), "unknown base revision `missing-branch`");
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn range_diff_reports_unknown_revision() {
+        let test_dir = temp_test_dir("unknown-range-revision");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        let error = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD".to_owned(),
+                right: "missing-branch".to_owned(),
+            },
+            ..DiffOptions::default()
+        })
+        .expect_err("missing range side should fail before git diff");
+
+        assert_eq!(error.to_string(), "unknown revision `missing-branch`");
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 

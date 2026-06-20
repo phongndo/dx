@@ -7,10 +7,12 @@ mod update;
 use std::{
     fmt,
     io::{self, IsTerminal, Write},
+    path::Path,
+    process::Command as ProcessCommand,
     process::ExitCode,
 };
 
-use clap::Parser;
+use clap::{CommandFactory, Parser, error::ErrorKind};
 use dx_core::{DxError, DxResult};
 
 use crate::{
@@ -28,11 +30,23 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) if is_clean_exit_error(&error) => ExitCode::SUCCESS,
+        Err(CliError::Clap(error)) => {
+            let exit_code = error.exit_code();
+            let _ = error.print();
+            ExitCode::from(u8::try_from(exit_code).unwrap_or(1))
+        }
         Err(error) => {
-            let _ = write_stderr(format_args!("dx: {error}\n"));
+            let _ = write_stderr(format_args!(
+                "{} {error}\n",
+                styled_error_prefix(io::stderr().is_terminal())
+            ));
             ExitCode::from(1)
         }
     }
+}
+
+fn styled_error_prefix(color: bool) -> &'static str {
+    if color { "\x1b[31mdx:\x1b[0m" } else { "dx:" }
 }
 
 fn syntax_validation_child_exit_code() -> Option<ExitCode> {
@@ -50,6 +64,7 @@ pub(crate) type CliResult<T> = Result<T, CliError>;
 #[derive(Debug)]
 pub(crate) enum CliError {
     Dx(DxError),
+    Clap(clap::Error),
     StdoutBrokenPipe,
 }
 
@@ -57,6 +72,7 @@ impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dx(error) => write!(formatter, "{error}"),
+            Self::Clap(error) => write!(formatter, "{error}"),
             Self::StdoutBrokenPipe => write!(formatter, "broken pipe"),
         }
     }
@@ -151,11 +167,80 @@ fn has_diff_args(args: &args::DiffArgs) -> bool {
 }
 
 fn run_diff(args: args::DiffArgs) -> CliResult<()> {
+    reject_likely_unknown_command(&args)?;
     let stat = args.stat;
     let live_updates = !args.no_watch;
     let syntax_enabled = !args.no_syntax;
     let options = diff_options(args)?;
     run_review(options, live_updates, syntax_enabled, stat)
+}
+
+fn reject_likely_unknown_command(args: &args::DiffArgs) -> CliResult<()> {
+    if args.base.is_some()
+        || args.pr.is_some()
+        || args.patch.is_some()
+        || args.revs.is_empty()
+        || args.revs[0].starts_with('-')
+    {
+        return Ok(());
+    }
+
+    let rev = &args.revs[0];
+    match revision_status(args.repo.as_deref(), rev) {
+        RevisionStatus::Exists => return Ok(()),
+        RevisionStatus::Missing => {}
+        RevisionStatus::Unknown if looks_like_command(rev) => {}
+        RevisionStatus::Unknown => return Ok(()),
+    }
+
+    Err(CliError::Clap(unknown_command_or_revision_error(rev)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RevisionStatus {
+    Exists,
+    Missing,
+    Unknown,
+}
+
+fn unknown_command_or_revision_error(rev: &str) -> clap::Error {
+    Cli::command().error(
+        ErrorKind::InvalidSubcommand,
+        format!("unrecognized subcommand or revision '{rev}'"),
+    )
+}
+
+fn revision_status(repo: Option<&Path>, rev: &str) -> RevisionStatus {
+    let mut command = ProcessCommand::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
+    }
+    command
+        .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+        .arg(format!("{rev}^{{commit}}"));
+
+    match command.output() {
+        Ok(output) if output.status.success() => RevisionStatus::Exists,
+        Ok(_) if git_repository_available(repo) => RevisionStatus::Missing,
+        _ => RevisionStatus::Unknown,
+    }
+}
+
+fn git_repository_available(repo: Option<&Path>) -> bool {
+    let mut command = ProcessCommand::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
+    }
+    command.args(["rev-parse", "--show-toplevel"]);
+
+    command.output().is_ok_and(|output| output.status.success())
+}
+
+fn looks_like_command(value: &str) -> bool {
+    matches!(
+        value,
+        "ls" | "list" | "pwd" | "cd" | "rm" | "remove" | "new" | "fork" | "status"
+    )
 }
 
 fn run_show(args: args::ShowArgs) -> CliResult<()> {
@@ -196,6 +281,8 @@ fn stream_diff_to_stdout(options: dx_command::DiffOptions) -> CliResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::Parser;
 
     use super::*;
@@ -227,5 +314,30 @@ mod tests {
                 .to_string()
                 .contains("top-level diff options cannot be used before a subcommand")
         );
+    }
+
+    #[test]
+    fn unknown_single_top_level_target_renders_clap_style_error() {
+        let error = reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["ls".to_owned()],
+            repo: Some(PathBuf::from("/definitely/not/a/repo")),
+            ..args::DiffArgs::default()
+        })
+        .expect_err("invalid target should be rejected before git diff");
+
+        assert!(matches!(error, CliError::Clap(_)));
+        let rendered = error.to_string();
+        assert!(rendered.contains("unrecognized subcommand or revision 'ls'"));
+        assert!(rendered.contains("Usage: dx [OPTIONS] [COMMAND|REV] [REV]"));
+    }
+
+    #[test]
+    fn non_command_target_without_repo_is_left_for_git_error() {
+        reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["HEAD".to_owned()],
+            repo: Some(PathBuf::from("/definitely/not/a/repo")),
+            ..args::DiffArgs::default()
+        })
+        .expect("non-command targets should not hide repository errors");
     }
 }
