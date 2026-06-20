@@ -959,11 +959,38 @@ fn commitish_exists(repo: &Path, rev: &str) -> DxResult<bool> {
 }
 
 fn revision_exists(repo: &Path, rev: &str, object_kind: &str) -> DxResult<bool> {
+    let Some(object) = resolve_revision(repo, rev)? else {
+        return Ok(false);
+    };
+
+    revision_object_matches(repo, &object, object_kind)
+}
+
+fn resolve_revision(repo: &Path, rev: &str) -> DxResult<Option<String>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
-        .arg(format!("{rev}^{{{object_kind}}}"))
+        .arg(rev)
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let revision = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if revision.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(revision))
+    }
+}
+
+fn revision_object_matches(repo: &Path, object: &str, object_kind: &str) -> DxResult<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+        .arg(format!("{object}^{{{object_kind}}}"))
         .output()?;
     Ok(output.status.success())
 }
@@ -2126,6 +2153,37 @@ mod tests {
         .expect("tree-ish range stat should render");
         assert!(stat.contains("base.txt"));
 
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn range_diff_accepts_rev_path_tree_revisions() {
+        let test_dir = temp_test_dir("range-rev-path-tree-revisions");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+
+        fs::create_dir_all(repo.join("src")).expect("source directory should be created");
+        fs::write(repo.join("src/file.txt"), "one\n").expect("source file should be written");
+        git(["add", "src/file.txt"], &repo);
+        git(["commit", "-q", "-m", "add source"], &repo);
+
+        fs::write(repo.join("src/file.txt"), "two\n").expect("source file should change");
+        git(["add", "src/file.txt"], &repo);
+        git(["commit", "-q", "-m", "change source"], &repo);
+
+        let patch = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD~1:src".to_owned(),
+                right: "HEAD:src".to_owned(),
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        })
+        .expect("rev:path tree range should render");
+
+        assert!(patch.contains("+two"));
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 
