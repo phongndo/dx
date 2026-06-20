@@ -167,6 +167,10 @@ fn pager_action(
         return PagerAction::Passthrough;
     }
 
+    if patch_input_has_prelude(input) {
+        return PagerAction::StaticDiff;
+    }
+
     if !has_controlling_terminal {
         return PagerAction::StaticDiff;
     }
@@ -194,8 +198,14 @@ fn static_pager_color_enabled(stdout_tty: bool, env: &PagerEnv, no_color: bool) 
 }
 
 fn write_static_diff(input: &[u8], args: &PagerArgs, color: bool) -> CliResult<()> {
+    let output = static_diff_output(input, args, color)?;
+    write_stdout_bytes(&output)
+}
+
+fn static_diff_output(input: &[u8], args: &PagerArgs, color: bool) -> CliResult<Vec<u8>> {
     let patch = normalized_patch_input(input);
-    let options = patch_options(patch);
+    let (prelude, patch) = split_patch_prelude(&patch);
+    let options = patch_options(patch.to_vec());
     let rendered = match dx_tui::render_static_pager(
         options,
         dx_tui::StaticPagerOptions {
@@ -216,9 +226,11 @@ fn write_static_diff(input: &[u8], args: &PagerArgs, color: bool) -> CliResult<(
     };
     if rendered.is_empty() {
         let fallback = sanitized_terminal_bytes(input);
-        write_stdout_bytes(&fallback)
+        Ok(fallback)
     } else {
-        write_stdout_bytes(rendered.as_bytes())
+        let mut output = sanitized_terminal_bytes(prelude);
+        output.extend_from_slice(rendered.as_bytes());
+        Ok(output)
     }
 }
 
@@ -594,6 +606,11 @@ fn looks_like_patch_input(input: &[u8]) -> bool {
     parseable_patch_has_renderable_change(&text)
 }
 
+fn patch_input_has_prelude(input: &[u8]) -> bool {
+    let normalized = normalized_patch_input(input);
+    !split_patch_prelude(&normalized).0.is_empty()
+}
+
 fn parseable_patch_has_renderable_change(patch: &str) -> bool {
     let has_git_header = patch_header_lines(patch).any(|line| line.starts_with("diff --git "));
     dx_diff::parse_patch(patch)
@@ -633,16 +650,37 @@ fn normalized_patch_input(input: &[u8]) -> Vec<u8> {
 fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
     let line_break_start = line.strip_suffix(b"\n").map_or(line.len(), <[u8]>::len);
     let mut content_start = 0;
-    let mut stripped_leading_color = false;
+    let mut stripped_git_color = false;
     while content_start < line_break_start {
         let Some(end) = sgr_escape_end(line, content_start) else {
             break;
         };
-        stripped_leading_color = true;
+        stripped_git_color = true;
         content_start = end;
     }
 
-    let content_end = if stripped_leading_color {
+    if diff_structural_line(&line[content_start..line_break_start]) {
+        append_without_sgr_escapes(&line[content_start..line_break_start], output);
+        output.extend_from_slice(&line[line_break_start..]);
+        return;
+    }
+
+    if matches!(line.get(content_start), Some(b' ' | b'+' | b'-')) {
+        output.push(line[content_start]);
+        content_start += 1;
+        while content_start < line_break_start {
+            let Some(end) = sgr_escape_end(line, content_start) else {
+                break;
+            };
+            if !sgr_escape_is_reset(&line[content_start..end]) {
+                break;
+            }
+            stripped_git_color = true;
+            content_start = end;
+        }
+    }
+
+    let content_end = if stripped_git_color {
         trailing_sgr_reset_start(line, content_start, line_break_start).unwrap_or(line_break_start)
     } else {
         line_break_start
@@ -650,6 +688,68 @@ fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
 
     output.extend_from_slice(&line[content_start..content_end]);
     output.extend_from_slice(&line[line_break_start..]);
+}
+
+fn diff_structural_line(line: &[u8]) -> bool {
+    if diff_structural_line_without_sgr(line) {
+        return true;
+    }
+
+    let mut stripped = Vec::with_capacity(line.len());
+    append_without_sgr_escapes(line, &mut stripped);
+    stripped.len() != line.len() && diff_structural_line_without_sgr(&stripped)
+}
+
+fn diff_structural_line_without_sgr(line: &[u8]) -> bool {
+    line.starts_with(b"diff --git ")
+        || line.starts_with(b"index ")
+        || line.starts_with(b"old mode ")
+        || line.starts_with(b"new mode ")
+        || line.starts_with(b"deleted file mode ")
+        || line.starts_with(b"new file mode ")
+        || line.starts_with(b"similarity index ")
+        || line.starts_with(b"dissimilarity index ")
+        || line.starts_with(b"rename from ")
+        || line.starts_with(b"rename to ")
+        || line.starts_with(b"copy from ")
+        || line.starts_with(b"copy to ")
+        || line.starts_with(b"@@ ")
+        || line.starts_with(b"Binary files ")
+        || line.starts_with(b"GIT binary patch")
+}
+
+fn append_without_sgr_escapes(input: &[u8], output: &mut Vec<u8>) {
+    let mut index = 0;
+    while index < input.len() {
+        if let Some(end) = sgr_escape_end(input, index) {
+            index = end;
+        } else {
+            output.push(input[index]);
+            index += 1;
+        }
+    }
+}
+
+fn split_patch_prelude(input: &[u8]) -> (&[u8], &[u8]) {
+    let Some(patch_start) = first_git_diff_line_start(input) else {
+        return (&[], input);
+    };
+    input.split_at(patch_start)
+}
+
+fn first_git_diff_line_start(input: &[u8]) -> Option<usize> {
+    let mut offset = 0;
+    for line in input.split_inclusive(|byte| *byte == b'\n') {
+        let line_without_lf = line.strip_suffix(b"\n").unwrap_or(line);
+        let line_without_crlf = line_without_lf
+            .strip_suffix(b"\r")
+            .unwrap_or(line_without_lf);
+        if line_without_crlf.starts_with(b"diff --git ") {
+            return Some(offset);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn trailing_sgr_reset_start(input: &[u8], start: usize, end: usize) -> Option<usize> {
@@ -957,6 +1057,18 @@ mod tests {
     }
 
     #[test]
+    fn pager_routes_git_show_prelude_to_static_diff() {
+        let action = pager_action(
+            b"commit abc123\nAuthor: Example <e@example.com>\n\n    message\n\ndiff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n",
+            true,
+            &env(Some("xterm-256color"), None, None, false),
+            true,
+        );
+
+        assert_eq!(action, PagerAction::StaticDiff);
+    }
+
+    #[test]
     fn pager_passthroughs_dumb_non_captured_terminal() {
         let action = pager_action(
             b"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n",
@@ -1229,6 +1341,57 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].hunks[0].lines[0].text, "old");
         assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mred\x1b[0m");
+    }
+
+    #[test]
+    fn normalized_patch_input_strips_git_resets_inside_colored_diff_lines() {
+        let patch = b"\x1b[1mdiff --git a/a.txt b/a.txt\x1b[m\n\x1b[1m--- a/a.txt\x1b[m\n\x1b[1m+++ b/a.txt\x1b[m\n\x1b[36m@@\x1b[m -1,2 +1,2 \x1b[36m@@\x1b[m fn\x1b[m\n \x1b[mcontext\x1b[m\n\x1b[31m-old\x1b[m\n\x1b[32m+\x1b[mnew\x1b[m\n";
+
+        let normalized = normalized_patch_input(patch);
+        let text = String::from_utf8_lossy(&normalized);
+        let files = dx_diff::parse_patch(&text);
+
+        assert!(!text.contains("\x1b[m"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].hunks[0].header, "@@ -1,2 +1,2 @@ fn");
+        assert_eq!(files[0].hunks[0].lines[0].text, "context");
+        assert_eq!(files[0].hunks[0].lines[2].text, "new");
+    }
+
+    #[test]
+    fn split_patch_prelude_keeps_git_show_text_out_of_rendered_patch() {
+        let patch = b"commit abc123\nAuthor: Example <e@example.com>\n\n    message\n\ndiff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+
+        let normalized = normalized_patch_input(patch);
+        let (prelude, patch) = split_patch_prelude(&normalized);
+
+        assert_eq!(
+            prelude,
+            b"commit abc123\nAuthor: Example <e@example.com>\n\n    message\n\n"
+        );
+        assert!(patch.starts_with(b"diff --git a/a.txt b/a.txt\n"));
+        assert_eq!(
+            dx_diff::parse_patch(&String::from_utf8_lossy(patch)).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn static_diff_output_prepends_git_show_prelude() {
+        let input = b"commit abc123\nAuthor: Example <e@example.com>\n\n    message\n\ndiff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
+        let args = PagerArgs {
+            no_syntax: true,
+            layout: PagerLayoutArg::Unified,
+        };
+
+        let output = static_diff_output(input, &args, false).unwrap();
+        let text = String::from_utf8_lossy(&output);
+
+        assert!(text.starts_with("commit abc123\nAuthor: Example <e@example.com>\n"));
+        assert!(text.contains("message\n\n"));
+        assert!(text.contains("a.txt"));
+        assert!(text.contains("-old"));
+        assert!(text.contains("+new"));
     }
 
     #[test]
