@@ -63,16 +63,6 @@ impl DiffChoice {
     }
 }
 
-pub(crate) fn diff_choice_shortcut(character: char) -> Option<DiffChoice> {
-    match character {
-        '1' => Some(DiffChoice::All),
-        '2' => Some(DiffChoice::Branch),
-        '3' => Some(DiffChoice::Unstaged),
-        '4' => Some(DiffChoice::Staged),
-        _ => None,
-    }
-}
-
 pub(crate) fn default_branch_base(options: &DiffOptions, repo: &Path) -> Option<String> {
     branch_base_from_options(options)
         .or_else(env_branch_base)

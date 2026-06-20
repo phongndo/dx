@@ -1,5 +1,6 @@
 mod args;
 mod config;
+mod pager;
 mod syntax;
 mod update;
 
@@ -14,6 +15,7 @@ use dx_core::{DxError, DxResult};
 
 use crate::{
     args::{Cli, Command},
+    pager::pager,
     syntax::{diff_options, patch_options, show_options, syntax},
     update::update,
 };
@@ -80,6 +82,14 @@ pub(crate) fn write_stdout(args: fmt::Arguments<'_>) -> CliResult<()> {
     Ok(())
 }
 
+pub(crate) fn write_stdout_bytes(bytes: &[u8]) -> CliResult<()> {
+    io::stdout()
+        .lock()
+        .write_all(bytes)
+        .map_err(stdout_write_error)?;
+    Ok(())
+}
+
 pub(crate) fn write_stderr(args: fmt::Arguments<'_>) -> DxResult<()> {
     io::stderr().lock().write_fmt(args)?;
     Ok(())
@@ -108,6 +118,7 @@ fn run_cli(cli: Cli) -> CliResult<()> {
         None => run_diff(cli.diff),
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
+        Some(Command::Pager(args)) => pager(args),
         Some(Command::Show(args)) => run_show(args),
         Some(Command::Patch(args)) => run_patch(args),
         Some(Command::Syntax { command }) => syntax(command),

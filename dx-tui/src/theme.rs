@@ -14,6 +14,8 @@ use dx_syntax::{
 };
 use ratatui::prelude::Color;
 
+use crate::keymap::GlobalAction;
+
 pub(crate) const EVENT_POLL: Duration = Duration::from_millis(120);
 pub(crate) const LIVE_RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(crate) const MAX_READY_EVENTS_PER_FRAME: usize = 64;
@@ -57,49 +59,78 @@ pub(crate) const HELP_MENU_COLUMN_GAP: usize = 4;
 pub(crate) const HELP_KEY_COLUMN_WIDTH: usize = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HelpMenuKey {
+    Static(&'static str),
+    Leader,
+    Global(GlobalAction),
+    GlobalPair(GlobalAction, GlobalAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HelpMenuRow {
     Section(&'static str),
-    Binding(&'static str, &'static str),
+    Binding(HelpMenuKey, &'static str),
 }
 
 pub(crate) const HELP_MENU_LEFT_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Global"),
-    HelpMenuRow::Binding("?", "toggle this help"),
-    HelpMenuRow::Binding("q", "quit"),
-    HelpMenuRow::Binding("Ctrl-C", "force quit"),
-    HelpMenuRow::Binding("Esc", "close"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Help), "toggle this help"),
+    HelpMenuRow::Binding(HelpMenuKey::Leader, "leader"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Quit), "quit"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-C"), "force quit"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Esc"), "close"),
     HelpMenuRow::Section("Navigate"),
-    HelpMenuRow::Binding("j/k, ↑/↓", "scroll"),
-    HelpMenuRow::Binding("d/u, PgDn/PgUp", "page"),
-    HelpMenuRow::Binding("g/G, Home/End", "top / bottom"),
-    HelpMenuRow::Binding("h/l, ←/→", "horizontal"),
-    HelpMenuRow::Binding("J/K", "file"),
-    HelpMenuRow::Binding("]/[", "hunk"),
-    HelpMenuRow::Binding("Ctrl-G", "edit focused hunk"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("j/k, ↑/↓"), "scroll"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("d/u, PgDn/PgUp"), "page"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("g/G, Home/End"), "top / bottom"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("h/l, ←/→"), "horizontal"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("J/K"), "file"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("]/["), "hunk"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::EditHunk),
+        "edit focused hunk",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::GlobalPair(GlobalAction::NextDiffType, GlobalAction::PreviousDiffType),
+        "cycle diff type",
+    ),
 ];
 
 pub(crate) const HELP_MENU_RIGHT_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Actions"),
-    HelpMenuRow::Binding("f", "filter files"),
-    HelpMenuRow::Binding("/", "grep diff"),
-    HelpMenuRow::Binding("n/p", "next / previous grep match"),
-    HelpMenuRow::Binding("b", "toggle file sidebar"),
-    HelpMenuRow::Binding("s", "split / unified"),
-    HelpMenuRow::Binding("r", "reload diff"),
-    HelpMenuRow::Binding("1/2/3/4", "all / branch / unstaged / staged"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::FileFilter),
+        "filter files",
+    ),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Grep), "grep diff"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("n/p"), "next / previous grep match"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::FileBrowser),
+        "toggle file sidebar",
+    ),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Layout), "split / unified"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Reload), "reload diff"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::DiffMenu),
+        "diff source menu",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::OptionsMenu),
+        "options menu",
+    ),
     HelpMenuRow::Section("Filter input"),
-    HelpMenuRow::Binding("Enter", "keep filter"),
-    HelpMenuRow::Binding("Esc", "clear active filters"),
-    HelpMenuRow::Binding("Backspace", "delete char"),
-    HelpMenuRow::Binding("Ctrl-U", "clear input"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "keep filter"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Esc"), "clear active filters"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Backspace"), "delete char"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-U"), "clear input"),
     HelpMenuRow::Section("Branch filter"),
-    HelpMenuRow::Binding("type", "filter branches"),
-    HelpMenuRow::Binding("Enter", "select branch"),
-    HelpMenuRow::Binding("Tab/Shift-Tab", "cycle matches"),
-    HelpMenuRow::Binding("Backspace", "delete char"),
-    HelpMenuRow::Binding("Ctrl-U", "clear filter"),
-    HelpMenuRow::Binding("↑/↓, PgUp/PgDn", "move"),
-    HelpMenuRow::Binding("Home/End", "first / last match"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("type"), "filter branches"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "select branch"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Tab/Shift-Tab"), "cycle matches"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Backspace"), "delete char"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-U"), "clear filter"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("↑/↓, PgUp/PgDn"), "move"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Home/End"), "first / last match"),
 ];
 
 pub(crate) fn line_gutter_fg(kind: DiffLineKind, theme: DiffTheme) -> Color {

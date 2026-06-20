@@ -301,6 +301,7 @@ checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
  "bitflags",
  "crossterm_winapi",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix 0.38.44",
@@ -419,7 +420,10 @@ dependencies = [
  "crossterm",
  "dx-command",
  "dx-core",
+ "dx-diff",
  "dx-tui",
+ "rustix 0.38.44",
+ "shlex",
  "unicode-width 0.2.0",
 ]
 
@@ -483,8 +487,10 @@ dependencies = [
  "notify",
  "ratatui",
  "rustix 0.38.44",
+ "serde",
  "shlex",
  "tokio",
+ "toml",
  "unicode-width 0.2.0",
 ]
 
@@ -529,6 +535,17 @@ checksum = "b6ec7c8f9ead395d6b7c5c94c774be78eb5e439b803fa32750318753c02459f9"
 dependencies = [
  "bstr",
  "memchr",
+]
+
+[[package]]
+name = "filedescriptor"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e40758ed24c9b2eeb76c35fb0aebc66c626084edd827e07e1552279814c6682d"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
 ]
 
 [[package]]

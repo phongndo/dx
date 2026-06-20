@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     ops::Range,
     path::{Path, PathBuf},
@@ -15,7 +15,11 @@ use crossterm::event::{
 };
 use dx_core::DxResult;
 use dx_diff::{Changeset, DiffOptions, DiffScope, DiffSource, DiffStats};
-use dx_syntax::{HighlightedLine, SyntaxLimits, SyntaxSettings};
+use dx_syntax::{
+    ColorOverrides, DiffContextExpansion, HighlightedLine, SyntaxLimits, SyntaxSettings,
+    SyntaxThemeConfig, SyntaxThemeSource,
+};
+use ratatui::layout::Rect;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use unicode_width::UnicodeWidthStr;
 
@@ -24,10 +28,11 @@ use crate::{
         BranchMenu, CrosstermTerminal, DiffChoice, DiffFilterKind, DiffLayoutMode, INPUT_CURSOR,
         branch_base_from_options, branch_head_from_options, branch_match_score,
         comparison_branches, current_head_label, default_branch_base, default_layout_for_width,
-        diff_choice_shortcut, diff_stats_for_files,
+        diff_stats_for_files,
     },
     editor::{EditorTarget, configured_editor, open_editor, repo_file_path},
     event_reader::TerminalEventReader,
+    keymap::{GlobalAction, Keymap, MenuAction},
     live_diff::{LiveDiff, LiveDiffReload, live_diff_supported},
     model::{
         ContextExpansionDirection, ContextKey, ContextSourceEntry, ContextSourceKey, UiModel,
@@ -35,7 +40,7 @@ use crate::{
     },
     render::{
         draw,
-        menus::{branch_menu_width, diff_menu_width, diff_selector_width},
+        menus::{branch_menu_width, diff_menu_block, diff_selector_width},
         sidebar::max_file_sidebar_width,
         text::fit_padded,
     },
@@ -60,8 +65,11 @@ use crate::{
 const MOUSE_HUNK_FOCUS_SCROLL_TICKS: isize = 3;
 const EDITOR_RELOAD_POLL: Duration = Duration::from_millis(8);
 const FILTER_DEBOUNCE: Duration = Duration::from_millis(120);
+const DIFF_PREFETCH_POLL: Duration = Duration::from_millis(8);
 const FILTER_WORKER_POLL: Duration = Duration::from_millis(8);
 const MAX_LIVE_GREP_MATCHES: usize = 10_000;
+const MAX_DIFF_CACHE_ENTRIES: usize = 4;
+const MAX_COLOR_SCHEME_MENU_ROWS: usize = 9;
 pub(crate) const ERROR_LOG_DEFAULT_HEIGHT: u16 = 6;
 pub(crate) const ERROR_LOG_MIN_HEIGHT: u16 = 3;
 pub(crate) const ERROR_LOG_MAX_HEIGHT: u16 = 14;
@@ -178,12 +186,14 @@ pub(crate) async fn run_loop(
     let mut events = TerminalEventReader::start("dx-diff-events")?;
 
     loop {
+        drain_live_diff_invalidation(app, live_diff.as_ref());
         sync_live_diff(live_diff, app, live_updates);
         drain_live_reloads(
             app,
             live_diff.as_mut().map(|live_diff| &mut live_diff.reload_rx),
         );
         app.drain_pending_diff_load();
+        app.drain_diff_prefetch();
         app.start_due_filter_apply();
         app.drain_filter_worker();
         app.drain_syntax();
@@ -194,6 +204,7 @@ pub(crate) async fn run_loop(
             }
             terminal.draw(|frame| draw(frame, app))?;
             app.dirty = false;
+            app.start_diff_prefetches();
         }
         app.start_pending_editor_reload();
         if app.drain_editor_reload() {
@@ -232,15 +243,26 @@ fn handle_ready_events(
     Ok(false)
 }
 
+pub(crate) fn drain_live_diff_invalidation(app: &mut DiffApp, live_diff: Option<&LiveDiff>) {
+    if live_diff.is_some_and(|live_diff| live_diff.take_invalidated()) {
+        app.mark_live_reload_pending();
+    }
+}
+
 pub(crate) fn sync_live_diff(
     live_diff: &mut Option<LiveDiff>,
     app: &mut DiffApp,
     live_updates: bool,
 ) {
-    if !live_updates || !live_diff_supported(&app.options) {
+    if !live_updates
+        || !app.live_updates_allowed
+        || !app.live_updates_enabled
+        || !live_diff_supported(&app.options)
+    {
         *live_diff = None;
         app.live_diff_failed_options = None;
         app.live_reload_pending = false;
+        app.clear_cached_diff_choices();
         return;
     }
 
@@ -264,6 +286,7 @@ pub(crate) fn sync_live_diff(
             *live_diff = None;
             app.live_diff_failed_options = Some(app.options.clone());
             app.live_reload_pending = false;
+            app.clear_cached_diff_choices();
             app.set_error_log(format!("live reload unavailable: {error}"));
         }
     }
@@ -280,8 +303,9 @@ pub(crate) fn drain_live_reloads(
     while let Ok(reload) = live_reload_rx.try_recv() {
         match reload {
             LiveDiffReload::Started => {
-                app.live_reload_pending = true;
-                app.dirty = true;
+                if !app.live_reload_pending {
+                    app.mark_live_reload_pending();
+                }
             }
             LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset),
             LiveDiffReload::Loaded(Err(error)) => {
@@ -298,9 +322,15 @@ pub(crate) fn handle_event(
     live_diff: &mut Option<LiveDiff>,
     events: &mut TerminalEventReader,
 ) -> DxResult<bool> {
+    drain_live_diff_invalidation(app, live_diff.as_ref());
+
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
-        Event::Key(key) if is_ctrl_g_key(key) && app.editor_shortcut_available() => {
+        Event::Key(key) if is_quit_key(key) => Ok(true),
+        Event::Key(key)
+            if app.keymap.matches_single(GlobalAction::EditHunk, key)
+                && app.editor_shortcut_available() =>
+        {
             if let Some(editor) = app.prepare_focused_hunk_editor() {
                 let paused_events = events.pause();
                 app.open_prepared_hunk_in_editor(editor, Some(live_diff));
@@ -321,19 +351,148 @@ pub(crate) fn handle_event(
     }
 }
 
-pub(crate) fn is_ctrl_g_key(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g')
-}
-
 pub(crate) fn is_quit_key(key: KeyEvent) -> bool {
-    is_plain_char_key(key, 'q')
-        || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c'))
+    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
 }
 
 pub(crate) fn is_plain_char_key(key: KeyEvent, character: char) -> bool {
     key.code == KeyCode::Char(character)
         && !key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
+pub(crate) fn diff_choice_for_options(options: &DiffOptions) -> Option<DiffChoice> {
+    match (&options.source, options.scope) {
+        (DiffSource::Worktree, DiffScope::All) => Some(DiffChoice::All),
+        (DiffSource::Worktree, DiffScope::Unstaged) => Some(DiffChoice::Unstaged),
+        (DiffSource::Worktree, DiffScope::Staged) => Some(DiffChoice::Staged),
+        (DiffSource::Base(_) | DiffSource::Branch { .. }, DiffScope::All) => {
+            Some(DiffChoice::Branch)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn cacheable_diff_options(options: &DiffOptions) -> bool {
+    !options.stat && !matches!(options.source, DiffSource::Patch(_))
+}
+
+pub(crate) fn next_context_expansion(expansion: DiffContextExpansion) -> DiffContextExpansion {
+    match expansion {
+        DiffContextExpansion::Lines(lines) if lines < 20 => DiffContextExpansion::Lines(20),
+        DiffContextExpansion::Lines(lines) if lines < 50 => DiffContextExpansion::Lines(50),
+        DiffContextExpansion::Lines(_) => DiffContextExpansion::Full,
+        DiffContextExpansion::Full => DiffContextExpansion::Lines(5),
+    }
+}
+
+pub(crate) fn context_expansion_label(expansion: DiffContextExpansion) -> String {
+    match expansion {
+        DiffContextExpansion::Lines(lines) => lines.to_string(),
+        DiffContextExpansion::Full => "full".to_owned(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColorSchemeChoice {
+    Custom,
+    System,
+    TerminalDark,
+    TerminalLight,
+    Minimal,
+    Ansi,
+    Catppuccin,
+    Gruvbox,
+    Tokyonight,
+    Dracula,
+}
+
+pub(crate) const COLOR_SCHEME_CHOICES: &[ColorSchemeChoice] = &[
+    ColorSchemeChoice::System,
+    ColorSchemeChoice::TerminalDark,
+    ColorSchemeChoice::TerminalLight,
+    ColorSchemeChoice::Minimal,
+    ColorSchemeChoice::Ansi,
+    ColorSchemeChoice::Catppuccin,
+    ColorSchemeChoice::Gruvbox,
+    ColorSchemeChoice::Tokyonight,
+    ColorSchemeChoice::Dracula,
+];
+
+pub(crate) fn color_scheme_label(choice: ColorSchemeChoice) -> &'static str {
+    match choice {
+        ColorSchemeChoice::Custom => "custom",
+        ColorSchemeChoice::System => "system",
+        ColorSchemeChoice::TerminalDark => "terminal-dark",
+        ColorSchemeChoice::TerminalLight => "terminal-light",
+        ColorSchemeChoice::Minimal => "minimal",
+        ColorSchemeChoice::Ansi => "ansi",
+        ColorSchemeChoice::Catppuccin => "catppuccin",
+        ColorSchemeChoice::Gruvbox => "gruvbox",
+        ColorSchemeChoice::Tokyonight => "tokyonight",
+        ColorSchemeChoice::Dracula => "dracula",
+    }
+}
+
+pub(crate) fn color_scheme_from_config(config: &SyntaxThemeConfig) -> ColorSchemeChoice {
+    match config.source {
+        SyntaxThemeSource::Ansi => ColorSchemeChoice::Ansi,
+        SyntaxThemeSource::Base16 => ColorSchemeChoice::Custom,
+        SyntaxThemeSource::Builtin => color_scheme_from_name(config.name.as_deref()),
+    }
+}
+
+pub(crate) fn color_scheme_from_name(name: Option<&str>) -> ColorSchemeChoice {
+    match name
+        .unwrap_or("system")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "system" | "default" | "" => ColorSchemeChoice::System,
+        "terminal-dark" | "dx-dark" | "dark" => ColorSchemeChoice::TerminalDark,
+        "terminal-light" | "dx-light" | "light" => ColorSchemeChoice::TerminalLight,
+        "minimal" => ColorSchemeChoice::Minimal,
+        "catppuccin" | "catppuccin-mocha" | "mocha" => ColorSchemeChoice::Catppuccin,
+        "gruvbox" | "gruvbox-dark" => ColorSchemeChoice::Gruvbox,
+        "tokyonight" | "tokyo-night" | "tokyonight-night" => ColorSchemeChoice::Tokyonight,
+        "dracula" => ColorSchemeChoice::Dracula,
+        _ => ColorSchemeChoice::Custom,
+    }
+}
+
+pub(crate) fn color_scheme_config(choice: ColorSchemeChoice) -> Option<SyntaxThemeConfig> {
+    match choice {
+        ColorSchemeChoice::Custom => None,
+        ColorSchemeChoice::Ansi => Some(SyntaxThemeConfig {
+            source: SyntaxThemeSource::Ansi,
+            name: None,
+            path: None,
+        }),
+        choice => Some(SyntaxThemeConfig {
+            source: SyntaxThemeSource::Builtin,
+            name: Some(color_scheme_label(choice).to_owned()),
+            path: None,
+        }),
+    }
+}
+
+pub(crate) fn diff_cache_entry(options: DiffOptions, changeset: Changeset) -> DiffCacheEntry {
+    let search_index = Arc::new(DiffSearchIndex::new(&changeset));
+    let max_line_width = search_index.max_line_width();
+    let total_stats = changeset.stats();
+    let context_expansions = HashMap::new();
+    let unified_model = UiModel::new(&changeset, DiffLayoutMode::Unified, &context_expansions);
+    let split_model = UiModel::new(&changeset, DiffLayoutMode::Split, &context_expansions);
+    DiffCacheEntry {
+        options,
+        changeset,
+        search_index,
+        total_stats,
+        max_line_width,
+        unified_model,
+        split_model,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,6 +600,24 @@ impl MouseScroll {
 pub(crate) struct PendingDiffLoad {
     pub(crate) options: DiffOptions,
     pub(crate) error_prefix: String,
+    pub(crate) refresh_branch_metadata: bool,
+    pub(crate) rx: oneshot::Receiver<DxResult<Changeset>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DiffCacheEntry {
+    pub(crate) options: DiffOptions,
+    pub(crate) changeset: Changeset,
+    pub(crate) search_index: Arc<DiffSearchIndex>,
+    pub(crate) total_stats: DiffStats,
+    pub(crate) max_line_width: usize,
+    pub(crate) unified_model: UiModel,
+    pub(crate) split_model: UiModel,
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingDiffPrefetch {
+    pub(crate) options: DiffOptions,
     pub(crate) rx: oneshot::Receiver<DxResult<Changeset>>,
 }
 
@@ -455,6 +632,48 @@ pub(crate) enum SyntaxStartupMode {
 enum HunkFocusSearch {
     FirstVisible,
     NearestTo(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptionsMenuItem {
+    BranchHead,
+    BranchBase,
+    Layout,
+    FileSidebar,
+    IncludeUntracked,
+    LiveReload,
+    ContextExpansion,
+    ColorScheme,
+}
+
+pub(crate) const COMMON_OPTIONS_MENU_ITEMS: &[OptionsMenuItem] = &[
+    OptionsMenuItem::Layout,
+    OptionsMenuItem::FileSidebar,
+    OptionsMenuItem::IncludeUntracked,
+    OptionsMenuItem::LiveReload,
+    OptionsMenuItem::ContextExpansion,
+    OptionsMenuItem::ColorScheme,
+];
+
+pub(crate) const BRANCH_OPTIONS_MENU_ITEMS: &[OptionsMenuItem] = &[
+    OptionsMenuItem::BranchHead,
+    OptionsMenuItem::BranchBase,
+    OptionsMenuItem::Layout,
+    OptionsMenuItem::FileSidebar,
+    OptionsMenuItem::IncludeUntracked,
+    OptionsMenuItem::LiveReload,
+    OptionsMenuItem::ContextExpansion,
+    OptionsMenuItem::ColorScheme,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OptionsDraft {
+    pub(crate) layout: DiffLayoutMode,
+    pub(crate) file_sidebar_open: bool,
+    pub(crate) include_untracked: bool,
+    pub(crate) live_updates_enabled: bool,
+    pub(crate) context_expansion: DiffContextExpansion,
+    pub(crate) color_scheme: ColorSchemeChoice,
 }
 
 #[derive(Debug)]
@@ -480,8 +699,18 @@ pub(crate) struct DiffApp {
     pub(crate) file_sidebar_width: Option<u16>,
     pub(crate) file_sidebar_render_width: u16,
     pub(crate) file_sidebar_resizing: bool,
+    pub(crate) rendered_diff_menu_area: Option<Rect>,
+    pub(crate) leader_pending: bool,
     pub(crate) help_menu_open: bool,
     pub(crate) diff_menu_open: bool,
+    pub(crate) diff_menu_selected: usize,
+    pub(crate) options_menu_open: bool,
+    pub(crate) options_menu_selected: usize,
+    pub(crate) options_menu_draft: OptionsDraft,
+    pub(crate) color_scheme_picker_open: bool,
+    pub(crate) color_scheme_input: String,
+    pub(crate) color_scheme_scroll: usize,
+    pub(crate) color_scheme_selected: usize,
     pub(crate) filter_input: Option<DiffFilterKind>,
     pub(crate) file_filter: String,
     pub(crate) file_filter_input: String,
@@ -502,8 +731,14 @@ pub(crate) struct DiffApp {
     pub(crate) editor_reload: Option<EditorReloadWorker>,
     pub(crate) pending_editor_reload: Option<EditorReloadRequest>,
     pub(crate) post_editor_quit_key_ignore_until: Option<Instant>,
+    pub(crate) live_updates_allowed: bool,
+    pub(crate) live_updates_enabled: bool,
     pub(crate) live_reload_pending: bool,
     pub(crate) pending_diff_load: Option<PendingDiffLoad>,
+    pub(crate) diff_cache: Vec<DiffCacheEntry>,
+    pub(crate) pending_diff_prefetch: Option<PendingDiffPrefetch>,
+    pub(crate) diff_prefetch_queue: VecDeque<DiffOptions>,
+    pub(crate) diff_prefetch_started: bool,
     pub(crate) filter_generation: u64,
     pub(crate) pending_filter_apply: Option<PendingFilterApply>,
     pub(crate) filter_worker: Option<FilterWorker>,
@@ -513,7 +748,11 @@ pub(crate) struct DiffApp {
     pub(crate) error_log_resizing: bool,
     pub(crate) rendered_error_log_separator_row: Option<u16>,
     pub(crate) mouse_scroll: MouseScroll,
+    pub(crate) keymap: Keymap,
     pub(crate) theme: DiffTheme,
+    pub(crate) color_scheme: ColorSchemeChoice,
+    pub(crate) theme_color_overrides: ColorOverrides,
+    pub(crate) theme_transparent_background: bool,
     pub(crate) context_expansions: HashMap<ContextKey, usize>,
     pub(crate) context_cache: HashMap<ContextSourceKey, ContextSourceEntry>,
     pub(crate) syntax_limits: SyntaxLimits,
@@ -569,6 +808,17 @@ pub(crate) fn syntax_runtime_for_diff(
     }
 }
 
+pub(crate) fn load_keymap_for_diff(load_user_settings: bool) -> (Keymap, Option<String>) {
+    if !load_user_settings {
+        return (Keymap::default(), None);
+    }
+
+    match Keymap::load() {
+        Ok(keymap) => (keymap, None),
+        Err(error) => (Keymap::default(), Some(format!("keymap ignored: {error}"))),
+    }
+}
+
 impl DiffApp {
     #[cfg(test)]
     pub(crate) fn new(options: DiffOptions, changeset: Changeset, layout: DiffLayoutMode) -> Self {
@@ -606,6 +856,14 @@ impl DiffApp {
             syntax_mode,
             SyntaxStartupMode::Config | SyntaxStartupMode::Disabled
         ));
+        let (keymap, keymap_notice) = load_keymap_for_diff(matches!(
+            syntax_mode,
+            SyntaxStartupMode::Config | SyntaxStartupMode::Disabled
+        ));
+        if let Some(message) = keymap_notice {
+            push_startup_error_log(&mut startup_error_log, message);
+        }
+        let mut color_scheme = color_scheme_from_config(&settings.theme);
         let theme = match diff_theme_from_config(&settings.theme).and_then(|theme| {
             theme
                 .with_color_overrides(&settings.colors)
@@ -617,6 +875,7 @@ impl DiffApp {
                     &mut startup_error_log,
                     format!("syntax theme ignored: {error}"),
                 );
+                color_scheme = ColorSchemeChoice::System;
                 DiffTheme::default()
                     .with_color_overrides(&settings.colors)
                     .unwrap_or_else(|_| DiffTheme::default())
@@ -625,6 +884,10 @@ impl DiffApp {
             }
         };
         let syntax_limits = settings.limits;
+        let include_untracked = options.include_untracked;
+        let context_expansion = theme.diff.context_expansion;
+        let theme_color_overrides = settings.colors.clone();
+        let theme_transparent_background = settings.transparent_background;
         let syntax = match syntax_mode {
             SyntaxStartupMode::Config => {
                 syntax_runtime_for_diff(SyntaxRuntime::start(&settings), &mut startup_error_log)
@@ -657,8 +920,25 @@ impl DiffApp {
             file_sidebar_width: None,
             file_sidebar_render_width: 0,
             file_sidebar_resizing: false,
+            rendered_diff_menu_area: None,
+            leader_pending: false,
             help_menu_open: false,
             diff_menu_open: false,
+            diff_menu_selected: 0,
+            options_menu_open: false,
+            options_menu_selected: 0,
+            options_menu_draft: OptionsDraft {
+                layout,
+                file_sidebar_open: false,
+                include_untracked,
+                live_updates_enabled: true,
+                context_expansion,
+                color_scheme,
+            },
+            color_scheme_picker_open: false,
+            color_scheme_input: String::new(),
+            color_scheme_scroll: 0,
+            color_scheme_selected: 0,
             filter_input: None,
             file_filter: String::new(),
             file_filter_input: String::new(),
@@ -679,8 +959,14 @@ impl DiffApp {
             editor_reload: None,
             pending_editor_reload: None,
             post_editor_quit_key_ignore_until: None,
+            live_updates_allowed: true,
+            live_updates_enabled: true,
             live_reload_pending: false,
             pending_diff_load: None,
+            diff_cache: Vec::new(),
+            pending_diff_prefetch: None,
+            diff_prefetch_queue: VecDeque::new(),
+            diff_prefetch_started: false,
             filter_generation: 0,
             pending_filter_apply: None,
             filter_worker: None,
@@ -690,7 +976,11 @@ impl DiffApp {
             error_log_resizing: false,
             rendered_error_log_separator_row: None,
             mouse_scroll: MouseScroll::default(),
+            keymap,
             theme,
+            color_scheme,
+            theme_color_overrides,
+            theme_transparent_background,
             context_expansions,
             context_cache,
             syntax_limits,
@@ -703,7 +993,7 @@ impl DiffApp {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> DxResult<bool> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        if is_quit_key(key) {
             return Ok(true);
         }
 
@@ -714,12 +1004,25 @@ impl DiffApp {
         }
 
         if self.help_menu_open {
-            if key.code == KeyCode::Esc || is_plain_char_key(key, '?') {
+            if key.code == KeyCode::Esc
+                || self.keymap.matches_single(GlobalAction::Help, key)
+                || is_plain_char_key(key, 'q')
+            {
                 self.close_help_menu();
                 return Ok(false);
             }
-            if key.code == KeyCode::Char('q') {
-                return Ok(true);
+            if self.leader_pending {
+                self.leader_pending = false;
+                self.dirty = true;
+                if self.keymap.matches_leader(GlobalAction::Help, key) {
+                    self.close_help_menu();
+                }
+                return Ok(false);
+            }
+            if self.keymap.is_leader(key) && self.keymap.has_leader_sequence(GlobalAction::Help) {
+                self.leader_pending = true;
+                self.dirty = true;
+                return Ok(false);
             }
             return Ok(false);
         }
@@ -785,8 +1088,80 @@ impl DiffApp {
             }
         }
 
-        if is_plain_char_key(key, '?') {
+        if self.diff_menu_open {
+            return self.handle_diff_menu_key(key);
+        }
+
+        if self.color_scheme_picker_open {
+            return self.handle_color_scheme_picker_key(key);
+        }
+
+        if self.options_menu_open {
+            return self.handle_options_menu_key(key);
+        }
+
+        if key.code == KeyCode::Esc && self.close_error_log() {
+            return Ok(false);
+        }
+
+        if self.leader_pending {
+            return self.handle_leader_key(key);
+        }
+
+        if self.keymap.matches_single(GlobalAction::Quit, key) {
+            return Ok(true);
+        }
+        if self.keymap.matches_single(GlobalAction::Help, key) {
             self.toggle_help_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::Reload, key) {
+            self.reload()?;
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::FileFilter, key) {
+            self.open_filter_input(DiffFilterKind::File);
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::Grep, key) {
+            self.open_filter_input(DiffFilterKind::Grep);
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::DiffMenu, key) {
+            self.open_diff_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::OptionsMenu, key) {
+            self.open_options_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::FileBrowser, key) {
+            self.toggle_file_sidebar();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::Layout, key) {
+            self.toggle_layout();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::EditHunk, key) {
+            self.open_focused_hunk_in_editor();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::NextDiffType, key) {
+            self.cycle_diff_choice(1);
+            return Ok(false);
+        }
+        if self
+            .keymap
+            .matches_single(GlobalAction::PreviousDiffType, key)
+        {
+            self.cycle_diff_choice(-1);
+            return Ok(false);
+        }
+
+        if self.keymap.is_leader(key) {
+            self.leader_pending = true;
+            self.dirty = true;
             return Ok(false);
         }
 
@@ -804,36 +1179,8 @@ impl DiffApp {
             }
         }
 
-        if self.diff_menu_open {
-            if key.code == KeyCode::Esc {
-                self.diff_menu_open = false;
-                self.dirty = true;
-                return Ok(false);
-            }
-            if key.code == KeyCode::Char('q') {
-                return Ok(true);
-            }
-        }
-
-        if key.code == KeyCode::Esc && self.close_error_log() {
-            return Ok(false);
-        }
-
-        if let KeyCode::Char(character) = key.code {
-            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                && !key.modifiers.contains(KeyModifiers::ALT)
-            {
-                if let Some(choice) = diff_choice_shortcut(character) {
-                    self.diff_menu_open = false;
-                    self.select_diff_choice(choice);
-                    return Ok(false);
-                }
-            }
-        }
-
         match key.code {
             KeyCode::Esc if self.filters_active() => self.clear_all_filters(),
-            KeyCode::Char('q') => return Ok(true),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_or_focus_hunk(1),
             KeyCode::Up | KeyCode::Char('k') => self.scroll_or_focus_hunk(-1),
             KeyCode::Left | KeyCode::Char('h') => {
@@ -844,13 +1191,9 @@ impl DiffApp {
             }
             KeyCode::PageDown | KeyCode::Char('d') => self.scroll_or_focus_hunk(20),
             KeyCode::PageUp | KeyCode::Char('u') => self.scroll_or_focus_hunk(-20),
-            KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.open_focused_hunk_in_editor();
-            }
-            KeyCode::Home | KeyCode::Char('g') => self.set_scroll(0),
+            KeyCode::Home => self.set_scroll(0),
+            KeyCode::Char('g') if is_plain_char_key(key, 'g') => self.set_scroll(0),
             KeyCode::End | KeyCode::Char('G') => self.set_scroll(self.max_scroll()),
-            KeyCode::Char('f') => self.open_filter_input(DiffFilterKind::File),
-            KeyCode::Char('/') => self.open_filter_input(DiffFilterKind::Grep),
             KeyCode::Char('n') if !self.grep_filter.is_empty() => self.move_grep_match(1),
             KeyCode::Char('p') | KeyCode::Char('N') if !self.grep_filter.is_empty() => {
                 self.move_grep_match(-1);
@@ -858,11 +1201,154 @@ impl DiffApp {
             KeyCode::Char('n') | KeyCode::Char('p') | KeyCode::Char('N') => {}
             KeyCode::Char('J') => self.move_file(1),
             KeyCode::Char('K') => self.move_file(-1),
-            KeyCode::Char('b') => self.toggle_file_sidebar(),
             KeyCode::Char(']') => self.next_hunk(),
             KeyCode::Char('[') => self.previous_hunk(),
-            KeyCode::Char('s') => self.toggle_layout(),
-            KeyCode::Char('r') => self.reload()?,
+            _ => {}
+        }
+
+        Ok(false)
+    }
+
+    pub(crate) fn handle_leader_key(&mut self, key: KeyEvent) -> DxResult<bool> {
+        self.leader_pending = false;
+
+        if key.code == KeyCode::Esc {
+            self.dirty = true;
+            return Ok(false);
+        }
+
+        if self.keymap.matches_leader(GlobalAction::Quit, key) {
+            return Ok(true);
+        }
+        if self.keymap.matches_leader(GlobalAction::Help, key) {
+            self.toggle_help_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::Reload, key) {
+            self.reload()?;
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::FileFilter, key) {
+            self.open_filter_input(DiffFilterKind::File);
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::Grep, key) {
+            self.open_filter_input(DiffFilterKind::Grep);
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::DiffMenu, key) {
+            self.open_diff_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::OptionsMenu, key) {
+            self.open_options_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::Layout, key) {
+            self.toggle_layout();
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::FileBrowser, key) {
+            self.toggle_file_sidebar();
+            return Ok(false);
+        }
+        if self.keymap.matches_leader(GlobalAction::NextDiffType, key) {
+            self.cycle_diff_choice(1);
+            return Ok(false);
+        }
+        if self
+            .keymap
+            .matches_leader(GlobalAction::PreviousDiffType, key)
+        {
+            self.cycle_diff_choice(-1);
+            return Ok(false);
+        }
+
+        self.dirty = true;
+        Ok(false)
+    }
+
+    pub(crate) fn handle_diff_menu_key(&mut self, key: KeyEvent) -> DxResult<bool> {
+        if self.keymap.matches_menu(MenuAction::Close, key) {
+            self.close_diff_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::Help, key) {
+            self.toggle_help_menu();
+            return Ok(false);
+        }
+
+        if self.keymap.matches_menu(MenuAction::Down, key) {
+            self.move_diff_menu_selection(1);
+        } else if self.keymap.matches_menu(MenuAction::Up, key) {
+            self.move_diff_menu_selection(-1);
+        } else if let Some(choice) = self.diff_choice_for_number_key(key) {
+            self.diff_menu_open = false;
+            self.select_diff_choice(choice);
+        } else if self.keymap.matches_menu(MenuAction::Select, key)
+            || self.keymap.matches_menu(MenuAction::Confirm, key)
+        {
+            self.select_highlighted_diff_choice();
+        }
+
+        Ok(false)
+    }
+
+    pub(crate) fn handle_options_menu_key(&mut self, key: KeyEvent) -> DxResult<bool> {
+        if self.keymap.matches_menu(MenuAction::Close, key) {
+            self.close_options_menu();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::Help, key) {
+            self.toggle_help_menu();
+            return Ok(false);
+        }
+
+        if self.keymap.matches_menu(MenuAction::Down, key) {
+            self.move_options_menu_selection(1);
+        } else if self.keymap.matches_menu(MenuAction::Up, key) {
+            self.move_options_menu_selection(-1);
+        } else if self.keymap.matches_menu(MenuAction::Select, key) {
+            self.activate_selected_option();
+        } else if self.keymap.matches_menu(MenuAction::Confirm, key) {
+            match self.highlighted_option() {
+                Some(OptionsMenuItem::BranchHead | OptionsMenuItem::BranchBase) => {
+                    self.activate_selected_option();
+                }
+                _ => self.apply_options_menu()?,
+            }
+        }
+
+        Ok(false)
+    }
+
+    pub(crate) fn handle_color_scheme_picker_key(&mut self, key: KeyEvent) -> DxResult<bool> {
+        if key.code == KeyCode::Esc || is_plain_char_key(key, 'q') {
+            self.close_color_scheme_picker();
+            return Ok(false);
+        }
+
+        match key.code {
+            KeyCode::Enter => self.select_highlighted_color_scheme(),
+            KeyCode::Down | KeyCode::Tab => self.move_color_scheme_selection(1),
+            KeyCode::Up | KeyCode::BackTab => self.move_color_scheme_selection(-1),
+            KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_color_scheme_selection(1);
+            }
+            KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.move_color_scheme_selection(-1);
+            }
+            KeyCode::Backspace => self.pop_color_scheme_input(),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.clear_color_scheme_input();
+            }
+            KeyCode::Char(character)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                    && character != ' ' =>
+            {
+                self.push_color_scheme_input(character);
+            }
             _ => {}
         }
 
@@ -870,7 +1356,13 @@ impl DiffApp {
     }
 
     pub(crate) fn editor_shortcut_available(&self) -> bool {
-        self.filter_input.is_none() && !self.help_menu_open
+        self.filter_input.is_none()
+            && !self.help_menu_open
+            && self.branch_menu_open.is_none()
+            && !self.diff_menu_open
+            && !self.options_menu_open
+            && !self.leader_pending
+            && !self.color_scheme_picker_open
     }
 
     pub(crate) fn event_poll(&self) -> Duration {
@@ -885,6 +1377,9 @@ impl DiffApp {
         if let Some(pending) = self.pending_filter_apply {
             poll = poll.min(pending.due_at.saturating_duration_since(now));
         }
+        if self.pending_diff_prefetch.is_some() {
+            poll = poll.min(DIFF_PREFETCH_POLL);
+        }
         poll
     }
 
@@ -897,7 +1392,7 @@ impl DiffApp {
             return false;
         }
 
-        is_quit_key(key)
+        is_quit_key(key) || self.keymap.matches_single(GlobalAction::Quit, key)
     }
 
     pub(crate) fn toggle_help_menu(&mut self) {
@@ -908,8 +1403,15 @@ impl DiffApp {
     pub(crate) fn close_help_menu(&mut self) {
         if self.help_menu_open {
             self.help_menu_open = false;
+            self.leader_pending = false;
             self.dirty = true;
         }
+    }
+
+    pub(crate) fn mark_live_reload_pending(&mut self) {
+        self.invalidate_diff_cache();
+        self.live_reload_pending = true;
+        self.dirty = true;
     }
 
     pub(crate) fn set_error_log(&mut self, text: impl Into<String>) {
@@ -920,6 +1422,7 @@ impl DiffApp {
 
     pub(crate) fn close_error_log(&mut self) -> bool {
         if self.error_log.take().is_some() {
+            self.leader_pending = false;
             self.error_log_resizing = false;
             self.rendered_error_log_separator_row = None;
             self.dirty = true;
@@ -963,6 +1466,10 @@ impl DiffApp {
         self.rendered_error_log_separator_row = row.filter(|_| self.error_log.is_some());
     }
 
+    pub(crate) fn set_rendered_diff_menu_area(&mut self, area: Option<Rect>) {
+        self.rendered_diff_menu_area = area.filter(|_| self.diff_menu_open);
+    }
+
     pub(crate) fn start_error_log_resize(&mut self, row: u16) -> bool {
         if self.error_log_separator_row() != Some(row) {
             return false;
@@ -990,6 +1497,61 @@ impl DiffApp {
         options: DiffOptions,
         error_prefix: impl Into<String>,
     ) {
+        self.start_diff_load_inner(options, error_prefix, true);
+    }
+
+    pub(crate) fn start_uncached_diff_load(
+        &mut self,
+        options: DiffOptions,
+        error_prefix: impl Into<String>,
+    ) {
+        self.start_diff_load_inner(options, error_prefix, false);
+    }
+
+    fn start_diff_load_inner(
+        &mut self,
+        options: DiffOptions,
+        error_prefix: impl Into<String>,
+        use_cache: bool,
+    ) {
+        let error_prefix = error_prefix.into();
+
+        let use_cache = use_cache && self.diff_cache_invalidator_active();
+
+        if use_cache {
+            self.store_current_diff_cache();
+
+            if let Some(cached) = self.take_cached_diff(&options) {
+                self.pending_diff_load = None;
+                self.replace_cached_diff(options, cached, false);
+                return;
+            }
+
+            if self
+                .pending_diff_load
+                .as_ref()
+                .is_some_and(|pending| pending.options == options)
+            {
+                self.dirty = true;
+                return;
+            }
+
+            self.diff_prefetch_queue
+                .retain(|prefetch_options| prefetch_options != &options);
+            if let Some(prefetch) = self.take_pending_diff_prefetch(&options) {
+                self.pending_diff_load = Some(PendingDiffLoad {
+                    options,
+                    error_prefix,
+                    refresh_branch_metadata: false,
+                    rx: prefetch.rx,
+                });
+                self.dirty = true;
+                return;
+            }
+        } else {
+            self.clear_cached_diff_choices();
+        }
+
         let (tx, rx) = oneshot::channel();
         let load_options = options.clone();
         runtime::spawn_detached_blocking(move || {
@@ -998,7 +1560,8 @@ impl DiffApp {
 
         self.pending_diff_load = Some(PendingDiffLoad {
             options,
-            error_prefix: error_prefix.into(),
+            error_prefix,
+            refresh_branch_metadata: !use_cache,
             rx,
         });
         self.dirty = true;
@@ -1022,11 +1585,213 @@ impl DiffApp {
 
         match outcome {
             Some(Ok(changeset)) => {
-                self.replace_loaded_diff(pending.options, changeset);
+                if cacheable_diff_options(&pending.options) {
+                    let cached = diff_cache_entry(pending.options.clone(), changeset);
+                    self.replace_cached_diff(
+                        pending.options,
+                        cached,
+                        pending.refresh_branch_metadata,
+                    );
+                } else {
+                    self.replace_loaded_diff(pending.options, changeset);
+                }
             }
             Some(Err(error)) => self.set_error_log(format!("{}: {error}", pending.error_prefix)),
             None => self.set_error_log(format!("{}: worker stopped", pending.error_prefix)),
         }
+    }
+
+    pub(crate) fn start_diff_prefetches(&mut self) {
+        if !self.diff_cache_invalidator_active() {
+            self.clear_cached_diff_choices();
+            return;
+        }
+
+        if self.diff_prefetch_started {
+            self.start_next_diff_prefetch();
+            return;
+        }
+
+        self.diff_prefetch_started = true;
+        self.queue_diff_prefetches();
+        self.start_next_diff_prefetch();
+    }
+
+    fn queue_diff_prefetches(&mut self) {
+        for choice in self.diff_menu_choices() {
+            let Some(options) = self.options_for_choice(choice) else {
+                continue;
+            };
+            if options == self.options
+                || !cacheable_diff_options(&options)
+                || self.diff_cache_contains(&options)
+                || self
+                    .pending_diff_load
+                    .as_ref()
+                    .is_some_and(|pending| pending.options == options)
+                || self
+                    .pending_diff_prefetch
+                    .as_ref()
+                    .is_some_and(|pending| pending.options == options)
+                || self
+                    .diff_prefetch_queue
+                    .iter()
+                    .any(|queued| queued == &options)
+            {
+                continue;
+            }
+
+            self.diff_prefetch_queue.push_back(options);
+        }
+    }
+
+    fn start_next_diff_prefetch(&mut self) {
+        if !self.diff_cache_invalidator_active() {
+            self.clear_cached_diff_choices();
+            return;
+        }
+
+        if self.pending_diff_prefetch.is_some() {
+            return;
+        }
+
+        while let Some(options) = self.diff_prefetch_queue.pop_front() {
+            if options == self.options
+                || !cacheable_diff_options(&options)
+                || self.diff_cache_contains(&options)
+                || self
+                    .pending_diff_load
+                    .as_ref()
+                    .is_some_and(|pending| pending.options == options)
+            {
+                continue;
+            }
+
+            let (tx, rx) = oneshot::channel();
+            let load_options = options.clone();
+            runtime::spawn_detached_blocking(move || {
+                let _ = tx.send(dx_diff::load_review_ref(&load_options));
+            });
+            self.pending_diff_prefetch = Some(PendingDiffPrefetch { options, rx });
+            return;
+        }
+    }
+
+    pub(crate) fn drain_diff_prefetch(&mut self) {
+        let Some(outcome) =
+            self.pending_diff_prefetch
+                .as_mut()
+                .and_then(|pending| match pending.rx.try_recv() {
+                    Ok(result) => Some(Some(result)),
+                    Err(oneshot::error::TryRecvError::Empty) => None,
+                    Err(oneshot::error::TryRecvError::Closed) => Some(None),
+                })
+        else {
+            return;
+        };
+        let Some(pending) = self.pending_diff_prefetch.take() else {
+            return;
+        };
+
+        if let Some(Ok(changeset)) = outcome {
+            self.cache_loaded_diff(pending.options, changeset);
+        }
+        self.start_next_diff_prefetch();
+    }
+
+    fn take_pending_diff_prefetch(&mut self, options: &DiffOptions) -> Option<PendingDiffPrefetch> {
+        if self
+            .pending_diff_prefetch
+            .as_ref()
+            .is_some_and(|pending| pending.options == *options)
+        {
+            self.pending_diff_prefetch.take()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn invalidate_diff_cache(&mut self) {
+        self.clear_cached_diff_choices();
+    }
+
+    pub(crate) fn clear_cached_diff_choices(&mut self) {
+        self.diff_cache.clear();
+        self.pending_diff_prefetch = None;
+        self.diff_prefetch_queue.clear();
+        self.diff_prefetch_started = false;
+    }
+
+    fn diff_cache_invalidator_active(&self) -> bool {
+        self.live_updates_allowed
+            && self.live_updates_enabled
+            && !self.live_reload_pending
+            && live_diff_supported(&self.options)
+            && self.live_diff_failed_options.as_ref() != Some(&self.options)
+    }
+
+    fn store_current_diff_cache(&mut self) {
+        if !self.diff_cache_invalidator_active() || !cacheable_diff_options(&self.options) {
+            return;
+        }
+
+        let options = self.options.clone();
+        let changeset = self.base_changeset.clone();
+        self.diff_cache.retain(|entry| entry.options != options);
+        let search_index = Arc::clone(&self.search_index);
+        let total_stats = self.total_stats.clone();
+        let max_line_width = search_index.max_line_width();
+        let can_reuse_current_model =
+            !self.filters_active() && !self.filter_busy() && self.context_expansions.is_empty();
+        let context_expansions = HashMap::new();
+        let unified_model = if can_reuse_current_model && self.layout == DiffLayoutMode::Unified {
+            self.model.clone()
+        } else {
+            UiModel::new(&changeset, DiffLayoutMode::Unified, &context_expansions)
+        };
+        let split_model = if can_reuse_current_model && self.layout == DiffLayoutMode::Split {
+            self.model.clone()
+        } else {
+            UiModel::new(&changeset, DiffLayoutMode::Split, &context_expansions)
+        };
+        self.diff_cache.insert(
+            0,
+            DiffCacheEntry {
+                options,
+                changeset,
+                search_index,
+                total_stats,
+                max_line_width,
+                unified_model,
+                split_model,
+            },
+        );
+        self.diff_cache.truncate(MAX_DIFF_CACHE_ENTRIES);
+    }
+
+    pub(crate) fn cache_loaded_diff(&mut self, options: DiffOptions, changeset: Changeset) {
+        if !self.diff_cache_invalidator_active() || !cacheable_diff_options(&options) {
+            return;
+        }
+
+        self.diff_cache.retain(|entry| entry.options != options);
+        self.diff_cache
+            .insert(0, diff_cache_entry(options, changeset));
+        self.diff_cache.truncate(MAX_DIFF_CACHE_ENTRIES);
+    }
+
+    fn take_cached_diff(&mut self, options: &DiffOptions) -> Option<DiffCacheEntry> {
+        let index = self
+            .diff_cache
+            .iter()
+            .position(|entry| &entry.options == options)?;
+        Some(self.diff_cache.remove(index))
+    }
+
+    fn diff_cache_contains(&self, options: &DiffOptions) -> bool {
+        self.diff_cache
+            .iter()
+            .any(|entry| &entry.options == options)
     }
 
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> DxResult<()> {
@@ -1047,6 +1812,20 @@ impl DiffApp {
                 MouseEventKind::Up(MouseButton::Left) => {
                     self.file_sidebar_resizing = false;
                     self.resize_file_sidebar_to_column(mouse.column);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        if self.color_scheme_picker_open {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    self.move_color_scheme_selection(1);
+                    return Ok(());
+                }
+                MouseEventKind::ScrollUp => {
+                    self.move_color_scheme_selection(-1);
                     return Ok(());
                 }
                 _ => {}
@@ -1201,6 +1980,16 @@ impl DiffApp {
 
             self.diff_menu_open = false;
             self.dirty = true;
+            return;
+        }
+
+        if self.color_scheme_picker_open {
+            self.close_color_scheme_picker();
+            return;
+        }
+
+        if self.options_menu_open {
+            self.close_options_menu();
             return;
         }
 
@@ -1440,12 +2229,337 @@ impl DiffApp {
     }
 
     pub(crate) fn toggle_diff_menu(&mut self) {
-        if self.diff_menu_choices().is_empty() {
+        if self.diff_menu_open {
+            self.close_diff_menu();
+        } else {
+            self.open_diff_menu();
+        }
+    }
+
+    pub(crate) fn open_diff_menu(&mut self) {
+        let choices = self.diff_menu_choices();
+        if choices.is_empty() {
             return;
         }
-        self.diff_menu_open = !self.diff_menu_open;
+        self.diff_menu_selected = self
+            .pending_or_current_diff_choice()
+            .and_then(|choice| choices.iter().position(|candidate| *candidate == choice))
+            .unwrap_or_default();
+        self.diff_menu_open = true;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
         self.branch_menu_open = None;
         self.dirty = true;
+    }
+
+    pub(crate) fn close_diff_menu(&mut self) {
+        if self.diff_menu_open {
+            self.diff_menu_open = false;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn open_options_menu(&mut self) {
+        self.options_menu_draft = OptionsDraft {
+            layout: self.layout,
+            file_sidebar_open: self.file_sidebar_open,
+            include_untracked: self.options.include_untracked,
+            live_updates_enabled: self.live_updates_enabled,
+            context_expansion: self.theme.diff.context_expansion,
+            color_scheme: self.color_scheme,
+        };
+        self.options_menu_selected = self
+            .options_menu_selected
+            .min(self.options_menu_items().len().saturating_sub(1));
+        self.options_menu_open = true;
+        self.color_scheme_picker_open = false;
+        self.diff_menu_open = false;
+        self.branch_menu_open = None;
+        self.dirty = true;
+    }
+
+    pub(crate) fn close_options_menu(&mut self) {
+        if self.options_menu_open {
+            self.options_menu_open = false;
+            self.color_scheme_picker_open = false;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn highlighted_option(&self) -> Option<OptionsMenuItem> {
+        self.options_menu_items()
+            .get(self.options_menu_selected)
+            .copied()
+    }
+
+    pub(crate) fn move_options_menu_selection(&mut self, delta: isize) {
+        let len = self.options_menu_items().len();
+        if len == 0 {
+            return;
+        }
+
+        self.options_menu_selected =
+            (self.options_menu_selected as isize + delta).rem_euclid(len as isize) as usize;
+        self.dirty = true;
+    }
+
+    pub(crate) fn options_menu_items(&self) -> &'static [OptionsMenuItem] {
+        if self.current_diff_choice() == Some(DiffChoice::Branch) {
+            BRANCH_OPTIONS_MENU_ITEMS
+        } else {
+            COMMON_OPTIONS_MENU_ITEMS
+        }
+    }
+
+    pub(crate) fn activate_selected_option(&mut self) {
+        match self.highlighted_option() {
+            Some(OptionsMenuItem::BranchHead) => self.toggle_branch_menu(BranchMenu::Head),
+            Some(OptionsMenuItem::BranchBase) => self.toggle_branch_menu(BranchMenu::Base),
+            Some(OptionsMenuItem::ColorScheme) => self.open_color_scheme_picker(),
+            _ => self.toggle_selected_option(),
+        }
+    }
+
+    pub(crate) fn open_color_scheme_picker(&mut self) {
+        self.color_scheme_picker_open = true;
+        self.color_scheme_input.clear();
+        self.color_scheme_scroll = 0;
+        self.color_scheme_selected = COLOR_SCHEME_CHOICES
+            .iter()
+            .position(|choice| *choice == self.options_menu_draft.color_scheme)
+            .unwrap_or_default();
+        self.ensure_color_scheme_selection_visible();
+        self.dirty = true;
+    }
+
+    pub(crate) fn close_color_scheme_picker(&mut self) {
+        if self.color_scheme_picker_open {
+            self.color_scheme_picker_open = false;
+            self.color_scheme_input.clear();
+            self.color_scheme_scroll = 0;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn filtered_color_schemes(&self) -> Vec<ColorSchemeChoice> {
+        let query = self.color_scheme_input.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return COLOR_SCHEME_CHOICES.to_vec();
+        }
+
+        let mut matches: Vec<_> = COLOR_SCHEME_CHOICES
+            .iter()
+            .enumerate()
+            .filter_map(|(index, choice)| {
+                let label = color_scheme_label(*choice);
+                branch_match_score(&query, label).map(|score| (score, label.len(), index, *choice))
+            })
+            .collect();
+        matches.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+        });
+        matches
+            .into_iter()
+            .map(|(_, _, _, choice)| choice)
+            .collect()
+    }
+
+    pub(crate) fn visible_color_scheme_rows(&self) -> usize {
+        self.filtered_color_schemes()
+            .len()
+            .clamp(1, MAX_COLOR_SCHEME_MENU_ROWS)
+    }
+
+    pub(crate) fn max_color_scheme_selection(&self) -> usize {
+        self.filtered_color_schemes().len().saturating_sub(1)
+    }
+
+    pub(crate) fn max_color_scheme_scroll(&self) -> usize {
+        self.filtered_color_schemes()
+            .len()
+            .saturating_sub(MAX_COLOR_SCHEME_MENU_ROWS)
+    }
+
+    pub(crate) fn ensure_color_scheme_selection_visible(&mut self) {
+        let max_scroll = self.max_color_scheme_scroll();
+        if self.color_scheme_selected < self.color_scheme_scroll {
+            self.color_scheme_scroll = self.color_scheme_selected;
+        } else if self.color_scheme_selected
+            >= self
+                .color_scheme_scroll
+                .saturating_add(MAX_COLOR_SCHEME_MENU_ROWS)
+        {
+            self.color_scheme_scroll = self
+                .color_scheme_selected
+                .saturating_add(1)
+                .saturating_sub(MAX_COLOR_SCHEME_MENU_ROWS);
+        }
+        self.color_scheme_scroll = self.color_scheme_scroll.min(max_scroll);
+    }
+
+    pub(crate) fn set_color_scheme_selection(&mut self, selected: usize) {
+        let selected = selected.min(self.max_color_scheme_selection());
+        if self.color_scheme_selected != selected {
+            self.color_scheme_selected = selected;
+            self.ensure_color_scheme_selection_visible();
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn move_color_scheme_selection(&mut self, delta: isize) {
+        let len = self.filtered_color_schemes().len();
+        if len == 0 {
+            return;
+        }
+        let selected = (self.color_scheme_selected as isize + delta).rem_euclid(len as isize);
+        self.set_color_scheme_selection(selected as usize);
+    }
+
+    pub(crate) fn push_color_scheme_input(&mut self, character: char) {
+        self.color_scheme_input.push(character);
+        self.color_scheme_scroll = 0;
+        self.color_scheme_selected = 0;
+        self.dirty = true;
+    }
+
+    pub(crate) fn pop_color_scheme_input(&mut self) {
+        if self.color_scheme_input.pop().is_some() {
+            self.color_scheme_scroll = 0;
+            self.color_scheme_selected = 0;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn clear_color_scheme_input(&mut self) {
+        if !self.color_scheme_input.is_empty()
+            || self.color_scheme_scroll != 0
+            || self.color_scheme_selected != 0
+        {
+            self.color_scheme_input.clear();
+            self.color_scheme_scroll = 0;
+            self.color_scheme_selected = 0;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn select_highlighted_color_scheme(&mut self) {
+        let Some(choice) = self
+            .filtered_color_schemes()
+            .get(self.color_scheme_selected)
+            .copied()
+        else {
+            self.dirty = true;
+            return;
+        };
+
+        self.options_menu_draft.color_scheme = choice;
+        self.color_scheme_picker_open = false;
+        self.color_scheme_input.clear();
+        self.color_scheme_scroll = 0;
+        self.dirty = true;
+    }
+
+    pub(crate) fn toggle_selected_option(&mut self) {
+        match self.highlighted_option() {
+            Some(
+                OptionsMenuItem::BranchHead
+                | OptionsMenuItem::BranchBase
+                | OptionsMenuItem::ColorScheme,
+            ) => return,
+            Some(OptionsMenuItem::Layout) => {
+                self.options_menu_draft.layout = self.options_menu_draft.layout.toggled();
+            }
+            Some(OptionsMenuItem::FileSidebar) => {
+                self.options_menu_draft.file_sidebar_open =
+                    !self.options_menu_draft.file_sidebar_open;
+            }
+            Some(OptionsMenuItem::IncludeUntracked) => {
+                self.options_menu_draft.include_untracked =
+                    !self.options_menu_draft.include_untracked;
+            }
+            Some(OptionsMenuItem::LiveReload) => {
+                if !self.live_updates_allowed {
+                    self.set_error_log("live reload disabled by --no-watch");
+                    return;
+                }
+                self.options_menu_draft.live_updates_enabled =
+                    !self.options_menu_draft.live_updates_enabled;
+            }
+            Some(OptionsMenuItem::ContextExpansion) => {
+                self.options_menu_draft.context_expansion =
+                    next_context_expansion(self.options_menu_draft.context_expansion);
+            }
+            None => return,
+        }
+        self.dirty = true;
+    }
+
+    pub(crate) fn apply_options_menu(&mut self) -> DxResult<()> {
+        let draft = self.options_menu_draft;
+        let live_reload_reenabled = draft.live_updates_enabled && !self.live_updates_enabled;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
+
+        if draft.layout != self.layout {
+            self.set_manual_layout(draft.layout);
+        }
+        if draft.file_sidebar_open != self.file_sidebar_open {
+            self.file_sidebar_open = draft.file_sidebar_open;
+            self.file_sidebar_resizing = false;
+            self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
+            self.dirty = true;
+        }
+        if draft.live_updates_enabled != self.live_updates_enabled {
+            self.live_updates_enabled = draft.live_updates_enabled;
+            self.live_reload_pending = false;
+            self.live_diff_failed_options = None;
+            self.dirty = true;
+        }
+        if draft.context_expansion != self.theme.diff.context_expansion {
+            self.theme.diff.context_expansion = draft.context_expansion;
+            self.dirty = true;
+        }
+        if draft.color_scheme != self.color_scheme {
+            self.apply_color_scheme(draft.color_scheme);
+        }
+        if draft.include_untracked != self.options.include_untracked {
+            let mut options = self.options.clone();
+            options.include_untracked = draft.include_untracked;
+            self.invalidate_diff_cache();
+            self.start_uncached_diff_load(options, "reload failed");
+        } else if live_reload_reenabled {
+            self.invalidate_diff_cache();
+            self.start_uncached_diff_load(self.options.clone(), "reload failed");
+        } else {
+            self.dirty = true;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn apply_color_scheme(&mut self, color_scheme: ColorSchemeChoice) {
+        let Some(config) = color_scheme_config(color_scheme) else {
+            self.set_error_log("colorscheme custom cannot be reapplied from options");
+            return;
+        };
+        let diff = self.theme.diff;
+        match diff_theme_from_config(&config).and_then(|theme| {
+            theme
+                .with_color_overrides(&self.theme_color_overrides)
+                .map(|theme| theme.with_transparent_background(self.theme_transparent_background))
+        }) {
+            Ok(theme) => {
+                self.theme = theme.with_diff_settings(diff);
+                self.color_scheme = color_scheme;
+                self.dirty = true;
+            }
+            Err(error) => {
+                self.set_error_log(format!("colorscheme ignored: {error}"));
+            }
+        }
     }
 
     pub(crate) fn close_branch_menu(&mut self) {
@@ -1462,7 +2576,7 @@ impl DiffApp {
     }
 
     pub(crate) fn toggle_branch_menu(&mut self, menu: BranchMenu) {
-        if !self.is_branch_diff() || self.comparison_branches.is_empty() {
+        if self.comparison_branches.is_empty() {
             return;
         }
         if self.branch_menu_open == Some(menu) {
@@ -1472,6 +2586,8 @@ impl DiffApp {
 
         self.branch_menu_open = Some(menu);
         self.diff_menu_open = false;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
         self.branch_menu_input.clear();
         self.branch_menu_selected = self
             .branch_ref(menu)
@@ -1795,12 +2911,23 @@ impl DiffApp {
 
     pub(crate) fn diff_choice_at(&self, column: u16, row: u16) -> Option<DiffChoice> {
         let choices = self.diff_menu_choices();
-        let width = diff_menu_width(&choices);
-        if column >= width || row == 0 {
+        let menu_area = self.rendered_diff_menu_area?;
+        let inner = diff_menu_block(self.theme).inner(menu_area);
+        if column < inner.x
+            || column >= inner.x.saturating_add(inner.width)
+            || row < inner.y
+            || row >= inner.y.saturating_add(inner.height)
+        {
             return None;
         }
 
-        choices.get(usize::from(row - 1)).copied()
+        let row_index = usize::from(row.saturating_sub(inner.y));
+        let rendered_choices = choices.len().min(inner.height.saturating_sub(1) as usize);
+        if row_index >= rendered_choices {
+            return None;
+        }
+
+        choices.get(row_index).copied()
     }
 
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
@@ -1819,6 +2946,71 @@ impl DiffApp {
         choices
     }
 
+    pub(crate) fn highlighted_diff_choice(&self) -> Option<DiffChoice> {
+        self.diff_menu_choices()
+            .get(self.diff_menu_selected)
+            .copied()
+    }
+
+    pub(crate) fn diff_choice_for_number_key(&self, key: KeyEvent) -> Option<DiffChoice> {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT)
+        {
+            return None;
+        }
+        let KeyCode::Char(character) = key.code else {
+            return None;
+        };
+        let index = character.to_digit(10)?.checked_sub(1)? as usize;
+        self.diff_menu_choices().get(index).copied()
+    }
+
+    pub(crate) fn move_diff_menu_selection(&mut self, delta: isize) {
+        let choices = self.diff_menu_choices();
+        if choices.is_empty() {
+            return;
+        }
+
+        self.diff_menu_selected =
+            (self.diff_menu_selected as isize + delta).rem_euclid(choices.len() as isize) as usize;
+        self.dirty = true;
+    }
+
+    pub(crate) fn select_highlighted_diff_choice(&mut self) {
+        let Some(choice) = self.highlighted_diff_choice() else {
+            self.close_diff_menu();
+            return;
+        };
+
+        self.diff_menu_open = false;
+        self.select_diff_choice(choice);
+    }
+
+    pub(crate) fn current_diff_choice(&self) -> Option<DiffChoice> {
+        diff_choice_for_options(&self.options)
+    }
+
+    pub(crate) fn pending_or_current_diff_choice(&self) -> Option<DiffChoice> {
+        self.pending_diff_load
+            .as_ref()
+            .and_then(|pending| diff_choice_for_options(&pending.options))
+            .or_else(|| self.current_diff_choice())
+    }
+
+    pub(crate) fn cycle_diff_choice(&mut self, delta: isize) {
+        let choices = self.diff_menu_choices();
+        if choices.is_empty() {
+            return;
+        }
+
+        let current = self
+            .pending_or_current_diff_choice()
+            .and_then(|choice| choices.iter().position(|candidate| *candidate == choice))
+            .unwrap_or(0);
+        let next = (current as isize + delta).rem_euclid(choices.len() as isize) as usize;
+        self.select_diff_choice(choices[next]);
+    }
+
     pub(crate) fn select_branch(&mut self, menu: BranchMenu, branch: String) {
         let base = match menu {
             BranchMenu::Head => self.branch_base.clone(),
@@ -1826,7 +3018,11 @@ impl DiffApp {
         };
         let head = match menu {
             BranchMenu::Head => Some(branch.clone()),
-            BranchMenu::Base => self.branch_head.clone(),
+            BranchMenu::Base => self
+                .branch_head
+                .clone()
+                .or_else(|| self.current_head.clone())
+                .or_else(|| current_head_label(&self.changeset.repo)),
         };
         let Some((base, head)) = base.zip(head) else {
             self.set_error_log("branch diff unavailable");
@@ -1863,6 +3059,7 @@ impl DiffApp {
         };
 
         if options == self.options {
+            self.pending_diff_load = None;
             self.dirty = true;
             return;
         }
@@ -2206,6 +3403,8 @@ impl DiffApp {
     ) {
         let FocusedEditorLaunch { target, editor } = editor;
         self.diff_menu_open = false;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
         self.close_branch_menu();
         self.terminal_clear_requested = true;
         let mut paused_live_diff = false;
@@ -2597,6 +3796,8 @@ impl DiffApp {
     pub(crate) fn open_filter_input(&mut self, kind: DiffFilterKind) {
         self.filter_input = Some(kind);
         self.diff_menu_open = false;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
         self.close_branch_menu();
 
         let had_filter =
@@ -3118,6 +4319,8 @@ impl DiffApp {
         self.file_sidebar_open = !self.file_sidebar_open;
         self.file_sidebar_resizing = false;
         self.diff_menu_open = false;
+        self.options_menu_open = false;
+        self.color_scheme_picker_open = false;
         self.close_branch_menu();
         self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
         self.dirty = true;
@@ -3229,6 +4432,10 @@ impl DiffApp {
 
     pub(crate) fn toggle_layout(&mut self) {
         let layout = self.layout.toggled();
+        self.set_manual_layout(layout);
+    }
+
+    pub(crate) fn set_manual_layout(&mut self, layout: DiffLayoutMode) {
         self.layout_override = Some(layout);
         self.set_layout(layout);
     }
@@ -3274,15 +4481,19 @@ impl DiffApp {
     }
 
     pub(crate) fn reload(&mut self) -> DxResult<()> {
-        self.start_diff_load(self.options.clone(), "reload failed");
+        self.invalidate_diff_cache();
+        self.start_uncached_diff_load(self.options.clone(), "reload failed");
         Ok(())
     }
 
     pub(crate) fn replace_changeset(&mut self, changeset: Changeset) {
+        self.invalidate_diff_cache();
+        self.cache_loaded_diff(self.options.clone(), changeset.clone());
         self.replace_loaded_diff(self.options.clone(), changeset);
     }
 
     pub(crate) fn replace_path_changeset(&mut self, path: &Path, path_changeset: Changeset) {
+        self.invalidate_diff_cache();
         let selected_path = self
             .changeset
             .files
@@ -3324,7 +4535,140 @@ impl DiffApp {
             false,
             HunkFocusModelBehavior::Clear,
         );
+        self.store_current_diff_cache();
         self.dirty = true;
+    }
+
+    pub(crate) fn replace_cached_diff(
+        &mut self,
+        options: DiffOptions,
+        cached: DiffCacheEntry,
+        refresh_branch_metadata: bool,
+    ) {
+        let DiffCacheEntry {
+            changeset,
+            search_index,
+            total_stats,
+            max_line_width,
+            unified_model,
+            split_model,
+            ..
+        } = cached;
+        let selected_path = self
+            .changeset
+            .files
+            .get(self.selected_file)
+            .map(|file| file.display_path().to_owned());
+        let relative_scroll = self
+            .model
+            .file_start_row(self.selected_file)
+            .map(|start| self.scroll.saturating_sub(start))
+            .unwrap_or_default();
+
+        let previous_branch_base = self.branch_base.clone();
+        let previous_branch_head = self.branch_head.clone();
+        let previous_repo = self.changeset.repo.clone();
+        self.options = options;
+        self.live_reload_pending = false;
+        if !refresh_branch_metadata && previous_repo == changeset.repo {
+            self.branch_base = branch_base_from_options(&self.options).or(previous_branch_base);
+            self.branch_head =
+                branch_head_from_options(&self.options, self.current_head.as_deref())
+                    .or(previous_branch_head)
+                    .or_else(|| self.current_head.clone());
+            for branch in [
+                self.current_head.clone(),
+                self.branch_head.clone(),
+                self.branch_base.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self
+                    .comparison_branches
+                    .iter()
+                    .any(|candidate| candidate == &branch)
+                {
+                    self.comparison_branches.push(branch);
+                }
+            }
+        } else {
+            self.current_head = current_head_label(&changeset.repo);
+            self.branch_base = branch_base_from_options(&self.options)
+                .or(previous_branch_base)
+                .or_else(|| default_branch_base(&self.options, &changeset.repo));
+            self.branch_head =
+                branch_head_from_options(&self.options, self.current_head.as_deref())
+                    .or(previous_branch_head)
+                    .or_else(|| self.current_head.clone());
+            self.comparison_branches = comparison_branches(
+                &changeset.repo,
+                &[
+                    self.current_head.as_deref(),
+                    self.branch_head.as_deref(),
+                    self.branch_base.as_deref(),
+                ],
+            );
+        }
+        self.branch_menu_scroll = self.branch_menu_scroll.min(self.max_branch_menu_scroll());
+        self.total_stats = total_stats;
+        self.base_changeset = changeset.clone();
+        self.changeset = changeset;
+        self.search_index = search_index;
+        self.context_expansions.clear();
+        self.context_cache.clear();
+        self.generation = self.generation.wrapping_add(1);
+        self.inline_cache.clear();
+        self.pending_filter_apply = None;
+        self.filter_worker = None;
+        self.filter_searching = false;
+        if let Some(syntax) = self.syntax.as_mut() {
+            syntax.clear(self.generation);
+        }
+
+        if self.filters_active() {
+            let search_result = self.search_index.search_with_grep_match_limit(
+                &self.file_filter,
+                &self.grep_filter,
+                MAX_LIVE_GREP_MATCHES,
+            );
+            self.replace_visible_files(
+                search_result,
+                selected_path,
+                relative_scroll,
+                false,
+                HunkFocusModelBehavior::Clear,
+            );
+        } else {
+            self.stats = self.total_stats.clone();
+            self.max_line_width = max_line_width;
+            self.model = match self.layout {
+                DiffLayoutMode::Split => split_model,
+                DiffLayoutMode::Unified => unified_model,
+            };
+            self.manual_hunk_focus = None;
+            self.selected_file = selected_path
+                .and_then(|path| {
+                    self.changeset
+                        .files
+                        .iter()
+                        .position(|file| file.display_path() == path)
+                })
+                .unwrap_or(0);
+            self.grep_matches.clear();
+            self.grep_matches_truncated = false;
+            self.selected_grep_match = None;
+
+            let scroll = self
+                .model
+                .file_start_row(self.selected_file)
+                .map(|start| start.saturating_add(relative_scroll))
+                .unwrap_or_default();
+            self.set_scroll_with_grep_sync(scroll, true, HunkFocusScrollBehavior::ClearOnScroll);
+            self.set_horizontal_scroll(self.horizontal_scroll);
+            self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
+            self.dirty = true;
+        }
     }
 
     pub(crate) fn replace_loaded_diff(&mut self, options: DiffOptions, changeset: Changeset) {

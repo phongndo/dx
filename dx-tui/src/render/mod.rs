@@ -12,7 +12,10 @@ use ratatui::{Frame, layout::Rect};
 
 use self::{
     diff::draw_diff,
-    menus::{draw_branch_menu, draw_diff_menu, draw_help_menu},
+    menus::{
+        draw_branch_menu, draw_color_scheme_picker, draw_diff_menu, draw_help_menu,
+        draw_options_menu,
+    },
     sidebar::{draw_file_sidebar, file_sidebar_width},
     statusline::{
         draw_error_log, draw_filter_bar, draw_header, error_log_height, filter_bar_visible,
@@ -101,6 +104,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut DiffApp) {
         draw_error_log(frame, app, error_log_area);
     }
     draw_diff_menu(frame, app, area);
+    draw_options_menu(frame, app, area);
+    draw_color_scheme_picker(frame, app, area);
     draw_branch_menu(frame, app, area);
     draw_help_menu(frame, app, area);
 }

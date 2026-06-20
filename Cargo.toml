@@ -23,12 +23,12 @@ categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 clap = { version = "4.5", features = ["derive"] }
-crossterm = "0.28.1"
+crossterm = { version = "0.28.1", features = ["use-dev-tty"] }
 fff-grep = "0.9.5-nightly.ec57eb0"
 memchr = "2.7"
 notify = "8"
 ratatui = "0.29"
-rustix = { version = "0.38.44", default-features = false, features = ["std", "termios"] }
+rustix = { version = "0.38.44", default-features = false, features = ["std", "stdio", "termios"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

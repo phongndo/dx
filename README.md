@@ -57,6 +57,7 @@ dx show review 123
 dx show review https://github.com/owner/repo/pull/123
 dx patch changes.diff
 cat changes.diff | dx patch -
+git diff | dx pager
 dx diff --no-watch
 dx diff --no-syntax
 dx diff --stat
@@ -66,6 +67,19 @@ dx config
 Plain `dx` is a shortcut for `dx diff`. Use top-level commands to select the
 diff source: `dx diff` for local comparisons, `dx show` for revisions and
 hosted reviews, and `dx patch` for existing unified diffs.
+
+Use `dx pager` as a Git pager for `git diff`/`git show` output:
+
+```sh
+git config --global core.pager "dx pager"
+```
+
+`dx pager` reads stdin; run `dx` for the current worktree. Diff input opens the
+interactive reviewer when possible and falls back to static ANSI output in
+captured pager hosts such as lazygit. Non-diff input is passed through the
+user's text pager. Static output reuses dx's diff renderer, colorscheme, syntax
+highlighting, and layout; use `dx pager --layout split` or
+`dx pager --layout unified` to override auto layout for static hosts.
 
 ## Pi extension
 
@@ -86,9 +100,37 @@ when `XDG_CONFIG_HOME` is unset.
 
 No config file is created automatically; missing config means built-in defaults.
 Create the file manually only when you want to override syntax mode,
-colorscheme, diff styling, or highlight performance limits. Parser registry
-state is kept separately in `tree-sitter.json` under the same `dx` config
-directory.
+colorscheme, diff styling, highlight performance limits, or keybindings. Parser
+registry state is kept separately in `tree-sitter.json` under the same `dx`
+config directory.
+
+Keybindings can be overridden in the same file. Multi-key global bindings must
+start with the configured leader key; menu bindings are single-key and apply to
+the diff source and options menus.
+
+```toml
+[keymap.global]
+leader = "space"
+help = "?"
+reload = "r"
+file_filter = "f"
+grep = "/"
+diff_menu = "space m"
+options_menu = "space o"
+file_browser = "space b"
+quit = "space q"
+layout = "space s"
+edit_hunk = "ctrl-g"
+next_diff_type = "tab"
+previous_diff_type = "shift-tab" # prev_diff_type also works
+
+[keymap.menu]
+up = ["k", "up", "shift-tab"]
+down = ["j", "down", "tab"]
+select = "space"
+confirm = "enter"
+close = ["esc", "q"]
+```
 
 ## Syntax highlighting
 
