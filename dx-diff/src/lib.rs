@@ -793,9 +793,7 @@ fn git_diff_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<String>> {
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
-            args.push("--end-of-options".to_owned());
-            args.push(existing_object_revision(repo, left, "")?);
-            args.push(existing_object_revision(repo, right, "")?);
+            append_range_args(&mut args, repo, left, right)?;
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
@@ -857,15 +855,32 @@ fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> DxResult<Vec<Str
             args.push(format!("{base}...{head}"));
         }
         DiffSource::Range { left, right } => {
-            args.push("--end-of-options".to_owned());
-            args.push(existing_object_revision(repo, left, "")?);
-            args.push(existing_object_revision(repo, right, "")?);
+            append_range_args(&mut args, repo, left, right)?;
         }
         DiffSource::Show(_) => {}
         DiffSource::Patch(_) => {}
     }
 
     Ok(args)
+}
+
+fn append_range_args(args: &mut Vec<String>, repo: &Path, left: &str, right: &str) -> DxResult<()> {
+    args.push("--end-of-options".to_owned());
+    let left = existing_object_revision(repo, left, "")?;
+
+    if revision_expression_exists(repo, right)? {
+        args.push(left);
+        args.push(right.to_owned());
+    } else if range_right_operand_is_pathspec(repo, &left, right)? {
+        args.push(left);
+        args.push("--".to_owned());
+        args.push(right.to_owned());
+    } else {
+        args.push(left);
+        args.push(existing_object_revision(repo, right, "")?);
+    }
+
+    Ok(())
 }
 
 fn git_show_numstat_args(repo: &Path, rev: &str) -> DxResult<Vec<String>> {
@@ -907,7 +922,7 @@ fn existing_commitish_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<S
 }
 
 fn existing_object_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<String> {
-    if resolve_revision(repo, rev)?.is_some() {
+    if revision_expression_exists(repo, rev)? {
         return Ok(rev.to_owned());
     }
 
@@ -917,6 +932,32 @@ fn existing_object_revision(repo: &Path, rev: &str, kind: &str) -> DxResult<Stri
         format!("{kind} revision")
     };
     Err(DxError::Usage(format!("unknown {label} `{rev}`")))
+}
+
+fn revision_expression_exists(repo: &Path, rev: &str) -> DxResult<bool> {
+    let output = rev_parse_verify(repo, rev)?;
+    // `rev-parse --verify` exits non-zero for expressions that expand to
+    // multiple objects, but still writes the resolved objects. `git diff`
+    // accepts those expressions as range operands.
+    if output.status.success() || !output_stdout_is_empty(&output) {
+        return Ok(true);
+    }
+
+    multi_revision_expression_exists(repo, rev)
+}
+
+fn range_right_operand_is_pathspec(repo: &Path, left: &str, right: &str) -> DxResult<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        // Keep the right operand ambiguous here so Git decides whether it is a
+        // pathspec in the same way it would for `git diff <rev> <path>`.
+        .args(["diff", "--quiet", "--no-ext-diff", "--end-of-options"])
+        .arg(left)
+        .arg(right)
+        .output()?;
+
+    Ok(matches!(output.status.code(), Some(0) | Some(1)))
 }
 
 fn existing_revision(repo: &Path, rev: &str, kind: &str, object_kind: &str) -> DxResult<String> {
@@ -976,12 +1017,7 @@ fn revision_exists(repo: &Path, rev: &str, object_kind: &str) -> DxResult<bool> 
 }
 
 fn resolve_revision(repo: &Path, rev: &str) -> DxResult<Option<String>> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
-        .arg(rev)
-        .output()?;
+    let output = rev_parse_verify(repo, rev)?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -992,6 +1028,29 @@ fn resolve_revision(repo: &Path, rev: &str) -> DxResult<Option<String>> {
     } else {
         Ok(Some(revision))
     }
+}
+
+fn rev_parse_verify(repo: &Path, rev: &str) -> DxResult<std::process::Output> {
+    Ok(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+        .arg(rev)
+        .output()?)
+}
+
+fn multi_revision_expression_exists(repo: &Path, rev: &str) -> DxResult<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-list", "--no-walk", "--quiet", "--end-of-options"])
+        .arg(rev)
+        .output()?;
+    Ok(output.status.success())
+}
+
+fn output_stdout_is_empty(output: &std::process::Output) -> bool {
+    String::from_utf8_lossy(&output.stdout).trim().is_empty()
 }
 
 fn revision_object_matches(repo: &Path, object: &str, object_kind: &str) -> DxResult<bool> {
@@ -2127,6 +2186,46 @@ mod tests {
     }
 
     #[test]
+    fn range_diff_accepts_pathspec_right_operand() {
+        let test_dir = temp_test_dir("range-pathspec-revision");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        fs::create_dir_all(repo.join("src")).expect("source directory should be created");
+        fs::write(repo.join("src/lib.rs"), "one\n").expect("lib file should be written");
+        fs::write(repo.join("src/other.rs"), "one\n").expect("other file should be written");
+        git(["add", "src/lib.rs", "src/other.rs"], &repo);
+        git(["commit", "-q", "-m", "add sources"], &repo);
+        fs::write(repo.join("src/lib.rs"), "two\n").expect("lib file should change");
+        fs::write(repo.join("src/other.rs"), "two\n").expect("other file should change");
+
+        let options = DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD".to_owned(),
+                right: "src/lib.rs".to_owned(),
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        };
+
+        let patch = render(options.clone()).expect("pathspec range should render");
+        assert!(patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+        assert!(patch.contains("+two"));
+        assert!(!patch.contains("src/other.rs"));
+
+        let stat = render(DiffOptions {
+            stat: true,
+            ..options
+        })
+        .expect("pathspec range stat should render");
+        assert!(stat.contains("src/lib.rs"));
+        assert!(!stat.contains("src/other.rs"));
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
     fn range_diff_accepts_treeish_revisions() {
         let test_dir = temp_test_dir("range-treeish-revisions");
         let repo = test_dir.join("repo");
@@ -2162,6 +2261,36 @@ mod tests {
         .expect("tree-ish range stat should render");
         assert!(stat.contains("base.txt"));
 
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn range_diff_accepts_multi_object_left_revision() {
+        let test_dir = temp_test_dir("range-multi-object-revision");
+        let repo = test_dir.join("repo");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        init_repo(&repo);
+        git(["branch", "-M", "main"], &repo);
+        git(["checkout", "-q", "-b", "side"], &repo);
+        fs::write(repo.join("side.txt"), "side\n").expect("side file should be written");
+        git(["add", "side.txt"], &repo);
+        git(["commit", "-q", "-m", "side"], &repo);
+        git(["checkout", "-q", "main"], &repo);
+        git(["merge", "-q", "--no-ff", "side", "-m", "merge"], &repo);
+
+        let stat = render(DiffOptions {
+            repo: Some(repo.clone()),
+            source: DiffSource::Range {
+                left: "HEAD^@".to_owned(),
+                right: "HEAD".to_owned(),
+            },
+            include_untracked: false,
+            stat: true,
+            ..DiffOptions::default()
+        })
+        .expect("multi-object range should render");
+
+        assert!(stat.contains("side.txt"));
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 

@@ -130,8 +130,12 @@ fn run() -> CliResult<()> {
 
 fn run_cli(cli: Cli) -> CliResult<()> {
     reject_pre_subcommand_diff_args(&cli)?;
-    match cli.command {
-        None => run_diff(cli.diff),
+    let Cli { command, diff } = cli;
+    match command {
+        None => {
+            reject_likely_unknown_command(&diff)?;
+            run_diff(diff)
+        }
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
         Some(Command::Pager(args)) => pager(args),
@@ -167,7 +171,6 @@ fn has_diff_args(args: &args::DiffArgs) -> bool {
 }
 
 fn run_diff(args: args::DiffArgs) -> CliResult<()> {
-    reject_likely_unknown_command(&args)?;
     let stat = args.stat;
     let live_updates = !args.no_watch;
     let syntax_enabled = !args.no_syntax;
@@ -214,15 +217,6 @@ enum RevisionKind {
     Object,
 }
 
-impl RevisionKind {
-    fn peel(self) -> Option<&'static str> {
-        match self {
-            Self::Commit => Some("commit"),
-            Self::Object => None,
-        }
-    }
-}
-
 fn unknown_command_or_revision_error(rev: &str) -> clap::Error {
     Cli::command().error(
         ErrorKind::InvalidSubcommand,
@@ -231,25 +225,63 @@ fn unknown_command_or_revision_error(rev: &str) -> clap::Error {
 }
 
 fn revision_status(repo: Option<&Path>, rev: &str, kind: RevisionKind) -> RevisionStatus {
+    match kind {
+        RevisionKind::Commit => commit_revision_status(repo, rev),
+        RevisionKind::Object => match revision_expression_exists(repo, rev) {
+            Some(true) => RevisionStatus::Exists,
+            Some(false) => missing_revision_status(repo),
+            None => RevisionStatus::Unknown,
+        },
+    }
+}
+
+fn commit_revision_status(repo: Option<&Path>, rev: &str) -> RevisionStatus {
     let Some(object) = resolve_revision(repo, rev) else {
-        return if git_repository_available(repo) {
-            RevisionStatus::Missing
-        } else {
-            RevisionStatus::Unknown
-        };
-    };
-    let Some(peel) = kind.peel() else {
-        return RevisionStatus::Exists;
+        return missing_revision_status(repo);
     };
 
-    match revision_object_matches(repo, &object, peel) {
+    match revision_object_matches(repo, &object, "commit") {
         Some(true) => RevisionStatus::Exists,
         Some(false) => RevisionStatus::Missing,
         None => RevisionStatus::Unknown,
     }
 }
 
+fn missing_revision_status(repo: Option<&Path>) -> RevisionStatus {
+    if git_repository_available(repo) {
+        RevisionStatus::Missing
+    } else {
+        RevisionStatus::Unknown
+    }
+}
+
+fn revision_expression_exists(repo: Option<&Path>, rev: &str) -> Option<bool> {
+    let output = rev_parse_verify(repo, rev)?;
+    // `rev-parse --verify` exits non-zero for expressions that expand to
+    // multiple objects, but still writes the resolved objects. `git diff`
+    // accepts those expressions as range operands.
+    if output.status.success() || !output_stdout_is_empty(&output) {
+        return Some(true);
+    }
+
+    multi_revision_expression_exists(repo, rev)
+}
+
 fn resolve_revision(repo: Option<&Path>, rev: &str) -> Option<String> {
+    let output = rev_parse_verify(repo, rev)?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let revision = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if revision.is_empty() {
+        None
+    } else {
+        Some(revision)
+    }
+}
+
+fn rev_parse_verify(repo: Option<&Path>, rev: &str) -> Option<std::process::Output> {
     let mut command = ProcessCommand::new("git");
     if let Some(repo) = repo {
         command.arg("-C").arg(repo);
@@ -258,17 +290,23 @@ fn resolve_revision(repo: Option<&Path>, rev: &str) -> Option<String> {
         .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
         .arg(rev);
 
-    match command.output() {
-        Ok(output) if output.status.success() => {
-            let revision = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if revision.is_empty() {
-                None
-            } else {
-                Some(revision)
-            }
-        }
-        _ => None,
+    command.output().ok()
+}
+
+fn multi_revision_expression_exists(repo: Option<&Path>, rev: &str) -> Option<bool> {
+    let mut command = ProcessCommand::new("git");
+    if let Some(repo) = repo {
+        command.arg("-C").arg(repo);
     }
+    command
+        .args(["rev-list", "--no-walk", "--quiet", "--end-of-options"])
+        .arg(rev);
+
+    command.output().ok().map(|output| output.status.success())
+}
+
+fn output_stdout_is_empty(output: &std::process::Output) -> bool {
+    String::from_utf8_lossy(&output.stdout).trim().is_empty()
 }
 
 fn revision_object_matches(repo: Option<&Path>, object: &str, peel: &str) -> Option<bool> {
@@ -415,17 +453,36 @@ mod tests {
 
     #[test]
     fn unknown_single_top_level_target_renders_clap_style_error() {
-        let error = reject_likely_unknown_command(&args::DiffArgs {
-            revs: vec!["ls".to_owned()],
-            repo: Some(PathBuf::from("/definitely/not/a/repo")),
-            ..args::DiffArgs::default()
-        })
-        .expect_err("invalid target should be rejected before git diff");
+        let error = run_cli(parse(&["dx", "--repo", "/definitely/not/a/repo", "ls"]))
+            .expect_err("invalid target should be rejected before git diff");
 
         assert!(matches!(error, CliError::Clap(_)));
         let rendered = error.to_string();
         assert!(rendered.contains("unrecognized subcommand or revision 'ls'"));
         assert!(rendered.contains("Usage: dx [OPTIONS] [COMMAND|REV] [REV]"));
+    }
+
+    #[test]
+    fn explicit_diff_missing_left_operand_is_revision_error() {
+        let test_dir = temp_test_dir("explicit-diff-missing-left");
+        let repo = test_dir.join("repo");
+        init_repo(&repo);
+        let repo_arg = repo.to_string_lossy().into_owned();
+        let cli = parse(&[
+            "dx",
+            "diff",
+            "--repo",
+            repo_arg.as_str(),
+            "--stat",
+            "missing",
+            "HEAD",
+        ]);
+
+        let error = run_cli(cli).expect_err("missing diff revision should be rejected");
+
+        assert!(matches!(error, CliError::Dx(_)));
+        assert!(error.to_string().contains("unknown revision `missing`"));
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
 
     #[test]
@@ -450,6 +507,29 @@ mod tests {
             ..args::DiffArgs::default()
         })
         .expect("plain range operands should accept tree-ish revisions");
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn two_revision_preflight_accepts_multi_object_left_operand() {
+        let test_dir = temp_test_dir("range-multi-object-preflight");
+        let repo = test_dir.join("repo");
+        init_repo(&repo);
+        git(["branch", "-M", "main"], &repo);
+        git(["checkout", "-q", "-b", "side"], &repo);
+        fs::write(repo.join("side.txt"), "side\n").expect("side file should be written");
+        git(["add", "side.txt"], &repo);
+        git(["commit", "-q", "-m", "side"], &repo);
+        git(["checkout", "-q", "main"], &repo);
+        git(["merge", "-q", "--no-ff", "side", "-m", "merge"], &repo);
+
+        reject_likely_unknown_command(&args::DiffArgs {
+            revs: vec!["HEAD^@".to_owned(), "HEAD".to_owned()],
+            repo: Some(repo),
+            ..args::DiffArgs::default()
+        })
+        .expect("plain range operands should accept multi-object revisions");
 
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
