@@ -57,9 +57,8 @@ use crate::{
         MAX_BRANCH_MENU_ROWS, MAX_INLINE_DIFF_CACHE_ENTRIES, MAX_READY_EVENTS_PER_FRAME,
         MAX_SYNTAX_RESULTS_PER_FRAME, MOUSE_SCROLL_ACCEL_A, MOUSE_SCROLL_ACCEL_TAU,
         MOUSE_SCROLL_HISTORY_SIZE, MOUSE_SCROLL_MAX_MULTIPLIER, MOUSE_SCROLL_MIN_TICK_INTERVAL,
-        MOUSE_SCROLL_REFERENCE_INTERVAL_MS, MOUSE_SCROLL_STREAK_TIMEOUT, NOTICE_TTL,
-        STATUSLINE_SELECTOR_GAP, SyntaxBenchmarkReport, UNIFIED_GUTTER_WIDTH,
-        diff_theme_from_config,
+        MOUSE_SCROLL_REFERENCE_INTERVAL_MS, MOUSE_SCROLL_STREAK_TIMEOUT, STATUSLINE_SELECTOR_GAP,
+        SyntaxBenchmarkReport, UNIFIED_GUTTER_WIDTH, diff_theme_from_config,
     },
 };
 
@@ -189,7 +188,6 @@ pub(crate) async fn run_loop(
     loop {
         drain_live_diff_invalidation(app, live_diff.as_ref());
         sync_live_diff(live_diff, app, live_updates);
-        app.expire_notice(Instant::now());
         drain_live_reloads(
             app,
             live_diff.as_mut().map(|live_diff| &mut live_diff.reload_rx),
@@ -309,7 +307,7 @@ pub(crate) fn drain_live_reloads(
                     app.mark_live_reload_pending();
                 }
             }
-            LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset, None),
+            LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset),
             LiveDiffReload::Loaded(Err(error)) => {
                 app.live_reload_pending = false;
                 app.set_error_log(format!("live reload failed: {error}"));
@@ -599,15 +597,8 @@ impl MouseScroll {
 }
 
 #[derive(Debug)]
-pub(crate) struct Notice {
-    pub(crate) text: String,
-    pub(crate) expires_at: Instant,
-}
-
-#[derive(Debug)]
 pub(crate) struct PendingDiffLoad {
     pub(crate) options: DiffOptions,
-    pub(crate) success_notice: String,
     pub(crate) error_prefix: String,
     pub(crate) refresh_branch_metadata: bool,
     pub(crate) rx: oneshot::Receiver<DxResult<Changeset>>,
@@ -758,7 +749,6 @@ pub(crate) struct DiffApp {
     pub(crate) rendered_error_log_separator_row: Option<u16>,
     pub(crate) mouse_scroll: MouseScroll,
     pub(crate) keymap: Keymap,
-    pub(crate) notice: Option<Notice>,
     pub(crate) theme: DiffTheme,
     pub(crate) color_scheme: ColorSchemeChoice,
     pub(crate) theme_color_overrides: ColorOverrides,
@@ -775,37 +765,57 @@ pub(crate) struct DiffApp {
 
 pub(crate) fn load_syntax_settings_for_diff(
     load_user_settings: bool,
-) -> (SyntaxSettings, Option<Notice>) {
+) -> (SyntaxSettings, Option<String>) {
     if !load_user_settings {
         return (SyntaxSettings::default(), None);
     }
 
-    match dx_syntax::load_settings() {
+    syntax_settings_for_diff(dx_syntax::load_settings())
+}
+
+pub(crate) fn syntax_settings_for_diff(
+    result: DxResult<SyntaxSettings>,
+) -> (SyntaxSettings, Option<String>) {
+    match result {
         Ok(settings) => (settings, None),
         Err(error) => (
             SyntaxSettings::default(),
-            Some(Notice {
-                text: format!("syntax settings ignored: {error}"),
-                expires_at: Instant::now() + NOTICE_TTL,
-            }),
+            Some(format!("syntax settings ignored: {error}")),
         ),
     }
 }
 
-pub(crate) fn load_keymap_for_diff(load_user_settings: bool) -> (Keymap, Option<Notice>) {
+fn push_startup_error_log(error_log: &mut Option<String>, message: impl Into<String>) {
+    match error_log {
+        Some(error_log) => {
+            error_log.push('\n');
+            error_log.push_str(&message.into());
+        }
+        None => *error_log = Some(message.into()),
+    }
+}
+
+pub(crate) fn syntax_runtime_for_diff(
+    result: DxResult<Option<SyntaxRuntime>>,
+    error_log: &mut Option<String>,
+) -> Option<SyntaxRuntime> {
+    match result {
+        Ok(syntax) => syntax,
+        Err(error) => {
+            push_startup_error_log(error_log, format!("syntax disabled: {error}"));
+            None
+        }
+    }
+}
+
+pub(crate) fn load_keymap_for_diff(load_user_settings: bool) -> (Keymap, Option<String>) {
     if !load_user_settings {
         return (Keymap::default(), None);
     }
 
     match Keymap::load() {
         Ok(keymap) => (keymap, None),
-        Err(error) => (
-            Keymap::default(),
-            Some(Notice {
-                text: format!("keymap ignored: {error}"),
-                expires_at: Instant::now() + NOTICE_TTL,
-            }),
-        ),
+        Err(error) => (Keymap::default(), Some(format!("keymap ignored: {error}"))),
     }
 }
 
@@ -842,7 +852,7 @@ impl DiffApp {
                 branch_base.as_deref(),
             ],
         );
-        let (settings, mut notice) = load_syntax_settings_for_diff(matches!(
+        let (settings, mut startup_error_log) = load_syntax_settings_for_diff(matches!(
             syntax_mode,
             SyntaxStartupMode::Config | SyntaxStartupMode::Disabled
         ));
@@ -850,7 +860,9 @@ impl DiffApp {
             syntax_mode,
             SyntaxStartupMode::Config | SyntaxStartupMode::Disabled
         ));
-        notice = keymap_notice.or(notice);
+        if let Some(message) = keymap_notice {
+            push_startup_error_log(&mut startup_error_log, message);
+        }
         let mut color_scheme = color_scheme_from_config(&settings.theme);
         let theme = match diff_theme_from_config(&settings.theme).and_then(|theme| {
             theme
@@ -859,10 +871,10 @@ impl DiffApp {
         }) {
             Ok(theme) => theme.with_diff_settings(settings.diff),
             Err(error) => {
-                notice = Some(Notice {
-                    text: format!("colorscheme ignored: {error}"),
-                    expires_at: Instant::now() + NOTICE_TTL,
-                });
+                push_startup_error_log(
+                    &mut startup_error_log,
+                    format!("syntax theme ignored: {error}"),
+                );
                 color_scheme = ColorSchemeChoice::System;
                 DiffTheme::default()
                     .with_color_overrides(&settings.colors)
@@ -877,16 +889,9 @@ impl DiffApp {
         let theme_color_overrides = settings.colors.clone();
         let theme_transparent_background = settings.transparent_background;
         let syntax = match syntax_mode {
-            SyntaxStartupMode::Config => match SyntaxRuntime::start(&settings) {
-                Ok(syntax) => syntax,
-                Err(error) => {
-                    notice = Some(Notice {
-                        text: format!("syntax disabled: {error}"),
-                        expires_at: Instant::now() + NOTICE_TTL,
-                    });
-                    None
-                }
-            },
+            SyntaxStartupMode::Config => {
+                syntax_runtime_for_diff(SyntaxRuntime::start(&settings), &mut startup_error_log)
+            }
             SyntaxStartupMode::Disabled => None,
             SyntaxStartupMode::Languages(languages) => {
                 SyntaxRuntime::start_with_languages(languages, syntax_limits)
@@ -966,13 +971,12 @@ impl DiffApp {
             pending_filter_apply: None,
             filter_worker: None,
             filter_searching: false,
-            error_log: None,
+            error_log: startup_error_log,
             error_log_height: ERROR_LOG_DEFAULT_HEIGHT,
             error_log_resizing: false,
             rendered_error_log_separator_row: None,
             mouse_scroll: MouseScroll::default(),
             keymap,
-            notice,
             theme,
             color_scheme,
             theme_color_overrides,
@@ -1410,14 +1414,6 @@ impl DiffApp {
         self.dirty = true;
     }
 
-    pub(crate) fn set_notice(&mut self, text: impl Into<String>) {
-        self.notice = Some(Notice {
-            text: text.into(),
-            expires_at: Instant::now() + NOTICE_TTL,
-        });
-        self.dirty = true;
-    }
-
     pub(crate) fn set_error_log(&mut self, text: impl Into<String>) {
         self.error_log = Some(text.into());
         self.error_log_height = ERROR_LOG_DEFAULT_HEIGHT;
@@ -1496,47 +1492,28 @@ impl DiffApp {
         self.set_error_log_height(next as u16)
     }
 
-    pub(crate) fn expire_notice(&mut self, now: Instant) {
-        let expired = self
-            .notice
-            .as_ref()
-            .is_some_and(|notice| now >= notice.expires_at);
-        if expired {
-            self.notice = None;
-            self.dirty = true;
-        }
-    }
-
     pub(crate) fn start_diff_load(
         &mut self,
         options: DiffOptions,
-        pending_notice: impl Into<String>,
-        success_notice: impl Into<String>,
         error_prefix: impl Into<String>,
     ) {
-        self.start_diff_load_inner(options, pending_notice, success_notice, error_prefix, true);
+        self.start_diff_load_inner(options, error_prefix, true);
     }
 
     pub(crate) fn start_uncached_diff_load(
         &mut self,
         options: DiffOptions,
-        pending_notice: impl Into<String>,
-        success_notice: impl Into<String>,
         error_prefix: impl Into<String>,
     ) {
-        self.start_diff_load_inner(options, pending_notice, success_notice, error_prefix, false);
+        self.start_diff_load_inner(options, error_prefix, false);
     }
 
     fn start_diff_load_inner(
         &mut self,
         options: DiffOptions,
-        pending_notice: impl Into<String>,
-        success_notice: impl Into<String>,
         error_prefix: impl Into<String>,
         use_cache: bool,
     ) {
-        let pending_notice = pending_notice.into();
-        let success_notice = success_notice.into();
         let error_prefix = error_prefix.into();
 
         let use_cache = use_cache && self.diff_cache_invalidator_active();
@@ -1546,7 +1523,7 @@ impl DiffApp {
 
             if let Some(cached) = self.take_cached_diff(&options) {
                 self.pending_diff_load = None;
-                self.replace_cached_diff(options, cached, Some(&success_notice), false);
+                self.replace_cached_diff(options, cached, false);
                 return;
             }
 
@@ -1555,7 +1532,7 @@ impl DiffApp {
                 .as_ref()
                 .is_some_and(|pending| pending.options == options)
             {
-                self.set_notice(pending_notice);
+                self.dirty = true;
                 return;
             }
 
@@ -1564,12 +1541,11 @@ impl DiffApp {
             if let Some(prefetch) = self.take_pending_diff_prefetch(&options) {
                 self.pending_diff_load = Some(PendingDiffLoad {
                     options,
-                    success_notice,
                     error_prefix,
                     refresh_branch_metadata: false,
                     rx: prefetch.rx,
                 });
-                self.set_notice(pending_notice);
+                self.dirty = true;
                 return;
             }
         } else {
@@ -1584,12 +1560,11 @@ impl DiffApp {
 
         self.pending_diff_load = Some(PendingDiffLoad {
             options,
-            success_notice,
             error_prefix,
             refresh_branch_metadata: !use_cache,
             rx,
         });
-        self.set_notice(pending_notice);
+        self.dirty = true;
     }
 
     pub(crate) fn drain_pending_diff_load(&mut self) {
@@ -1610,17 +1585,15 @@ impl DiffApp {
 
         match outcome {
             Some(Ok(changeset)) => {
-                let notice = pending.success_notice;
                 if cacheable_diff_options(&pending.options) {
                     let cached = diff_cache_entry(pending.options.clone(), changeset);
                     self.replace_cached_diff(
                         pending.options,
                         cached,
-                        Some(&notice),
                         pending.refresh_branch_metadata,
                     );
                 } else {
-                    self.replace_loaded_diff(pending.options, changeset, Some(&notice));
+                    self.replace_loaded_diff(pending.options, changeset);
                 }
             }
             Some(Err(error)) => self.set_error_log(format!("{}: {error}", pending.error_prefix)),
@@ -2076,7 +2049,6 @@ impl DiffApp {
         };
 
         let Some((side, source_lines)) = self.ensure_context_lines(file) else {
-            self.set_notice("context unavailable for this diff");
             return true;
         };
 
@@ -2089,7 +2061,6 @@ impl DiffApp {
         let current = expanded.min(available);
         let remaining = available.saturating_sub(current);
         if remaining == 0 {
-            self.set_notice("no more context");
             return true;
         }
 
@@ -2480,7 +2451,7 @@ impl DiffApp {
             .get(self.color_scheme_selected)
             .copied()
         else {
-            self.set_notice("no matching colorscheme");
+            self.dirty = true;
             return;
         };
 
@@ -2488,10 +2459,6 @@ impl DiffApp {
         self.color_scheme_picker_open = false;
         self.color_scheme_input.clear();
         self.color_scheme_scroll = 0;
-        self.set_notice(format!(
-            "colorscheme {} selected",
-            color_scheme_label(choice)
-        ));
         self.dirty = true;
     }
 
@@ -2515,7 +2482,7 @@ impl DiffApp {
             }
             Some(OptionsMenuItem::LiveReload) => {
                 if !self.live_updates_allowed {
-                    self.set_notice("live reload disabled by --no-watch".to_owned());
+                    self.set_error_log("live reload disabled by --no-watch");
                     return;
                 }
                 self.options_menu_draft.live_updates_enabled =
@@ -2549,21 +2516,11 @@ impl DiffApp {
             self.live_updates_enabled = draft.live_updates_enabled;
             self.live_reload_pending = false;
             self.live_diff_failed_options = None;
-            self.set_notice(format!(
-                "live reload {}",
-                if draft.live_updates_enabled {
-                    "on"
-                } else {
-                    "off"
-                }
-            ));
+            self.dirty = true;
         }
         if draft.context_expansion != self.theme.diff.context_expansion {
             self.theme.diff.context_expansion = draft.context_expansion;
-            self.set_notice(format!(
-                "context expansion {}",
-                context_expansion_label(draft.context_expansion)
-            ));
+            self.dirty = true;
         }
         if draft.color_scheme != self.color_scheme {
             self.apply_color_scheme(draft.color_scheme);
@@ -2572,15 +2529,10 @@ impl DiffApp {
             let mut options = self.options.clone();
             options.include_untracked = draft.include_untracked;
             self.invalidate_diff_cache();
-            self.start_uncached_diff_load(options, "reloading", "reloaded", "reload failed");
+            self.start_uncached_diff_load(options, "reload failed");
         } else if live_reload_reenabled {
             self.invalidate_diff_cache();
-            self.start_uncached_diff_load(
-                self.options.clone(),
-                "reloading",
-                "reloaded",
-                "reload failed",
-            );
+            self.start_uncached_diff_load(self.options.clone(), "reload failed");
         } else {
             self.dirty = true;
         }
@@ -2590,7 +2542,7 @@ impl DiffApp {
 
     pub(crate) fn apply_color_scheme(&mut self, color_scheme: ColorSchemeChoice) {
         let Some(config) = color_scheme_config(color_scheme) else {
-            self.set_notice("colorscheme custom cannot be reapplied from options".to_owned());
+            self.set_error_log("colorscheme custom cannot be reapplied from options");
             return;
         };
         let diff = self.theme.diff;
@@ -2602,11 +2554,10 @@ impl DiffApp {
             Ok(theme) => {
                 self.theme = theme.with_diff_settings(diff);
                 self.color_scheme = color_scheme;
-                self.set_notice(format!("colorscheme {}", color_scheme_label(color_scheme)));
                 self.dirty = true;
             }
             Err(error) => {
-                self.set_notice(format!("colorscheme ignored: {error}"));
+                self.set_error_log(format!("colorscheme ignored: {error}"));
             }
         }
     }
@@ -2865,7 +2816,6 @@ impl DiffApp {
             .get(self.branch_menu_selected)
             .map(|branch| (*branch).to_owned())
         else {
-            self.set_notice("no matching branch");
             return;
         };
         self.close_branch_menu();
@@ -3088,13 +3038,7 @@ impl DiffApp {
             return;
         }
 
-        let notice = format!("branch {branch}");
-        self.start_diff_load(
-            options,
-            format!("loading {notice}"),
-            notice,
-            "branch diff unavailable",
-        );
+        self.start_diff_load(options, "branch diff unavailable");
     }
 
     pub(crate) fn branch_source(&self, base: String, head: String) -> DiffSource {
@@ -3111,7 +3055,6 @@ impl DiffApp {
         }
 
         let Some(options) = self.options_for_choice(choice) else {
-            self.set_notice("base branch unavailable");
             return;
         };
 
@@ -3121,13 +3064,7 @@ impl DiffApp {
             return;
         }
 
-        let notice = choice.notice();
-        self.start_diff_load(
-            options,
-            format!("loading {notice}"),
-            notice,
-            "diff unavailable",
-        );
+        self.start_diff_load(options, "diff unavailable");
     }
 
     pub(crate) fn options_for_choice(&self, choice: DiffChoice) -> Option<DiffOptions> {
@@ -3454,16 +3391,30 @@ impl DiffApp {
     }
 
     fn prepare_focused_hunk_editor(&mut self) -> Option<FocusedEditorLaunch> {
-        let Some(target) = self.focused_hunk_editor_target() else {
-            self.set_notice("no editable focused hunk");
-            return None;
-        };
-        let Some(editor) = configured_editor() else {
-            self.set_notice("set $EDITOR to edit focused hunk");
-            return None;
-        };
+        self.prepare_focused_hunk_editor_with(configured_editor())
+    }
 
+    fn prepare_focused_hunk_editor_with(
+        &mut self,
+        configured_editor: Option<String>,
+    ) -> Option<FocusedEditorLaunch> {
+        let target = self.focused_hunk_editor_target()?;
+        let Some(editor) = configured_editor else {
+            self.set_error_log(
+                "editor unavailable: set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk",
+            );
+            return None;
+        };
         Some(FocusedEditorLaunch { target, editor })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prepare_focused_hunk_editor_for_test(
+        &mut self,
+        configured_editor: Option<String>,
+    ) -> bool {
+        self.prepare_focused_hunk_editor_with(configured_editor)
+            .is_some()
     }
 
     fn open_prepared_hunk_in_editor(
@@ -3506,21 +3457,21 @@ impl DiffApp {
                     changed,
                     scoped_reload.as_ref().map(|request| request.path.as_path()),
                 ) {
-                    EditorReloadBehavior::None => self.set_notice("editor closed"),
+                    EditorReloadBehavior::None => self.dirty = true,
                     EditorReloadBehavior::ScopedAsync => {
                         let request = scoped_reload.expect("scoped reload requires a request");
-                        self.pending_editor_reload = Some(request);
-                        self.set_notice("editor closed; refreshing edited file");
+                        self.queue_editor_scoped_reload(request);
                     }
-                    EditorReloadBehavior::Sync => match self.reload() {
-                        Ok(()) => self.set_notice("editor closed; reloading"),
-                        Err(error) => {
+                    EditorReloadBehavior::Sync => {
+                        if let Err(error) = self.reload() {
                             self.set_error_log(format!("editor closed; reload failed: {error}"));
                         }
-                    },
+                    }
                 }
             }
-            Ok(status) => self.set_notice(format!("editor exited with {status}")),
+            Ok(status) => {
+                self.set_error_log(format!("editor exited with {status}"));
+            }
             Err(error) => self.set_error_log(format!("editor failed: {error}")),
         }
     }
@@ -3561,6 +3512,11 @@ impl DiffApp {
         });
     }
 
+    pub(crate) fn queue_editor_scoped_reload(&mut self, request: EditorReloadRequest) {
+        self.pending_editor_reload = Some(request);
+        self.dirty = true;
+    }
+
     pub(crate) fn start_pending_editor_reload(&mut self) {
         let Some(request) = self.pending_editor_reload.take() else {
             return;
@@ -3582,11 +3538,7 @@ impl DiffApp {
 
                 match reload.changeset {
                     Ok(changeset) => {
-                        self.replace_path_changeset(
-                            &reload.path,
-                            changeset,
-                            Some("edited file reloaded"),
-                        );
+                        self.replace_path_changeset(&reload.path, changeset);
                     }
                     Err(error) => self.set_error_log(format!("edited file reload failed: {error}")),
                 }
@@ -4232,7 +4184,6 @@ impl DiffApp {
 
         if self.grep_matches.is_empty() {
             self.selected_grep_match = None;
-            self.set_notice("no grep matches");
             return;
         }
 
@@ -4393,11 +4344,7 @@ impl DiffApp {
         self.color_scheme_picker_open = false;
         self.close_branch_menu();
         self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
-        self.set_notice(if self.file_sidebar_open {
-            "file sidebar"
-        } else {
-            "diff only"
-        });
+        self.dirty = true;
     }
 
     pub(crate) fn visible_file_sidebar_rows(&self) -> usize {
@@ -4511,7 +4458,7 @@ impl DiffApp {
 
     pub(crate) fn set_manual_layout(&mut self, layout: DiffLayoutMode) {
         self.layout_override = Some(layout);
-        self.set_layout(layout, true);
+        self.set_layout(layout);
     }
 
     pub(crate) fn apply_responsive_layout(&mut self, width: u16) {
@@ -4524,12 +4471,12 @@ impl DiffApp {
             Some(layout) => layout,
             None => responsive_layout,
         };
-        self.set_layout(layout, true);
+        self.set_layout(layout);
         self.set_horizontal_scroll(self.horizontal_scroll);
         self.dirty = true;
     }
 
-    pub(crate) fn set_layout(&mut self, layout: DiffLayoutMode, show_notice: bool) {
+    pub(crate) fn set_layout(&mut self, layout: DiffLayoutMode) {
         if self.layout == layout {
             return;
         }
@@ -4552,37 +4499,21 @@ impl DiffApp {
         self.set_scroll(scroll);
         self.sync_grep_match_selection_to_scroll();
         self.dirty = true;
-        if show_notice {
-            self.set_notice(match self.layout {
-                DiffLayoutMode::Split => "split view",
-                DiffLayoutMode::Unified => "unified view",
-            });
-        }
     }
 
     pub(crate) fn reload(&mut self) -> DxResult<()> {
         self.invalidate_diff_cache();
-        self.start_uncached_diff_load(
-            self.options.clone(),
-            "reloading",
-            "reloaded",
-            "reload failed",
-        );
+        self.start_uncached_diff_load(self.options.clone(), "reload failed");
         Ok(())
     }
 
-    pub(crate) fn replace_changeset(&mut self, changeset: Changeset, notice: Option<&str>) {
+    pub(crate) fn replace_changeset(&mut self, changeset: Changeset) {
         self.invalidate_diff_cache();
         self.cache_loaded_diff(self.options.clone(), changeset.clone());
-        self.replace_loaded_diff(self.options.clone(), changeset, notice);
+        self.replace_loaded_diff(self.options.clone(), changeset);
     }
 
-    pub(crate) fn replace_path_changeset(
-        &mut self,
-        path: &Path,
-        path_changeset: Changeset,
-        notice: Option<&str>,
-    ) {
+    pub(crate) fn replace_path_changeset(&mut self, path: &Path, path_changeset: Changeset) {
         self.invalidate_diff_cache();
         let selected_path = self
             .changeset
@@ -4626,18 +4557,13 @@ impl DiffApp {
             HunkFocusModelBehavior::Clear,
         );
         self.store_current_diff_cache();
-        if let Some(notice) = notice {
-            self.set_notice(notice);
-        } else {
-            self.dirty = true;
-        }
+        self.dirty = true;
     }
 
     pub(crate) fn replace_cached_diff(
         &mut self,
         options: DiffOptions,
         cached: DiffCacheEntry,
-        notice: Option<&str>,
         refresh_branch_metadata: bool,
     ) {
         let DiffCacheEntry {
@@ -4764,27 +4690,15 @@ impl DiffApp {
             self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
             self.dirty = true;
         }
-
-        if let Some(notice) = notice {
-            self.set_notice(notice);
-        }
     }
 
-    pub(crate) fn replace_loaded_diff(
-        &mut self,
-        options: DiffOptions,
-        changeset: Changeset,
-        notice: Option<&str>,
-    ) {
+    pub(crate) fn replace_loaded_diff(&mut self, options: DiffOptions, changeset: Changeset) {
         let options_changed = self.options != options;
         if !options_changed && self.base_changeset == changeset {
             if self.live_reload_pending {
                 self.live_reload_pending = false;
-                self.dirty = true;
             }
-            if let Some(notice) = notice {
-                self.set_notice(notice);
-            }
+            self.dirty = true;
             return;
         }
 
@@ -4845,9 +4759,7 @@ impl DiffApp {
             false,
             HunkFocusModelBehavior::Clear,
         );
-        if let Some(notice) = notice {
-            self.set_notice(notice);
-        }
+        self.dirty = true;
     }
 }
 

@@ -61,15 +61,6 @@ impl DiffChoice {
             Self::Staged => "Staged",
         }
     }
-
-    pub(crate) fn notice(self) -> &'static str {
-        match self {
-            Self::Branch => "branch diff",
-            Self::All => "all changes",
-            Self::Unstaged => "unstaged changes",
-            Self::Staged => "staged changes",
-        }
-    }
 }
 
 pub(crate) fn default_branch_base(options: &DiffOptions, repo: &Path) -> Option<String> {

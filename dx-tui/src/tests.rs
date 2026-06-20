@@ -28,12 +28,13 @@ use crate::{
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use dx_core::DxError;
 use dx_diff::{
     Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileStatus, PatchSource,
 };
 use dx_syntax::{
     ColorOverrides, DiffContextExpansion, DiffSettings, HighlightedLine, SyntaxClass,
-    SyntaxLanguageSet, SyntaxLimits, SyntaxThemeConfig, SyntaxThemeSource,
+    SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
 };
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
 use std::{
@@ -846,7 +847,6 @@ fn replace_loaded_diff_clears_manual_hunk_focus() {
     app.replace_loaded_diff(
         DiffOptions::default(),
         changeset_with_hunks_at(repo.clone(), &[100, 200, 300]),
-        None,
     );
 
     assert_eq!(app.manual_hunk_focus, None);
@@ -1007,11 +1007,21 @@ fn ctrl_g_without_editor_launch_preserves_queued_events() {
     .expect("Ctrl-G should be handled");
 
     assert!(!should_quit);
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no editable focused hunk")
-    );
     assert_eq!(events.try_read().unwrap(), Some(queued_quit));
+}
+
+#[test]
+fn editable_hunk_without_configured_editor_sets_error_log() {
+    let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(5);
+
+    assert!(!app.prepare_focused_hunk_editor_for_test(None));
+    assert_eq!(
+        app.error_log.as_deref(),
+        Some("editor unavailable: set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk")
+    );
+    assert!(app.dirty);
 }
 
 #[test]
@@ -1098,6 +1108,21 @@ fn editor_reload_behavior_supports_worktree_backed_diffs() {
 }
 
 #[test]
+fn queue_editor_scoped_reload_marks_dirty_for_terminal_repaint() {
+    let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.dirty = false;
+
+    app.queue_editor_scoped_reload(EditorReloadRequest {
+        path: PathBuf::from("src/file.rs"),
+        pathspecs: vec![PathBuf::from("src/file.rs")],
+    });
+
+    assert!(app.dirty);
+    assert!(app.pending_editor_reload.is_some());
+}
+
+#[test]
 fn focused_editor_reload_request_preserves_rename_pair() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].old_path = Some("old.rs".to_owned());
@@ -1112,6 +1137,33 @@ fn focused_editor_reload_request_preserves_rename_pair() {
     assert_eq!(
         request.pathspecs,
         vec![PathBuf::from("old.rs"), PathBuf::from("new.rs")]
+    );
+}
+
+#[test]
+fn syntax_settings_load_error_falls_back_with_visible_diagnostic() {
+    let (settings, error_log) =
+        syntax_settings_for_diff(Err(DxError::Usage("bad syntax config".to_owned())));
+
+    assert_eq!(settings, SyntaxSettings::default());
+    let error_log = error_log.expect("settings error should be visible");
+    assert!(error_log.contains("syntax settings ignored"));
+    assert!(error_log.contains("bad syntax config"));
+}
+
+#[test]
+fn syntax_runtime_start_error_disables_syntax_with_visible_diagnostic() {
+    let mut error_log = Some("syntax settings ignored: bad theme".to_owned());
+
+    let syntax = syntax_runtime_for_diff(
+        Err(DxError::Usage("bad tree-sitter config".to_owned())),
+        &mut error_log,
+    );
+
+    assert!(syntax.is_none());
+    assert_eq!(
+        error_log.as_deref(),
+        Some("syntax settings ignored: bad theme\nsyntax disabled: bad tree-sitter config")
     );
 }
 
@@ -1139,7 +1191,7 @@ fn path_changeset_replaces_only_edited_file() {
     let replacement = changeset_with_files(&["b.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.replace_path_changeset(Path::new("b.rs"), replacement, None);
+    app.replace_path_changeset(Path::new("b.rs"), replacement);
 
     assert_eq!(visible_paths(&app), vec!["a.rs", "b.rs", "c.rs"]);
     assert_eq!(app.changeset.files[0].hunks[0].lines[0].text, "line 0");
@@ -1154,7 +1206,7 @@ fn path_changeset_removes_file_when_diff_disappears() {
     replacement.repo = PathBuf::from("/repo");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.replace_path_changeset(Path::new("b.rs"), replacement, None);
+    app.replace_path_changeset(Path::new("b.rs"), replacement);
 
     assert_eq!(visible_paths(&app), vec!["a.rs", "c.rs"]);
 }
@@ -1693,12 +1745,7 @@ fn explicit_diff_load_returns_before_replacing_changeset() {
         ..DiffOptions::default()
     };
 
-    app.start_diff_load(
-        options,
-        "loading test patch",
-        "test patch",
-        "diff unavailable",
-    );
+    app.start_diff_load(options, "diff unavailable");
 
     assert!(app.pending_diff_load.is_some());
     assert_eq!(app.changeset.files[0].display_path(), "src/lib.rs");
@@ -2324,7 +2371,7 @@ fn leader_e_is_unmapped() {
 
     assert!(!should_quit);
     assert!(!app.leader_pending);
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 }
 
 #[test]
@@ -2385,14 +2432,11 @@ fn edit_hunk_remap_disables_default_ctrl_g() {
     app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
         .expect("unmapped Ctrl-G should be handled");
     assert_eq!(app.scroll, 1);
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 
     app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
         .expect("configured edit key should be handled");
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no editable focused hunk")
-    );
+    assert!(app.error_log.is_none());
 }
 
 #[test]
@@ -2413,7 +2457,7 @@ fn ctrl_c_force_quit_wins_over_configured_edit_hunk_key() {
     );
 
     assert!(should_quit);
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 }
 
 #[test]
@@ -2441,7 +2485,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
 
     assert!(!should_quit);
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Unstaged));
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 
     let mut app = DiffApp::new(
         DiffOptions::default(),
@@ -2462,7 +2506,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
 
     assert!(!should_quit);
     assert!(!app.options_menu_open);
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.keymap = Keymap::parse(
@@ -2482,7 +2526,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
     assert!(!should_quit);
     assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
     assert_eq!(app.branch_menu_input, "j");
-    assert!(app.notice.is_none());
+    assert!(app.error_log.is_none());
 }
 
 #[test]
@@ -2838,10 +2882,13 @@ fn replace_changeset_keeps_remapped_file_sidebar_selection_visible() {
 
     assert_eq!(app.file_sidebar_scroll, 3);
 
-    app.replace_changeset(
-        changeset_with_files(&["new.rs", "other.rs", "third.rs", "fourth.rs", "fifth.rs"]),
-        None,
-    );
+    app.replace_changeset(changeset_with_files(&[
+        "new.rs",
+        "other.rs",
+        "third.rs",
+        "fourth.rs",
+        "fifth.rs",
+    ]));
 
     assert_eq!(app.selected_file, 0);
     assert_eq!(app.file_sidebar_scroll, 0);
@@ -3001,35 +3048,6 @@ fn file_sidebar_separator_drag_resizes_sidebar() {
 }
 
 #[test]
-fn notices_expire_after_ttl() {
-    let changeset = changeset_with_context_lines(1);
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-
-    app.set_notice("reloaded");
-    let expires_at = app.notice.as_ref().unwrap().expires_at;
-    assert_eq!(app.notice.as_ref().unwrap().text, "reloaded");
-    app.dirty = false;
-
-    app.expire_notice(expires_at - Duration::from_millis(1));
-    assert!(app.notice.is_some());
-    assert!(!app.dirty);
-
-    app.expire_notice(expires_at);
-    assert!(app.notice.is_none());
-    assert!(app.dirty);
-}
-
-#[test]
-fn statusline_renders_notice_text() {
-    let changeset = changeset_with_context_lines(1);
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-
-    app.set_notice("editor closed; reloading");
-
-    assert!(line_text(&statusline_header_line(&app, 120)).contains("editor closed; reloading"));
-}
-
-#[test]
 fn progress_label_is_bounded() {
     assert_eq!(progress_label(0, 0), "100%");
     assert_eq!(progress_label(0, 20), "0%");
@@ -3087,6 +3105,23 @@ fn statusline_header_right_aligns_current_file() {
     assert_eq!(file.style.fg, Some(STATUSLINE_INFO_FG));
     assert_eq!(file.style.bg, Some(STATUSLINE_INFO_BG));
     assert!(file.style.add_modifier.contains(Modifier::BOLD));
+}
+
+#[test]
+fn statusline_header_shows_pending_diff_load() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let options = DiffOptions {
+        scope: DiffScope::Staged,
+        ..DiffOptions::default()
+    };
+    app.pending_diff_load = Some(pending_diff_load(options));
+
+    let line = statusline_header_line(&app, 80);
+    let text = line_text(&line);
+
+    assert_eq!(text.width(), 80);
+    assert!(text.contains("loading diff"));
 }
 
 #[test]
@@ -3515,7 +3550,7 @@ fn options_menu_does_not_enable_live_reload_when_watch_is_disabled() {
 
     assert!(!app.options_menu_draft.live_updates_enabled);
     assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        app.error_log.as_deref(),
         Some("live reload disabled by --no-watch")
     );
 }
@@ -3982,11 +4017,7 @@ fn branch_choice_survives_switching_to_worktree_scope() {
     app.branch_base = Some("origin/main".to_owned());
     app.branch_head = Some("feature/header".to_owned());
 
-    app.replace_loaded_diff(
-        DiffOptions::default(),
-        changeset_with_context_lines(1),
-        None,
-    );
+    app.replace_loaded_diff(DiffOptions::default(), changeset_with_context_lines(1));
 
     assert_eq!(app.branch_base.as_deref(), Some("origin/main"));
     assert_eq!(app.branch_head.as_deref(), Some("feature/header"));
@@ -5770,7 +5801,6 @@ fn pending_diff_load(options: DiffOptions) -> PendingDiffLoad {
     let (_tx, rx) = oneshot::channel();
     PendingDiffLoad {
         options,
-        success_notice: "loaded".to_owned(),
         error_prefix: "load failed".to_owned(),
         refresh_branch_metadata: false,
         rx,

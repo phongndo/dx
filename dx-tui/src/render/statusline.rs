@@ -395,6 +395,23 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.theme)),
         remaining,
     );
+    if app.pending_diff_load.is_some() {
+        push_fitted_statusline_span(
+            spans,
+            "loading diff",
+            Style::default()
+                .fg(app.theme.notice)
+                .bg(statusline_bg(app.theme))
+                .add_modifier(Modifier::BOLD),
+            remaining,
+        );
+        push_fitted_statusline_span(
+            spans,
+            "  ",
+            Style::default().bg(statusline_bg(app.theme)),
+            remaining,
+        );
+    }
     push_fitted_statusline_span(
         spans,
         statusline_file_count_label(app),
@@ -433,35 +450,6 @@ pub(crate) fn push_statusline_left_spans(
             .add_modifier(Modifier::BOLD),
         remaining,
     );
-    let notice = app
-        .notice
-        .as_ref()
-        .map(|notice| notice.text.as_str())
-        .unwrap_or_else(|| {
-            if app.pending_diff_load.is_some() {
-                "loading diff"
-            } else if app.live_reload_pending {
-                "refreshing diff"
-            } else {
-                ""
-            }
-        });
-    if !notice.is_empty() {
-        push_fitted_statusline_span(
-            spans,
-            "  ",
-            Style::default().bg(statusline_bg(app.theme)),
-            remaining,
-        );
-        push_fitted_statusline_span(
-            spans,
-            notice,
-            Style::default()
-                .fg(app.theme.notice)
-                .bg(statusline_bg(app.theme)),
-            remaining,
-        );
-    }
 }
 
 pub(crate) fn statusline_file_count_label(app: &DiffApp) -> String {
