@@ -739,6 +739,7 @@ pub(crate) fn diff_type_label(options: &DiffOptions) -> &'static str {
     match &options.source {
         DiffSource::Show(_) => "Show",
         DiffSource::Range { .. } => "Range",
+        DiffSource::Difftool { .. } => "Difftool",
         DiffSource::Patch(_) => "Patch",
         DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
     }
@@ -767,6 +768,14 @@ pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
         DiffSource::Base(base) => format!("HEAD → {base}"),
         DiffSource::Branch { base, head } => format!("{head} → {base}"),
         DiffSource::Range { left, right } => format!("{left} → {right}"),
+        DiffSource::Difftool { right, path, .. } => {
+            format!(
+                "git difftool {}",
+                path.as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| right.display().to_string())
+            )
+        }
         DiffSource::Patch(dx_diff::PatchSource::File(path)) => format!("patch {}", path.display()),
         DiffSource::Patch(dx_diff::PatchSource::Stdin(_)) => "patch stdin".to_owned(),
         DiffSource::Patch(dx_diff::PatchSource::Text { label, .. }) => label.clone(),

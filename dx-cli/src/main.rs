@@ -18,7 +18,7 @@ use dx_core::{DxError, DxResult};
 use crate::{
     args::{Cli, Command},
     pager::pager,
-    syntax::{diff_options, patch_options, show_options, syntax},
+    syntax::{diff_options, difftool_options, patch_options, show_options, syntax},
     update::update,
 };
 
@@ -138,6 +138,7 @@ fn run_cli(cli: Cli) -> CliResult<()> {
         }
         Some(Command::Config) => config::config(),
         Some(Command::Diff(args)) => run_diff(args),
+        Some(Command::Difftool(args)) => run_difftool(args),
         Some(Command::Pager(args)) => pager(args),
         Some(Command::Show(args)) => run_show(args),
         Some(Command::Patch(args)) => run_patch(args),
@@ -346,6 +347,14 @@ fn run_show(args: args::ShowArgs) -> CliResult<()> {
     let syntax_enabled = !args.no_syntax;
     let options = show_options(args)?;
     run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_difftool(args: args::DifftoolArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let live_updates = args.watch;
+    let syntax_enabled = !args.no_syntax;
+    let options = difftool_options(args)?;
+    run_review(options, live_updates, syntax_enabled, stat)
 }
 
 fn run_patch(args: args::PatchArgs) -> CliResult<()> {

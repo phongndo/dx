@@ -374,7 +374,11 @@ pub(crate) fn diff_choice_for_options(options: &DiffOptions) -> Option<DiffChoic
 }
 
 pub(crate) fn cacheable_diff_options(options: &DiffOptions) -> bool {
-    !options.stat && !matches!(options.source, DiffSource::Patch(_))
+    !options.stat
+        && !matches!(
+            options.source,
+            DiffSource::Patch(_) | DiffSource::Difftool { .. }
+        )
 }
 
 pub(crate) fn next_context_expansion(expansion: DiffContextExpansion) -> DiffContextExpansion {
@@ -2933,7 +2937,7 @@ impl DiffApp {
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
         if matches!(
             &self.options.source,
-            DiffSource::Patch(_) | DiffSource::Show(_)
+            DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }
         ) {
             return Vec::new();
         }
@@ -3302,7 +3306,7 @@ impl DiffApp {
     pub(crate) fn focused_hunk_editor_target(&self) -> Option<EditorTarget> {
         if matches!(
             self.options.source,
-            DiffSource::Patch(_) | DiffSource::Show(_)
+            DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }
         ) {
             return None;
         }
@@ -3324,7 +3328,7 @@ impl DiffApp {
     pub(crate) fn focused_hunk_editor_reload_request(&self) -> Option<EditorReloadRequest> {
         if matches!(
             self.options.source,
-            DiffSource::Patch(_) | DiffSource::Show(_)
+            DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }
         ) {
             return None;
         }

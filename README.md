@@ -51,6 +51,7 @@ dx diff --unstaged
 dx diff --no-untracked
 dx diff --base main
 dx diff main feature
+dx difftool -- "$LOCAL" "$REMOTE" "$MERGED"
 dx show
 dx show HEAD~1
 dx show review 123
@@ -66,7 +67,8 @@ dx config
 
 Plain `dx` is a shortcut for `dx diff`. Use top-level commands to select the
 diff source: `dx diff` for local comparisons, `dx show` for revisions and
-hosted reviews, and `dx patch` for existing unified diffs.
+hosted reviews, `dx patch` for existing unified diffs, and `dx difftool` for
+Git-provided file pairs.
 
 Use `dx pager` as a Git pager for `git diff`/`git show` output:
 
@@ -80,6 +82,18 @@ captured pager hosts such as lazygit. Non-diff input is passed through the
 user's text pager. Static output reuses dx's diff renderer, colorscheme, syntax
 highlighting, and layout; use `dx pager --layout split` or
 `dx pager --layout unified` to override auto layout for static hosts.
+
+Use `dx difftool` as a Git difftool for Git-provided file pairs:
+
+```sh
+git config --global diff.tool dx
+git config --global difftool.dx.cmd 'dx difftool -- "$LOCAL" "$REMOTE" "$MERGED"'
+```
+
+`git difftool` sets `$LOCAL` to the pre-image, `$REMOTE` to the post-image,
+and `$MERGED` to the display path. `dx difftool` turns that pair into a normal
+review in the interactive UI. Add `--watch` to auto-reload when either input
+file changes, for example `dx difftool --watch -- "$LOCAL" "$REMOTE" "$MERGED"`.
 
 ## Pi extension
 

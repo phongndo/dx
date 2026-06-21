@@ -4246,6 +4246,7 @@ fn live_diff_filter_ignores_non_state_git_paths() {
             repo.join(".git/index.lock"),
             repo.join(".git/refs"),
         ],
+        exact_paths: Vec::new(),
     };
 
     assert!(filter.is_relevant_path(Path::new("src/lib.rs")));

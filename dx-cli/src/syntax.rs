@@ -11,7 +11,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     CliResult,
-    args::{DiffArgs, PatchArgs, ShowArgs, SyntaxAvailableArgs, SyntaxCommand},
+    args::{DiffArgs, DifftoolArgs, PatchArgs, ShowArgs, SyntaxAvailableArgs, SyntaxCommand},
     write_stdout,
 };
 
@@ -201,6 +201,20 @@ pub(crate) fn show_options(args: ShowArgs) -> DxResult<dx_command::DiffOptions> 
     Ok(dx_command::DiffOptions {
         repo: args.repo,
         source,
+        scope: dx_command::DiffScope::All,
+        include_untracked: false,
+        stat: args.stat,
+    })
+}
+
+pub(crate) fn difftool_options(args: DifftoolArgs) -> DxResult<dx_command::DiffOptions> {
+    Ok(dx_command::DiffOptions {
+        repo: args.repo,
+        source: dx_command::DiffSource::Difftool {
+            left: args.left,
+            right: args.right,
+            path: args.path,
+        },
         scope: dx_command::DiffScope::All,
         include_untracked: false,
         stat: args.stat,

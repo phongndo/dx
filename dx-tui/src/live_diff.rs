@@ -31,7 +31,7 @@ pub(crate) struct LiveDiff {
 
 impl LiveDiff {
     pub(crate) fn start(options: DiffOptions, repo: &Path) -> DxResult<Self> {
-        let watch_spec = live_diff_watch_spec(repo)?;
+        let watch_spec = live_diff_watch_spec_for_options(repo, &options)?;
         let filter = watch_spec.filter.clone();
         let (control_tx, control_rx) = mpsc::channel(LIVE_DIFF_CONTROL_CHANNEL_CAPACITY);
         let (reload_tx, reload_rx) = mpsc::channel(LIVE_DIFF_RELOAD_CHANNEL_CAPACITY);
@@ -153,10 +153,22 @@ impl LiveDiffWatchSpec {
             filter: LiveDiffFilter {
                 repo: repo.to_path_buf(),
                 git_state_paths: Vec::new(),
+                exact_paths: Vec::new(),
             },
         };
         spec.add_watch_path(repo.to_path_buf(), true);
         spec
+    }
+
+    pub(crate) fn exact_paths(repo: &Path) -> Self {
+        Self {
+            watch_paths: Vec::new(),
+            filter: LiveDiffFilter {
+                repo: repo.to_path_buf(),
+                git_state_paths: Vec::new(),
+                exact_paths: Vec::new(),
+            },
+        }
     }
 
     pub(crate) fn add_git_state_path(&mut self, path: PathBuf) {
@@ -167,6 +179,12 @@ impl LiveDiffWatchSpec {
             .any(|known| known == &path)
         {
             self.filter.git_state_paths.push(path);
+        }
+    }
+
+    pub(crate) fn add_exact_path(&mut self, path: PathBuf) {
+        if !self.filter.exact_paths.iter().any(|known| known == &path) {
+            self.filter.exact_paths.push(path);
         }
     }
 
@@ -197,6 +215,7 @@ impl LiveDiffWatchSpec {
 pub(crate) struct LiveDiffFilter {
     pub(crate) repo: PathBuf,
     pub(crate) git_state_paths: Vec<PathBuf>,
+    pub(crate) exact_paths: Vec<PathBuf>,
 }
 
 impl LiveDiffFilter {
@@ -225,7 +244,15 @@ impl LiveDiffFilter {
             return true;
         }
 
+        if self.is_exact_path(path) {
+            return true;
+        }
+
         if self.is_inside_repo_dot_git(path) {
+            return false;
+        }
+
+        if !self.exact_paths.is_empty() {
             return false;
         }
 
@@ -237,6 +264,12 @@ impl LiveDiffFilter {
             path == state_path
                 || path.starts_with(state_path)
                 || state_path.parent().is_some_and(|parent| path == parent)
+        })
+    }
+
+    pub(crate) fn is_exact_path(&self, path: &Path) -> bool {
+        self.exact_paths.iter().any(|exact_path| {
+            path == exact_path || exact_path.parent().is_some_and(|parent| path == parent)
         })
     }
 
@@ -253,7 +286,22 @@ impl LiveDiffFilter {
 }
 
 pub(crate) fn live_diff_supported(options: &DiffOptions) -> bool {
-    matches!(options.source, DiffSource::Worktree | DiffSource::Base(_))
+    matches!(
+        options.source,
+        DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Difftool { .. }
+    )
+}
+
+pub(crate) fn live_diff_watch_spec_for_options(
+    repo: &Path,
+    options: &DiffOptions,
+) -> DxResult<LiveDiffWatchSpec> {
+    match &options.source {
+        DiffSource::Difftool { left, right, .. } => {
+            Ok(live_diff_difftool_watch_spec(repo, left, right))
+        }
+        _ => live_diff_watch_spec(repo),
+    }
 }
 
 pub(crate) fn live_diff_watch_spec(repo: &Path) -> DxResult<LiveDiffWatchSpec> {
@@ -272,6 +320,43 @@ pub(crate) fn live_diff_watch_spec(repo: &Path) -> DxResult<LiveDiffWatchSpec> {
         spec.add_git_state(dx_git::git_path(repo, git_path)?);
     }
     Ok(spec)
+}
+
+pub(crate) fn live_diff_difftool_watch_spec(
+    repo: &Path,
+    left: &Path,
+    right: &Path,
+) -> LiveDiffWatchSpec {
+    let mut spec = LiveDiffWatchSpec::exact_paths(repo);
+    add_difftool_watch_path(&mut spec, repo, left);
+    add_difftool_watch_path(&mut spec, repo, right);
+    spec
+}
+
+fn add_difftool_watch_path(spec: &mut LiveDiffWatchSpec, repo: &Path, path: &Path) {
+    if is_null_path(path) {
+        return;
+    }
+
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo.join(path)
+    };
+    spec.add_exact_path(path.clone());
+
+    let watch_path = if path.is_dir() {
+        path
+    } else if let Some(parent) = path.parent() {
+        parent.to_path_buf()
+    } else {
+        return;
+    };
+    spec.add_watch_path(watch_path, false);
+}
+
+fn is_null_path(path: &Path) -> bool {
+    path == Path::new("/dev/null") || path == Path::new("NUL")
 }
 
 pub(crate) fn spawn_live_diff_worker(
@@ -418,6 +503,39 @@ mod tests {
         assert!(invalidated.load(Ordering::Acquire));
         assert!(!pending.load(Ordering::Acquire));
         assert!(matches!(rx.try_recv(), Ok(LiveDiffCommand::Changed)));
+    }
+
+    #[test]
+    fn difftool_watch_spec_tracks_only_pair_paths() {
+        let repo = PathBuf::from("/repo");
+        let spec = live_diff_difftool_watch_spec(
+            &repo,
+            Path::new("left.tmp"),
+            Path::new("/tmp/right.tmp"),
+        );
+
+        assert_eq!(
+            spec.filter.exact_paths,
+            vec![
+                PathBuf::from("/repo/left.tmp"),
+                PathBuf::from("/tmp/right.tmp")
+            ]
+        );
+        assert!(spec.filter.is_relevant_path(Path::new("/repo/left.tmp")));
+        assert!(spec.filter.is_relevant_path(Path::new("/tmp/right.tmp")));
+        assert!(!spec.filter.is_relevant_path(Path::new("/repo/other.tmp")));
+    }
+
+    #[test]
+    fn difftool_live_diff_is_supported() {
+        assert!(live_diff_supported(&DiffOptions {
+            source: DiffSource::Difftool {
+                left: PathBuf::from("left.tmp"),
+                right: PathBuf::from("right.tmp"),
+                path: None,
+            },
+            ..DiffOptions::default()
+        }));
     }
 
     #[test]

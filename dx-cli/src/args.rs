@@ -22,6 +22,7 @@ examples:
   dx diff --unstaged
   dx diff --base main
   dx diff main feature
+  dx difftool -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\"
   dx show
   dx show HEAD~1
   dx show review 123
@@ -85,6 +86,16 @@ examples:
   git diff | dx pager"
     )]
     Pager(PagerArgs),
+    #[command(
+        about = "Review Git difftool file pairs",
+        after_help = "\
+examples:
+  git config --global diff.tool dx
+  git config --global difftool.dx.cmd 'dx difftool -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\"'
+  git difftool HEAD -- src/file.rs
+  dx difftool --watch -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\""
+    )]
+    Difftool(DifftoolArgs),
     #[command(
         about = "Review a Git revision or hosted review",
         after_help = "\
@@ -241,6 +252,29 @@ pub(crate) enum PagerLayoutArg {
     Unified,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct DifftoolArgs {
+    /// File containing the pre-image from Git difftool.
+    #[arg(value_name = "LEFT")]
+    pub(crate) left: PathBuf,
+    /// File containing the post-image from Git difftool.
+    #[arg(value_name = "RIGHT")]
+    pub(crate) right: PathBuf,
+    /// Display path for the compared file, usually Git's $MERGED value.
+    #[arg(value_name = "PATH")]
+    pub(crate) path: Option<PathBuf>,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
+    /// Auto-reload when either difftool input file changes.
+    #[arg(long)]
+    pub(crate) watch: bool,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
 #[derive(Debug, Args, Default)]
 pub(crate) struct ShowArgs {
     /// Revision to show, or `review TARGET` for a hosted review.
@@ -284,6 +318,11 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args should parse")
+    }
+
+    #[cfg(unix)]
+    fn parse_os(args: Vec<std::ffi::OsString>) -> Cli {
         Cli::try_parse_from(args).expect("args should parse")
     }
 
@@ -332,6 +371,72 @@ mod tests {
             cli.command,
             Some(Command::Patch(PatchArgs { path, .. }))
                 if path.as_path() == std::path::Path::new("changes.diff")
+        ));
+
+        let cli = parse(&[
+            "dx",
+            "difftool",
+            "left.rs",
+            "right.rs",
+            "src/file.rs",
+            "--watch",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Difftool(DifftoolArgs { left, right, path: Some(path), watch: true, .. }))
+                if left.as_path() == std::path::Path::new("left.rs")
+                    && right.as_path() == std::path::Path::new("right.rs")
+                    && path.as_path() == std::path::Path::new("src/file.rs")
+        ));
+
+        let cli = parse(&["dx", "difftool", "--", "-foo.txt", "--stat"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Difftool(DifftoolArgs { left, right, path: None, stat: false, .. }))
+                if left.as_path() == std::path::Path::new("-foo.txt")
+                    && right.as_path() == std::path::Path::new("--stat")
+        ));
+
+        let cli = parse(&["dx", "difftool", "--", "left.tmp", "right.tmp", "--stat"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Difftool(DifftoolArgs { path: Some(path), stat: false, .. }))
+                if path.as_path() == std::path::Path::new("--stat")
+        ));
+
+        let cli = parse(&[
+            "dx", "difftool", "--watch", "--", "-foo.txt", "--stat", "--merged",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Difftool(DifftoolArgs { left, right, path: Some(path), watch: true, .. }))
+                if left.as_path() == std::path::Path::new("-foo.txt")
+                    && right.as_path() == std::path::Path::new("--stat")
+                    && path.as_path() == std::path::Path::new("--merged")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parses_difftool_non_utf8_display_path() {
+        use std::{
+            ffi::OsString,
+            os::unix::ffi::{OsStrExt, OsStringExt},
+        };
+
+        let cli = parse_os(vec![
+            OsString::from("dx"),
+            OsString::from("difftool"),
+            OsString::from("--"),
+            OsString::from("left.tmp"),
+            OsString::from("right.tmp"),
+            OsString::from_vec(b"name-\xff.txt".to_vec()),
+        ]);
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Difftool(DifftoolArgs { path: Some(path), .. }))
+                if path.as_os_str().as_bytes() == b"name-\xff.txt"
         ));
     }
 }
