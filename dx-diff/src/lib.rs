@@ -1176,10 +1176,12 @@ fn diff_title(options: &DiffOptions) -> String {
         DiffSource::Base(base) => format!("{base}...HEAD"),
         DiffSource::Branch { base, head } => format!("{base}...{head}"),
         DiffSource::Range { left, right } => format!("{left}..{right}"),
-        DiffSource::Difftool { right, path, .. } => {
+        DiffSource::Difftool {
+            left, right, path, ..
+        } => {
             format!(
                 "git difftool: {}",
-                difftool_display_path(right, path.as_deref())
+                difftool_display_path(left, right, path.as_deref())
             )
         }
         DiffSource::Patch(PatchSource::File(path)) => format!("patch {}", path.display()),
@@ -1195,13 +1197,18 @@ fn difftool_workdir(options: &DiffOptions) -> DxResult<PathBuf> {
         .map_or_else(|| env::current_dir().map_err(DxError::Io), Ok)
 }
 
-fn difftool_display_path(right: &Path, path: Option<&Path>) -> String {
+fn difftool_display_path(left: &Path, right: &Path, path: Option<&Path>) -> String {
     path.map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| {
-            right
+            let fallback = if is_null_path(right) && !is_null_path(left) {
+                left
+            } else {
+                right
+            };
+            fallback
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| right.to_string_lossy().into_owned())
+                .unwrap_or_else(|| fallback.to_string_lossy().into_owned())
         })
 }
 
@@ -1235,7 +1242,7 @@ fn difftool_patch_bytes(
         return Err(git_error("git difftool pair diff failed", &output));
     }
 
-    let display_path = difftool_display_path(right, display_path);
+    let display_path = difftool_display_path(left, right, display_path);
     Ok(rewrite_difftool_patch_paths(&output.stdout, &display_path))
 }
 
@@ -1268,66 +1275,99 @@ fn rewrite_difftool_patch_paths(patch: &[u8], display_path: &str) -> Vec<u8> {
     let old_path = git_patch_path("a/", display_path).into_bytes();
     let new_path = git_patch_path("b/", display_path).into_bytes();
     let mut rewritten = Vec::with_capacity(patch.len());
-    let mut in_hunk = false;
+    let mut section: Option<DifftoolPatchSection> = None;
 
     for line in patch.split_inclusive(|byte| *byte == b'\n') {
         let (header_line, line_ending) = patch_line_parts(line);
 
         if header_line.starts_with(b"diff --git ") {
-            in_hunk = false;
-            rewritten.extend_from_slice(b"diff --git ");
-            rewritten.extend_from_slice(&old_path);
-            rewritten.push(b' ');
-            rewritten.extend_from_slice(&new_path);
-            rewritten.extend_from_slice(line_ending);
+            flush_difftool_patch_section(&mut rewritten, &mut section);
+            let mut next = DifftoolPatchSection::default();
+            next.bytes.extend_from_slice(b"diff --git ");
+            next.bytes.extend_from_slice(&old_path);
+            next.bytes.push(b' ');
+            next.bytes.extend_from_slice(&new_path);
+            next.bytes.extend_from_slice(line_ending);
+            section = Some(next);
             continue;
         }
 
-        if !in_hunk {
+        let Some(section) = section.as_mut() else {
+            rewritten.extend_from_slice(line);
+            continue;
+        };
+
+        if !section.in_hunk {
             if is_difftool_temp_mode_line(header_line) {
                 continue;
             }
 
             if let Some(path) = header_line.strip_prefix(b"--- ") {
-                rewritten.extend_from_slice(b"--- ");
+                section.bytes.extend_from_slice(b"--- ");
                 if path == b"/dev/null" {
-                    rewritten.extend_from_slice(b"/dev/null");
+                    section.bytes.extend_from_slice(b"/dev/null");
                 } else {
-                    rewritten.extend_from_slice(&old_path);
+                    section.bytes.extend_from_slice(&old_path);
                 }
-                rewritten.extend_from_slice(line_ending);
+                section.bytes.extend_from_slice(line_ending);
+                section.has_substantive_line = true;
                 continue;
             }
 
             if let Some(path) = header_line.strip_prefix(b"+++ ") {
-                rewritten.extend_from_slice(b"+++ ");
+                section.bytes.extend_from_slice(b"+++ ");
                 if path == b"/dev/null" {
-                    rewritten.extend_from_slice(b"/dev/null");
+                    section.bytes.extend_from_slice(b"/dev/null");
                 } else {
-                    rewritten.extend_from_slice(&new_path);
+                    section.bytes.extend_from_slice(&new_path);
                 }
-                rewritten.extend_from_slice(line_ending);
+                section.bytes.extend_from_slice(line_ending);
+                section.has_substantive_line = true;
                 continue;
             }
 
             if header_line.starts_with(b"Binary files ") && header_line.ends_with(b" differ") {
-                rewritten.extend_from_slice(b"Binary files ");
-                rewritten.extend_from_slice(&old_path);
-                rewritten.extend_from_slice(b" and ");
-                rewritten.extend_from_slice(&new_path);
-                rewritten.extend_from_slice(b" differ");
-                rewritten.extend_from_slice(line_ending);
+                section.bytes.extend_from_slice(b"Binary files ");
+                section.bytes.extend_from_slice(&old_path);
+                section.bytes.extend_from_slice(b" and ");
+                section.bytes.extend_from_slice(&new_path);
+                section.bytes.extend_from_slice(b" differ");
+                section.bytes.extend_from_slice(line_ending);
+                section.has_substantive_line = true;
                 continue;
             }
         }
 
         if header_line.starts_with(b"@@ ") {
-            in_hunk = true;
+            section.in_hunk = true;
         }
-        rewritten.extend_from_slice(line);
+        if is_difftool_substantive_line(header_line) {
+            section.has_substantive_line = true;
+        }
+        section.bytes.extend_from_slice(line);
     }
 
+    flush_difftool_patch_section(&mut rewritten, &mut section);
     rewritten
+}
+
+#[derive(Debug, Default)]
+struct DifftoolPatchSection {
+    bytes: Vec<u8>,
+    in_hunk: bool,
+    has_substantive_line: bool,
+}
+
+fn flush_difftool_patch_section(
+    rewritten: &mut Vec<u8>,
+    section: &mut Option<DifftoolPatchSection>,
+) {
+    let Some(section) = section.take() else {
+        return;
+    };
+    if section.has_substantive_line {
+        rewritten.extend(section.bytes);
+    }
 }
 
 fn patch_line_parts(line: &[u8]) -> (&[u8], &[u8]) {
@@ -1346,6 +1386,10 @@ fn patch_line_parts(line: &[u8]) -> (&[u8], &[u8]) {
 
 fn is_difftool_temp_mode_line(line: &[u8]) -> bool {
     line.starts_with(b"old mode ") || line.starts_with(b"new mode ")
+}
+
+fn is_difftool_substantive_line(line: &[u8]) -> bool {
+    !line.is_empty() && !line.starts_with(b"index ")
 }
 
 fn git_patch_path(prefix: &str, path: &str) -> String {
@@ -3307,6 +3351,57 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn difftool_source_drops_mode_only_temp_file_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let test_dir = temp_test_dir("difftool-mode-only");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        fs::write(test_dir.join("local.tmp"), "same\n").expect("left file should be written");
+        fs::write(test_dir.join("remote.tmp"), "same\n").expect("right file should be written");
+        fs::set_permissions(
+            test_dir.join("local.tmp"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("left file mode should be set");
+        fs::set_permissions(
+            test_dir.join("remote.tmp"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("right file mode should be set");
+
+        let options = DiffOptions {
+            repo: Some(test_dir.clone()),
+            source: DiffSource::Difftool {
+                left: PathBuf::from("local.tmp"),
+                right: PathBuf::from("remote.tmp"),
+                path: Some(PathBuf::from("mode-only.txt")),
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        };
+
+        let patch = render_bytes(options.clone()).expect("patch should render");
+        assert!(patch.is_empty());
+
+        let stat = String::from_utf8(
+            render_bytes(DiffOptions {
+                stat: true,
+                ..options.clone()
+            })
+            .expect("stat should render"),
+        )
+        .expect("stat should be utf-8");
+        assert!(!stat.contains("mode-only.txt"));
+        assert!(stat.contains("0 files changed"));
+
+        let changeset = load_review_ref(&options).expect("difftool changeset should load");
+        assert!(changeset.files.is_empty());
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn difftool_source_suppresses_temp_file_mode_changes() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -3347,6 +3442,46 @@ mod tests {
 
         let changeset = load_review_ref(&options).expect("difftool changeset should load");
         assert_eq!(changeset.files[0].status, FileStatus::Modified);
+
+        fs::remove_dir_all(test_dir).expect("test directory should be removed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn difftool_source_uses_left_display_path_for_deleted_pair() {
+        let test_dir = temp_test_dir("difftool-deleted-pair");
+        fs::create_dir_all(&test_dir).expect("test directory should be created");
+        fs::write(test_dir.join("old-name.txt"), "gone\n").expect("left file should be written");
+
+        let options = DiffOptions {
+            repo: Some(test_dir.clone()),
+            source: DiffSource::Difftool {
+                left: PathBuf::from("old-name.txt"),
+                right: PathBuf::from("/dev/null"),
+                path: None,
+            },
+            include_untracked: false,
+            ..DiffOptions::default()
+        };
+
+        let patch = String::from_utf8(render_bytes(options.clone()).expect("patch should render"))
+            .expect("patch should be utf-8");
+        assert!(patch.contains("diff --git a/old-name.txt b/old-name.txt"));
+        assert!(patch.contains("--- a/old-name.txt"));
+        assert!(patch.contains("+++ /dev/null"));
+        assert!(!patch.contains("a/null b/null"));
+
+        let stat = render(DiffOptions {
+            stat: true,
+            ..options.clone()
+        })
+        .expect("stat should render");
+        assert!(stat.contains("old-name.txt"));
+        assert!(!stat.contains(" null"));
+
+        let changeset = load_review_ref(&options).expect("difftool changeset should load");
+        assert_eq!(changeset.files[0].display_path(), "old-name.txt");
+        assert_eq!(changeset.files[0].status, FileStatus::Deleted);
 
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }
