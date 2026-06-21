@@ -1035,10 +1035,9 @@ fn post_editor_quit_key_guard_ignores_only_transient_quit_keys() {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
         now
     ));
-    assert!(app.ignore_post_editor_quit_key(
-        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
-        now
-    ));
+    assert!(
+        app.ignore_post_editor_quit_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), now)
+    );
     assert!(!app.ignore_post_editor_quit_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), now));
     assert!(!app.ignore_post_editor_quit_key(
         KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
@@ -2741,7 +2740,10 @@ fn help_menu_lines_list_keybindings() {
 
     assert_eq!(lines.len(), help_menu_content_rows(width));
     assert!(text.iter().any(|line| line.contains("?")));
-    assert!(text.iter().any(|line| line.contains("  q") && line.contains("quit")));
+    assert!(
+        text.iter()
+            .any(|line| line.contains("  q") && line.contains("quit"))
+    );
     assert!(text.iter().any(|line| line.contains("Tab/Shift-Tab")));
     assert!(text.iter().any(|line| line.contains("Ctrl-C")));
     assert!(text.iter().any(|line| line.contains("j/k")));
