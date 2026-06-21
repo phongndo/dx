@@ -43,6 +43,7 @@ pub(crate) const RELEASE_REPO: &str = "phongndo/dx";
     name = "dx",
     version,
     about = "Terminal Git diff review tool",
+    override_usage = "dx [OPTIONS] [COMMAND|REV] [REV]",
     help_template = HELP_TEMPLATE,
     next_help_heading = "options",
     subcommand_help_heading = "commands",
