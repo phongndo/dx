@@ -2935,9 +2935,9 @@ impl DiffApp {
     }
 
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
-        if matches!(
+        if !matches!(
             &self.options.source,
-            DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }
+            DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Branch { .. }
         ) {
             return Vec::new();
         }
