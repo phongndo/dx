@@ -16,6 +16,7 @@ pub(crate) enum GlobalAction {
     Quit,
     Layout,
     EditHunk,
+    CopyErrorLog,
     NextDiffType,
     PreviousDiffType,
 }
@@ -42,6 +43,7 @@ pub(crate) struct Keymap {
     quit: Vec<KeySequence>,
     layout: Vec<KeySequence>,
     edit_hunk: Vec<KeySequence>,
+    copy_error_log: Vec<KeySequence>,
     next_diff_type: Vec<KeySequence>,
     previous_diff_type: Vec<KeySequence>,
     menu_up: Vec<KeySequence>,
@@ -66,6 +68,7 @@ impl Default for Keymap {
             quit: key_sequences(&["q"]),
             layout: key_sequences(&["space s"]),
             edit_hunk: key_sequences(&["ctrl-g"]),
+            copy_error_log: key_sequences(&["ctrl-shift-c"]),
             next_diff_type: key_sequences(&["tab"]),
             previous_diff_type: key_sequences(&["shift-tab"]),
             menu_up: key_sequences(&["k", "up", "shift-tab"]),
@@ -117,6 +120,7 @@ impl Keymap {
         set_sequences(&mut keymap.quit, stored.global.quit)?;
         set_sequences(&mut keymap.layout, stored.global.layout)?;
         set_sequences(&mut keymap.edit_hunk, stored.global.edit_hunk)?;
+        set_sequences(&mut keymap.copy_error_log, stored.global.copy_error_log)?;
         set_sequences(&mut keymap.next_diff_type, stored.global.next_diff_type)?;
         set_sequences(
             &mut keymap.previous_diff_type,
@@ -145,6 +149,7 @@ impl Keymap {
             ("quit", &self.quit),
             ("layout", &self.layout),
             ("edit_hunk", &self.edit_hunk),
+            ("copy_error_log", &self.copy_error_log),
             ("next_diff_type", &self.next_diff_type),
             ("previous_diff_type", &self.previous_diff_type),
         ] {
@@ -202,6 +207,7 @@ impl Keymap {
             ("quit", &self.quit),
             ("layout", &self.layout),
             ("edit_hunk", &self.edit_hunk),
+            ("copy_error_log", &self.copy_error_log),
             ("next_diff_type", &self.next_diff_type),
             ("previous_diff_type", &self.previous_diff_type),
         ];
@@ -232,6 +238,7 @@ impl Keymap {
             &mut self.quit,
             &mut self.layout,
             &mut self.edit_hunk,
+            &mut self.copy_error_log,
             &mut self.next_diff_type,
             &mut self.previous_diff_type,
         ] {
@@ -301,6 +308,7 @@ impl Keymap {
             GlobalAction::Quit => &self.quit,
             GlobalAction::Layout => &self.layout,
             GlobalAction::EditHunk => &self.edit_hunk,
+            GlobalAction::CopyErrorLog => &self.copy_error_log,
             GlobalAction::NextDiffType => &self.next_diff_type,
             GlobalAction::PreviousDiffType => &self.previous_diff_type,
         }
@@ -324,7 +332,13 @@ pub(crate) struct KeyPress {
 }
 
 impl KeyPress {
-    fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+    fn new(mut code: KeyCode, modifiers: KeyModifiers) -> Self {
+        if modifiers.contains(KeyModifiers::SHIFT)
+            && let KeyCode::Char(character) = code
+            && character.is_ascii_alphabetic()
+        {
+            code = KeyCode::Char(character.to_ascii_uppercase());
+        }
         Self {
             code,
             modifiers: normalize_modifiers(code, modifiers),
@@ -368,6 +382,7 @@ struct StoredGlobalKeymap {
     quit: Option<KeySpec>,
     layout: Option<KeySpec>,
     edit_hunk: Option<KeySpec>,
+    copy_error_log: Option<KeySpec>,
     next_diff_type: Option<KeySpec>,
     #[serde(alias = "prev_diff_type")]
     previous_diff_type: Option<KeySpec>,
@@ -470,7 +485,14 @@ fn key_display_label(key: &KeyPress) -> String {
     if key.modifiers.contains(KeyModifiers::ALT) {
         parts.push("Alt".to_owned());
     }
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
+    let shifted_modified_char = matches!(
+        key.code,
+        KeyCode::Char(character)
+            if character.is_ascii_uppercase()
+                && (key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT))
+    );
+    if key.modifiers.contains(KeyModifiers::SHIFT) || shifted_modified_char {
         parts.push("Shift".to_owned());
     }
     let has_modifier = !parts.is_empty();
@@ -507,11 +529,21 @@ fn key_label(key: &KeyPress) -> String {
     if key.modifiers.contains(KeyModifiers::ALT) {
         parts.push("alt".to_owned());
     }
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
+    let shifted_modified_char = matches!(
+        key.code,
+        KeyCode::Char(character)
+            if character.is_ascii_uppercase()
+                && (key.modifiers.contains(KeyModifiers::CONTROL)
+                    || key.modifiers.contains(KeyModifiers::ALT))
+    );
+    if key.modifiers.contains(KeyModifiers::SHIFT) || shifted_modified_char {
         parts.push("shift".to_owned());
     }
     parts.push(match key.code {
         KeyCode::Char(' ') => "space".to_owned(),
+        KeyCode::Char(character) if shifted_modified_char => {
+            character.to_ascii_lowercase().to_string()
+        }
         KeyCode::Char(character) => character.to_string(),
         KeyCode::Enter => "enter".to_owned(),
         KeyCode::Esc => "esc".to_owned(),
@@ -552,15 +584,27 @@ fn parse_key_press(input: &str) -> Result<KeyPress, String> {
     let mut modifiers = KeyModifiers::NONE;
     let mut key = normalized.as_str();
     loop {
-        if let Some(rest) = key.strip_prefix("ctrl-").or_else(|| key.strip_prefix("c-")) {
+        if let Some(rest) = key
+            .strip_prefix("ctrl-")
+            .or_else(|| key.strip_prefix("ctrl+"))
+            .or_else(|| key.strip_prefix("c-"))
+            .or_else(|| key.strip_prefix("c+"))
+        {
             modifiers.insert(KeyModifiers::CONTROL);
             key = rest;
-        } else if let Some(rest) = key.strip_prefix("alt-").or_else(|| key.strip_prefix("a-")) {
+        } else if let Some(rest) = key
+            .strip_prefix("alt-")
+            .or_else(|| key.strip_prefix("alt+"))
+            .or_else(|| key.strip_prefix("a-"))
+            .or_else(|| key.strip_prefix("a+"))
+        {
             modifiers.insert(KeyModifiers::ALT);
             key = rest;
         } else if let Some(rest) = key
             .strip_prefix("shift-")
+            .or_else(|| key.strip_prefix("shift+"))
             .or_else(|| key.strip_prefix("s-"))
+            .or_else(|| key.strip_prefix("s+"))
         {
             modifiers.insert(KeyModifiers::SHIFT);
             key = rest;
@@ -630,6 +674,7 @@ mod tests {
             diff_menu = ", d"
             quit = ", x"
             file_filter = "ctrl-f"
+            copy_error_log = "ctrl+shift+c"
             prev_diff_type = "shift-left"
 
             [keymap.menu]
@@ -647,6 +692,17 @@ mod tests {
             GlobalAction::FileFilter,
             KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)
         ));
+        assert!(keymap.matches_single(
+            GlobalAction::CopyErrorLog,
+            KeyEvent::new(
+                KeyCode::Char('C'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )
+        ));
+        assert_eq!(
+            keymap.global_action_label(GlobalAction::CopyErrorLog),
+            "Ctrl-Shift-C"
+        );
         assert!(keymap.matches_menu(
             MenuAction::Down,
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE)
@@ -675,6 +731,34 @@ mod tests {
             GlobalAction::Quit,
             KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)
         ));
+    }
+
+    #[test]
+    fn default_copy_error_log_matches_hunk_diff_binding() {
+        let keymap = Keymap::default();
+
+        assert!(keymap.matches_single(
+            GlobalAction::CopyErrorLog,
+            KeyEvent::new(
+                KeyCode::Char('C'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::CopyErrorLog,
+            KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )
+        ));
+        assert!(!keymap.matches_single(
+            GlobalAction::CopyErrorLog,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(
+            keymap.global_action_label(GlobalAction::CopyErrorLog),
+            "Ctrl-Shift-C"
+        );
     }
 
     #[test]

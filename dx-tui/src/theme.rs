@@ -17,6 +17,7 @@ use ratatui::prelude::Color;
 use crate::keymap::GlobalAction;
 
 pub(crate) const EVENT_POLL: Duration = Duration::from_millis(120);
+pub(crate) const NOTICE_TTL: Duration = Duration::from_millis(1_500);
 pub(crate) const LIVE_RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(crate) const MAX_READY_EVENTS_PER_FRAME: usize = 64;
 pub(crate) const MOUSE_SCROLL_HISTORY_SIZE: usize = 3;
@@ -104,6 +105,10 @@ pub(crate) const HELP_MENU_RIGHT_ROWS: &[HelpMenuRow] = &[
     ),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Grep), "grep diff"),
     HelpMenuRow::Binding(HelpMenuKey::Static("n/p"), "next / previous grep match"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::CopyErrorLog),
+        "copy error log",
+    ),
     HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::FileBrowser),
         "toggle file sidebar",

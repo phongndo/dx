@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
+    io::{self, Write},
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -57,8 +58,9 @@ use crate::{
         MAX_BRANCH_MENU_ROWS, MAX_INLINE_DIFF_CACHE_ENTRIES, MAX_READY_EVENTS_PER_FRAME,
         MAX_SYNTAX_RESULTS_PER_FRAME, MOUSE_SCROLL_ACCEL_A, MOUSE_SCROLL_ACCEL_TAU,
         MOUSE_SCROLL_HISTORY_SIZE, MOUSE_SCROLL_MAX_MULTIPLIER, MOUSE_SCROLL_MIN_TICK_INTERVAL,
-        MOUSE_SCROLL_REFERENCE_INTERVAL_MS, MOUSE_SCROLL_STREAK_TIMEOUT, STATUSLINE_SELECTOR_GAP,
-        SyntaxBenchmarkReport, UNIFIED_GUTTER_WIDTH, diff_theme_from_config,
+        MOUSE_SCROLL_REFERENCE_INTERVAL_MS, MOUSE_SCROLL_STREAK_TIMEOUT, NOTICE_TTL,
+        STATUSLINE_SELECTOR_GAP, SyntaxBenchmarkReport, UNIFIED_GUTTER_WIDTH,
+        diff_theme_from_config,
     },
 };
 
@@ -72,7 +74,7 @@ const MAX_DIFF_CACHE_ENTRIES: usize = 4;
 const MAX_COLOR_SCHEME_MENU_ROWS: usize = 9;
 pub(crate) const ERROR_LOG_DEFAULT_HEIGHT: u16 = 6;
 pub(crate) const ERROR_LOG_MIN_HEIGHT: u16 = 3;
-pub(crate) const ERROR_LOG_MAX_HEIGHT: u16 = 14;
+pub(crate) const ERROR_LOG_MAX_HEIGHT: u16 = 40;
 const POST_EDITOR_QUIT_KEY_IGNORE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +144,46 @@ impl std::fmt::Debug for FilterWorker {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct Notice {
+    pub(crate) text: String,
+    pub(crate) expires_at: Instant,
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn osc52_clipboard_sequence(text: &str) -> String {
+    format!("\x1b]52;c;{}\x07", base64_encode(text.as_bytes()))
+}
+
+pub(crate) fn write_osc52_clipboard<W: Write>(writer: &mut W, text: &str) -> io::Result<()> {
+    writer.write_all(osc52_clipboard_sequence(text).as_bytes())?;
+    writer.flush()
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0];
+        let second = chunk.get(1).copied().unwrap_or(0);
+        let third = chunk.get(2).copied().unwrap_or(0);
+
+        encoded.push(BASE64[(first >> 2) as usize] as char);
+        encoded.push(BASE64[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(BASE64[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(BASE64[(third & 0b0011_1111) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+    encoded
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EditorReloadRequest {
     pub(crate) path: PathBuf,
@@ -186,6 +228,7 @@ pub(crate) async fn run_loop(
     let mut events = TerminalEventReader::start("dx-diff-events")?;
 
     loop {
+        app.expire_notice(Instant::now());
         drain_live_diff_invalidation(app, live_diff.as_ref());
         sync_live_diff(live_diff, app, live_updates);
         drain_live_reloads(
@@ -352,7 +395,9 @@ pub(crate) fn handle_event(
 }
 
 pub(crate) fn is_quit_key(key: KeyEvent) -> bool {
-    key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::SHIFT)
+        && key.code == KeyCode::Char('c')
 }
 
 pub(crate) fn is_plain_char_key(key: KeyEvent, character: char) -> bool {
@@ -751,6 +796,7 @@ pub(crate) struct DiffApp {
     pub(crate) error_log_height: u16,
     pub(crate) error_log_resizing: bool,
     pub(crate) rendered_error_log_separator_row: Option<u16>,
+    pub(crate) notice: Option<Notice>,
     pub(crate) mouse_scroll: MouseScroll,
     pub(crate) keymap: Keymap,
     pub(crate) theme: DiffTheme,
@@ -979,6 +1025,7 @@ impl DiffApp {
             error_log_height: ERROR_LOG_DEFAULT_HEIGHT,
             error_log_resizing: false,
             rendered_error_log_separator_row: None,
+            notice: None,
             mouse_scroll: MouseScroll::default(),
             keymap,
             theme,
@@ -1002,6 +1049,11 @@ impl DiffApp {
         }
 
         self.mouse_scroll.reset();
+
+        if self.keymap.matches_single(GlobalAction::CopyErrorLog, key) {
+            self.copy_error_log_to_terminal_clipboard();
+            return Ok(false);
+        }
 
         if self.filter_input.is_some() && self.handle_filter_input_key(key) {
             return Ok(false);
@@ -1256,6 +1308,10 @@ impl DiffApp {
             self.toggle_file_sidebar();
             return Ok(false);
         }
+        if self.keymap.matches_leader(GlobalAction::CopyErrorLog, key) {
+            self.copy_error_log_to_terminal_clipboard();
+            return Ok(false);
+        }
         if self.keymap.matches_leader(GlobalAction::NextDiffType, key) {
             self.cycle_diff_choice(1);
             return Ok(false);
@@ -1412,6 +1468,25 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn set_notice(&mut self, text: impl Into<String>) {
+        self.notice = Some(Notice {
+            text: text.into(),
+            expires_at: Instant::now() + NOTICE_TTL,
+        });
+        self.dirty = true;
+    }
+
+    pub(crate) fn expire_notice(&mut self, now: Instant) {
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|notice| now >= notice.expires_at);
+        if expired {
+            self.notice = None;
+            self.dirty = true;
+        }
+    }
+
     pub(crate) fn mark_live_reload_pending(&mut self) {
         self.invalidate_diff_cache();
         self.live_reload_pending = true;
@@ -1433,6 +1508,23 @@ impl DiffApp {
             true
         } else {
             false
+        }
+    }
+
+    pub(crate) fn copy_error_log_to_terminal_clipboard(&mut self) {
+        let mut stdout = io::stdout().lock();
+        self.copy_error_log_to_writer(&mut stdout);
+    }
+
+    pub(crate) fn copy_error_log_to_writer<W: Write>(&mut self, writer: &mut W) {
+        let Some(error_log) = self.error_log.clone() else {
+            self.set_notice("no error log to copy");
+            return;
+        };
+
+        match write_osc52_clipboard(writer, &error_log) {
+            Ok(()) => self.set_notice("error log copied"),
+            Err(error) => self.set_error_log(format!("error log copy failed: {error}")),
         }
     }
 
@@ -2053,6 +2145,7 @@ impl DiffApp {
         };
 
         let Some((side, source_lines)) = self.ensure_context_lines(file) else {
+            self.set_notice("context unavailable for this diff");
             return true;
         };
 
@@ -2065,6 +2158,7 @@ impl DiffApp {
         let current = expanded.min(available);
         let remaining = available.saturating_sub(current);
         if remaining == 0 {
+            self.set_notice("no more context");
             return true;
         }
 
@@ -2820,6 +2914,7 @@ impl DiffApp {
             .get(self.branch_menu_selected)
             .map(|branch| (*branch).to_owned())
         else {
+            self.set_notice("no matching branch");
             return;
         };
         self.close_branch_menu();
@@ -3402,11 +3497,12 @@ impl DiffApp {
         &mut self,
         configured_editor: Option<String>,
     ) -> Option<FocusedEditorLaunch> {
-        let target = self.focused_hunk_editor_target()?;
+        let Some(target) = self.focused_hunk_editor_target() else {
+            self.set_notice("no editable focused hunk");
+            return None;
+        };
         let Some(editor) = configured_editor else {
-            self.set_error_log(
-                "editor unavailable: set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk",
-            );
+            self.set_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk");
             return None;
         };
         Some(FocusedEditorLaunch { target, editor })
@@ -3461,20 +3557,22 @@ impl DiffApp {
                     changed,
                     scoped_reload.as_ref().map(|request| request.path.as_path()),
                 ) {
-                    EditorReloadBehavior::None => self.dirty = true,
+                    EditorReloadBehavior::None => self.set_notice("editor closed"),
                     EditorReloadBehavior::ScopedAsync => {
                         let request = scoped_reload.expect("scoped reload requires a request");
                         self.queue_editor_scoped_reload(request);
+                        self.set_notice("editor closed; refreshing edited file");
                     }
-                    EditorReloadBehavior::Sync => {
-                        if let Err(error) = self.reload() {
-                            self.set_error_log(format!("editor closed; reload failed: {error}"));
+                    EditorReloadBehavior::Sync => match self.reload() {
+                        Ok(()) => self.set_notice("editor closed; reloading"),
+                        Err(error) => {
+                            self.set_error_log(format!("editor closed; reload failed: {error}"))
                         }
-                    }
+                    },
                 }
             }
             Ok(status) => {
-                self.set_error_log(format!("editor exited with {status}"));
+                self.set_notice(format!("editor exited with {status}"));
             }
             Err(error) => self.set_error_log(format!("editor failed: {error}")),
         }
@@ -3543,6 +3641,7 @@ impl DiffApp {
                 match reload.changeset {
                     Ok(changeset) => {
                         self.replace_path_changeset(&reload.path, changeset);
+                        self.set_notice("edited file reloaded");
                     }
                     Err(error) => self.set_error_log(format!("edited file reload failed: {error}")),
                 }
@@ -4188,6 +4287,7 @@ impl DiffApp {
 
         if self.grep_matches.is_empty() {
             self.selected_grep_match = None;
+            self.set_notice("no grep matches");
             return;
         }
 

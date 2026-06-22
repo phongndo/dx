@@ -9,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     app::DiffApp,
     controls::{BranchMenu, DiffFilterKind, INPUT_CURSOR},
+    keymap::GlobalAction,
     render::{
         menus::{diff_comparison_label, diff_selector_text},
         style::{base_bg, statusline_bg},
@@ -45,16 +46,9 @@ pub(crate) fn draw_error_log(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
     }
 
     let bg = base_bg(app.theme);
-    let separator = error_log_separator(area.width as usize);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            separator,
-            Style::default()
-                .fg(app.theme.deletion_fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        )))
-        .style(Style::default().bg(bg)),
+        Paragraph::new(error_log_header_line(app, area.width as usize))
+            .style(Style::default().bg(bg)),
         Rect {
             x: area.x,
             y: area.y,
@@ -79,6 +73,51 @@ pub(crate) fn draw_error_log(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
             .wrap(Wrap { trim: false }),
         body_area,
     );
+}
+
+pub(crate) fn error_log_header_line(app: &DiffApp, width: usize) -> Line<'static> {
+    if width == 0 {
+        return Line::default();
+    }
+
+    let bg = base_bg(app.theme);
+    let title = "error ";
+    let title_width = title.width();
+    let rule_style = Style::default()
+        .fg(app.theme.deletion_fg)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
+    if width <= title_width {
+        return Line::from(Span::styled(fit(title, width), rule_style));
+    }
+
+    let copy_label = error_log_copy_label(app);
+    let copy_width = copy_label.width();
+    if copy_width == 0 || title_width.saturating_add(copy_width) >= width {
+        return Line::from(Span::styled(error_log_separator(width), rule_style));
+    }
+
+    let rule_width = width.saturating_sub(title_width).saturating_sub(copy_width);
+    Line::from(vec![
+        Span::styled(title.to_owned(), rule_style),
+        Span::styled("─".repeat(rule_width), rule_style),
+        Span::styled(
+            copy_label,
+            Style::default()
+                .fg(app.theme.deletion_fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+fn error_log_copy_label(app: &DiffApp) -> String {
+    let key = app.keymap.global_action_label(GlobalAction::CopyErrorLog);
+    if key == "unbound" {
+        String::new()
+    } else {
+        format!(" [Copy All ({key})]")
+    }
 }
 
 pub(crate) fn error_log_separator(width: usize) -> String {
@@ -395,14 +434,20 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.theme)),
         remaining,
     );
-    let diff_load_status = if app.pending_diff_load.is_some() {
-        Some("loading diff")
-    } else if app.live_reload_pending {
-        Some("refreshing diff")
-    } else {
-        None
-    };
-    if let Some(label) = diff_load_status {
+    let status_notice = app
+        .notice
+        .as_ref()
+        .map(|notice| notice.text.as_str())
+        .or_else(|| {
+            if app.pending_diff_load.is_some() {
+                Some("loading diff")
+            } else if app.live_reload_pending {
+                Some("refreshing diff")
+            } else {
+                None
+            }
+        });
+    if let Some(label) = status_notice {
         push_fitted_statusline_span(
             spans,
             label,

@@ -16,6 +16,16 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+config_home="$tmp_dir/config"
+mkdir -p "$config_home/dx"
+cat > "$config_home/dx/config.toml" <<'TOML'
+# Intentionally invalid values for the interactive error-pane smoke test.
+addition_fg = "octarine"
+
+[keymap.global]
+edit_hunk = "ctrl-nope"
+TOML
+
 fixture_repo="$tmp_dir/repo"
 mkdir -p "$fixture_repo/src"
 git -C "$fixture_repo" init -q
@@ -42,11 +52,18 @@ RS
 
 cat <<EOF
 
-Launching dx against a temporary repo.
+Launching dx against a temporary repo with an intentionally invalid isolated config.
+
+Example error-log cases:
+  On launch              invalid color/keymap config should open the error pane
+  Ctrl-Shift-C           copy the full error pane text to the terminal clipboard
+  Esc                    close the error pane; Esc should NOT quit dx
+  Ctrl-G                 open editor for focused hunk; EDITOR is intentionally invalid, so an error pane should open
+  Space o, j j j, Space  toggle disabled Live reload; --no-watch should open an error pane
+  rm -rf "$fixture_repo/.git", then press r
+                         reload failure should open an error pane
 
 Try this in the TUI:
-  Ctrl-G   open editor for focused hunk; EDITOR is intentionally invalid, so an error pane should open
-  Esc      close the error pane; Esc should NOT quit dx
   + / -    resize the error pane; you can also drag the red separator line
   f        file filter; bottom bar should show @query
   /        grep; bottom bar should show /query and right-aligned match count
@@ -54,9 +71,11 @@ Try this in the TUI:
   q        quit
 
 Temporary repo: $fixture_repo
+Temporary config: $config_home/dx/config.toml
 
 EOF
 
+XDG_CONFIG_HOME="$config_home" \
 VISUAL="$tmp_dir/definitely-missing-editor" \
 GIT_EDITOR="$tmp_dir/definitely-missing-editor" \
 EDITOR="$tmp_dir/definitely-missing-editor" \

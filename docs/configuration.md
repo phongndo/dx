@@ -54,6 +54,7 @@ file_browser = "space b"
 quit = "q"
 layout = "space s"
 edit_hunk = "ctrl-g"
+copy_error_log = "ctrl-shift-c"
 next_diff_type = "tab"
 previous_diff_type = "shift-tab"
 

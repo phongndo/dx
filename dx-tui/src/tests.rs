@@ -13,8 +13,8 @@ use crate::render::{
     },
     sidebar::file_sidebar_lines,
     statusline::{
-        error_log_height, error_log_separator, filter_bar_line, filter_bar_visible,
-        statusline_file_count_label, statusline_header_line,
+        error_log_header_line, error_log_height, error_log_separator, filter_bar_line,
+        filter_bar_visible, statusline_file_count_label, statusline_header_line,
     },
     style::base_bg,
     text::{
@@ -985,6 +985,10 @@ fn ctrl_g_without_editable_target_does_not_scroll_to_top() {
 
     assert!(!should_quit);
     assert_eq!(app.scroll, 1);
+    assert_eq!(
+        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        Some("no editable focused hunk")
+    );
 }
 
 #[test]
@@ -1011,16 +1015,17 @@ fn ctrl_g_without_editor_launch_preserves_queued_events() {
 }
 
 #[test]
-fn editable_hunk_without_configured_editor_sets_error_log() {
+fn editable_hunk_without_configured_editor_sets_notice() {
     let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
 
     assert!(!app.prepare_focused_hunk_editor_for_test(None));
     assert_eq!(
-        app.error_log.as_deref(),
-        Some("editor unavailable: set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk")
+        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        Some("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk")
     );
+    assert!(app.error_log.is_none());
     assert!(app.dirty);
 }
 
@@ -2458,6 +2463,18 @@ fn ctrl_c_force_quit_wins_over_configured_edit_hunk_key() {
 }
 
 #[test]
+fn ctrl_shift_c_does_not_force_quit() {
+    assert!(!is_quit_key(KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT
+    )));
+    assert!(!is_quit_key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT
+    )));
+}
+
+#[test]
 fn configured_edit_hunk_key_does_not_bypass_open_menus() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].new_path = None;
@@ -2650,11 +2667,11 @@ fn error_log_can_be_resized_with_bounds() {
     }
     assert_eq!(error_log_height(&app, 20), ERROR_LOG_MIN_HEIGHT);
 
-    for _ in 0..32 {
+    for _ in 0..64 {
         app.handle_key(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE))
             .expect("plus should resize error log");
     }
-    assert_eq!(error_log_height(&app, 20), ERROR_LOG_MAX_HEIGHT);
+    assert_eq!(error_log_height(&app, 80), ERROR_LOG_MAX_HEIGHT);
     assert_eq!(error_log_height(&app, 4), 4);
 }
 
@@ -2727,6 +2744,103 @@ fn error_log_separator_fills_width() {
 }
 
 #[test]
+fn error_log_header_shows_copy_command_on_right() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_error_log("reload failed");
+
+    let line = error_log_header_line(&app, 40);
+    let text = line_text(&line);
+
+    assert_eq!(text.width(), 40);
+    assert!(text.starts_with("error "));
+    assert!(text.ends_with("[Copy All (Ctrl-Shift-C)]"));
+    assert_eq!(line.spans[2].style.fg, Some(app.theme.deletion_fg));
+}
+
+#[test]
+fn error_log_header_uses_configured_copy_command() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        copy_error_log = "space y"
+        "#,
+    )
+    .expect("keymap should parse");
+    app.set_error_log("reload failed");
+
+    let text = line_text(&error_log_header_line(&app, 32));
+
+    assert_eq!(text.width(), 32);
+    assert!(text.ends_with("[Copy All (Space y)]"));
+}
+
+#[test]
+fn copy_error_log_writes_full_log_to_clipboard_sequence() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_error_log("reload failed:\nfatal: bad revision");
+    let mut output = Vec::new();
+
+    app.copy_error_log_to_writer(&mut output);
+
+    assert_eq!(
+        String::from_utf8(output).expect("OSC 52 sequence should be UTF-8"),
+        osc52_clipboard_sequence("reload failed:\nfatal: bad revision")
+    );
+    assert_eq!(
+        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        Some("error log copied")
+    );
+    assert_eq!(
+        app.error_log.as_deref(),
+        Some("reload failed:\nfatal: bad revision")
+    );
+}
+
+#[test]
+fn copy_error_log_without_log_shows_notice_without_writing() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let mut output = Vec::new();
+
+    app.copy_error_log_to_writer(&mut output);
+
+    assert!(output.is_empty());
+    assert_eq!(
+        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        Some("no error log to copy")
+    );
+}
+
+#[test]
+fn osc52_clipboard_sequence_base64_encodes_text() {
+    assert_eq!(osc52_clipboard_sequence("abc"), "\x1b]52;c;YWJj\x07");
+    assert_eq!(osc52_clipboard_sequence("dx"), "\x1b]52;c;ZHg=\x07");
+}
+
+#[test]
+fn notices_expire_after_ttl() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.set_notice("reloaded");
+    let expires_at = app.notice.as_ref().unwrap().expires_at;
+    assert_eq!(app.notice.as_ref().unwrap().text, "reloaded");
+    app.dirty = false;
+
+    app.expire_notice(expires_at - Duration::from_millis(1));
+    assert!(app.notice.is_some());
+    assert!(!app.dirty);
+
+    app.expire_notice(expires_at);
+    assert!(app.notice.is_none());
+    assert!(app.dirty);
+}
+
+#[test]
 fn help_menu_lines_list_keybindings() {
     let width = 80;
     let keymap = Keymap::default();
@@ -2750,6 +2864,7 @@ fn help_menu_lines_list_keybindings() {
     assert!(text.iter().any(|line| line.contains("n/p")));
     assert!(text.iter().any(|line| line.contains("]/[")));
     assert!(text.iter().any(|line| line.contains("Ctrl-G")));
+    assert!(text.iter().any(|line| line.contains("Ctrl-Shift-C")));
     assert!(text.iter().any(|line| line.contains("Space b")));
     assert!(text.iter().any(|line| line.contains("Space s")));
     assert!(!text.iter().any(|line| line.contains("b, Space b")));
@@ -3122,6 +3237,20 @@ fn statusline_header_shows_pending_diff_load() {
 
     assert_eq!(text.width(), 80);
     assert!(text.contains("loading diff"));
+}
+
+#[test]
+fn statusline_header_shows_notice_text() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.set_notice("editor closed; reloading");
+
+    let line = statusline_header_line(&app, 120);
+    let text = line_text(&line);
+
+    assert_eq!(text.width(), 120);
+    assert!(text.contains("editor closed; reloading"));
 }
 
 #[test]
