@@ -3159,6 +3159,54 @@ fn diff_menu_lists_all_changes_first() {
 }
 
 #[test]
+fn range_diff_has_no_diff_type_choices() {
+    let options = DiffOptions {
+        source: DiffSource::Range {
+            left: "main".to_owned(),
+            right: "feature".to_owned(),
+        },
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("main".to_owned());
+    app.branch_head = Some("feature".to_owned());
+    app.current_head = Some("main".to_owned());
+
+    assert!(app.diff_menu_choices().is_empty());
+}
+
+#[test]
+fn tab_does_not_switch_range_diff_to_branch_or_worktree() {
+    let options = DiffOptions {
+        source: DiffSource::Range {
+            left: "main".to_owned(),
+            right: "feature".to_owned(),
+        },
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("main".to_owned());
+    app.branch_head = Some("feature".to_owned());
+    app.current_head = Some("main".to_owned());
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .expect("tab should be handled");
+
+    assert!(!should_quit);
+    assert!(app.pending_diff_load.is_none());
+    assert_eq!(app.options, options);
+}
+
+#[test]
 fn diff_menu_keyboard_selects_diff_choice() {
     let mut app = DiffApp::new(
         DiffOptions::default(),
