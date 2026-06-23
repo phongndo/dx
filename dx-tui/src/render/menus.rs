@@ -501,12 +501,12 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
 
     let block = branch_menu_block(app.theme, menu);
     let inner = block.inner(menu_area);
-    let matches = app.filtered_branches();
+    let match_count = app.filtered_branches().len();
     let mut lines = vec![selector_input_line(
         &app.branch_menu_input,
         inner.width as usize,
         app.theme,
-        matches.len(),
+        match_count,
         app.selectable_branch_count(menu),
     )];
     lines.push(selector_separator_line(inner.width as usize, app.theme));
@@ -519,6 +519,8 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
         ));
     }
     let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    app.ensure_branch_selection_visible_for_rows(remaining_rows);
+    let matches = app.filtered_branches();
     if matches.is_empty() {
         if remaining_rows > 0 {
             lines.push(selector_empty_line(

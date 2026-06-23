@@ -3853,6 +3853,58 @@ fn options_menu_toggles_syntax_highlighting() {
 }
 
 #[test]
+fn options_menu_clamps_selection_after_toggle_leaves_filter() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new_with_syntax(
+        DiffOptions::default(),
+        changeset,
+        DiffLayoutMode::Unified,
+        SyntaxStartupMode::Disabled,
+    );
+    app.syntax = Some(syntax_runtime_with_queue(SyntaxWorkerQueue::new(
+        1,
+        app.generation,
+    )));
+
+    app.open_options_menu();
+    for character in ['[', 'x', ']'] {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
+            .expect("typing should filter checked settings");
+    }
+    assert_eq!(
+        app.filtered_options_menu_items(),
+        vec![
+            OptionsMenuItem::IncludeUntracked,
+            OptionsMenuItem::LiveReload,
+            OptionsMenuItem::SyntaxHighlighting,
+        ]
+    );
+    app.set_options_menu_selection(2);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::SyntaxHighlighting)
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should toggle syntax highlighting");
+
+    assert!(app.syntax.is_none());
+    assert_eq!(
+        app.filtered_options_menu_items(),
+        vec![
+            OptionsMenuItem::IncludeUntracked,
+            OptionsMenuItem::LiveReload
+        ]
+    );
+    assert_eq!(app.options_menu_selected, 1);
+    assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should activate the rendered highlighted setting");
+    assert!(!app.live_updates_enabled);
+}
+
+#[test]
 fn options_menu_include_untracked_applies_with_single_reload() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -4775,6 +4827,42 @@ fn branch_menu_scrolls_visible_branch_window() {
     app.move_branch_selection(-1);
     assert_eq!(app.branch_menu_selected, 9);
     assert_eq!(app.branch_menu_scroll, 1);
+}
+
+#[test]
+fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
+    let options = DiffOptions {
+        source: DiffSource::Base("branch-00".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("branch-00".to_owned());
+    app.branch_head = Some("branch-01".to_owned());
+    app.current_head = Some("branch-01".to_owned());
+    app.comparison_branches = (0..12).map(|index| format!("branch-{index:02}")).collect();
+    app.toggle_branch_menu(BranchMenu::Base);
+    app.move_branch_selection(5);
+    assert_eq!(app.branch_menu_scroll, 0);
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 8))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("branch menu draw should succeed");
+
+    assert_eq!(app.branch_menu_selected, 5);
+    assert_eq!(app.branch_menu_scroll, 3);
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(rows.iter().any(|row| row.contains("branch-06")));
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("branch-02") && row.contains("│"))
+    );
 }
 
 #[test]

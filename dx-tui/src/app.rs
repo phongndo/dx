@@ -2682,6 +2682,26 @@ impl DiffApp {
         self.options_menu_scroll = self.options_menu_scroll.min(max_scroll);
     }
 
+    fn clamp_options_menu_selection_to_filtered_items(&mut self) {
+        let len = self.filtered_options_menu_items().len();
+        let previous_selected = self.options_menu_selected;
+        let previous_scroll = self.options_menu_scroll;
+
+        if len == 0 {
+            self.options_menu_selected = 0;
+            self.options_menu_scroll = 0;
+        } else {
+            self.options_menu_selected = self.options_menu_selected.min(len.saturating_sub(1));
+            self.options_menu_scroll = self.options_menu_scroll.min(self.options_menu_selected);
+        }
+
+        if self.options_menu_selected != previous_selected
+            || self.options_menu_scroll != previous_scroll
+        {
+            self.dirty = true;
+        }
+    }
+
     pub(crate) fn options_menu_items(&self) -> &'static [OptionsMenuItem] {
         COMMON_OPTIONS_MENU_ITEMS
     }
@@ -3048,6 +3068,7 @@ impl DiffApp {
             self.cancel_stale_include_untracked_load();
             self.dirty = true;
         }
+        self.clamp_options_menu_selection_to_filtered_items();
     }
 
     fn cancel_stale_include_untracked_load(&mut self) {
@@ -3272,16 +3293,24 @@ impl DiffApp {
     }
 
     pub(crate) fn ensure_branch_selection_visible(&mut self) {
-        let max_scroll = self.max_branch_menu_scroll();
+        self.ensure_branch_selection_visible_for_rows(MAX_BRANCH_MENU_ROWS);
+    }
+
+    pub(crate) fn ensure_branch_selection_visible_for_rows(&mut self, visible_rows: usize) {
+        if visible_rows == 0 {
+            self.branch_menu_scroll = 0;
+            return;
+        }
+
+        let max_scroll = self.max_branch_menu_scroll_for_rows(visible_rows);
         if self.branch_menu_selected < self.branch_menu_scroll {
             self.branch_menu_scroll = self.branch_menu_selected;
-        } else if self.branch_menu_selected
-            >= self.branch_menu_scroll.saturating_add(MAX_BRANCH_MENU_ROWS)
+        } else if self.branch_menu_selected >= self.branch_menu_scroll.saturating_add(visible_rows)
         {
             self.branch_menu_scroll = self
                 .branch_menu_selected
                 .saturating_add(1)
-                .saturating_sub(MAX_BRANCH_MENU_ROWS);
+                .saturating_sub(visible_rows);
         }
         self.branch_menu_scroll = self.branch_menu_scroll.min(max_scroll);
     }
@@ -3291,9 +3320,13 @@ impl DiffApp {
     }
 
     pub(crate) fn max_branch_menu_scroll(&self) -> usize {
+        self.max_branch_menu_scroll_for_rows(MAX_BRANCH_MENU_ROWS)
+    }
+
+    pub(crate) fn max_branch_menu_scroll_for_rows(&self, visible_rows: usize) -> usize {
         self.filtered_branches()
             .len()
-            .saturating_sub(MAX_BRANCH_MENU_ROWS)
+            .saturating_sub(visible_rows.max(1))
     }
 
     pub(crate) fn visible_branch_menu_rows(&self) -> usize {
