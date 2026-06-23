@@ -3934,6 +3934,7 @@ fn options_menu_context_persistence_removes_context_aliases() {
         r#"
 [diff]
 line_background = "none"
+context_expansion = 5
 context_lines = 7
 expand_context = 9
 "#,
@@ -3966,6 +3967,7 @@ expand_context = 9
         diff.get("context_expand").and_then(toml::Value::as_str),
         Some("full")
     );
+    assert!(diff.get("context_expansion").is_none());
     assert!(diff.get("context_lines").is_none());
     assert!(diff.get("expand_context").is_none());
 

@@ -815,6 +815,7 @@ pub(crate) fn persist_options_menu_draft_to_path(
                 }
                 None => toml::Table::new(),
             };
+            diff.remove("context_expansion");
             diff.remove("context_lines");
             diff.remove("expand_context");
             diff.insert(
