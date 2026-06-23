@@ -402,99 +402,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mark-bench"
-version = "0.6.0"
-dependencies = [
- "clap",
- "mark-diff",
- "mark-tui",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mark-cli"
-version = "0.6.0"
-dependencies = [
- "clap",
- "crossterm",
- "mark-command",
- "mark-core",
- "mark-diff",
- "mark-tui",
- "rustix 0.38.44",
- "shlex",
- "unicode-width 0.2.0",
-]
-
-[[package]]
-name = "mark-command"
-version = "0.6.0"
-dependencies = [
- "mark-core",
- "mark-diff",
- "mark-git",
- "mark-syntax",
-]
-
-[[package]]
-name = "mark-core"
-version = "0.6.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mark-diff"
-version = "0.6.0"
-dependencies = [
- "mark-core",
- "mark-git",
-]
-
-[[package]]
-name = "mark-git"
-version = "0.6.0"
-dependencies = [
- "mark-core",
-]
-
-[[package]]
-name = "mark-syntax"
-version = "0.6.0"
-dependencies = [
- "mark-core",
- "serde",
- "serde_json",
- "sha2",
- "toml",
- "tree-sitter-highlight",
- "tree-sitter-language-pack",
-]
-
-[[package]]
-name = "mark-tui"
-version = "0.6.0"
-dependencies = [
- "crossterm",
- "mark-core",
- "mark-diff",
- "mark-git",
- "mark-syntax",
- "fff-grep",
- "memchr",
- "notify",
- "ratatui",
- "rustix 0.38.44",
- "serde",
- "shlex",
- "tokio",
- "toml",
- "unicode-width 0.2.0",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -878,6 +785,99 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "mark-bench"
+version = "0.6.0"
+dependencies = [
+ "clap",
+ "mark-diff",
+ "mark-tui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mark-cli"
+version = "0.6.0"
+dependencies = [
+ "clap",
+ "crossterm",
+ "mark-command",
+ "mark-core",
+ "mark-diff",
+ "mark-tui",
+ "rustix 0.38.44",
+ "shlex",
+ "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "mark-command"
+version = "0.6.0"
+dependencies = [
+ "mark-core",
+ "mark-diff",
+ "mark-git",
+ "mark-syntax",
+]
+
+[[package]]
+name = "mark-core"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mark-diff"
+version = "0.6.0"
+dependencies = [
+ "mark-core",
+ "mark-git",
+]
+
+[[package]]
+name = "mark-git"
+version = "0.6.0"
+dependencies = [
+ "mark-core",
+]
+
+[[package]]
+name = "mark-syntax"
+version = "0.6.0"
+dependencies = [
+ "mark-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "tree-sitter-highlight",
+ "tree-sitter-language-pack",
+]
+
+[[package]]
+name = "mark-tui"
+version = "0.6.0"
+dependencies = [
+ "crossterm",
+ "fff-grep",
+ "mark-core",
+ "mark-diff",
+ "mark-git",
+ "mark-syntax",
+ "memchr",
+ "notify",
+ "ratatui",
+ "rustix 0.38.44",
+ "serde",
+ "shlex",
+ "tokio",
+ "toml",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
