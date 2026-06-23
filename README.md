@@ -34,7 +34,7 @@ now. Reinstall with the command above if you used one of those paths before.
 Installer environment variables use the `MARK_` prefix:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_VERSION=0.5.2 sh
+curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_VERSION=0.6.0 sh
 curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_INSTALL_DIR=/usr/local/bin sh
 ```
 
@@ -42,7 +42,7 @@ Update a curl-installed binary in place:
 
 ```sh
 mark update
-mark update --target-version 0.5.2
+mark update --target-version 0.6.0
 ```
 
 ## Quick start
@@ -84,6 +84,17 @@ bundle the CLI.
 ```sh
 pi install npm:pi-mark
 ```
+
+If you previously installed the old `pi-dx` package, migrate with:
+
+```sh
+pi remove npm:pi-dx
+pi install npm:pi-mark
+```
+
+The slash command moved from `/diff`, `/show`, and `/patch` to `/mark` with
+subcommands (`/mark diff`, `/mark show`, `/mark patch`). `PI_DX_BIN` is now
+`PI_MARK_BIN`.
 
 See [`pi-mark/README.md`](pi-mark/README.md) for package usage and development.
 

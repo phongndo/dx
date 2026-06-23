@@ -20,6 +20,26 @@ Then install the Pi package from npm:
 pi install npm:pi-mark
 ```
 
+## Migrating from pi-dx
+
+`pi-dx` was the old package name for the `dx` binary. Remove it and install
+`pi-mark`:
+
+```sh
+pi remove npm:pi-dx
+pi install npm:pi-mark
+```
+
+If `pi-dx` is listed in project settings, replace `npm:pi-dx` with
+`npm:pi-mark` in `.pi/settings.json` and run `pi update --extensions`.
+
+Command and environment changes:
+
+- `/diff` -> `/mark` or `/mark diff`
+- `/show` -> `/mark show`
+- `/patch` -> `/mark patch`
+- `PI_DX_BIN` -> `PI_MARK_BIN`
+
 Use a non-`PATH` binary with:
 
 ```sh

@@ -1,6 +1,6 @@
 {
   "name": "pi-mark",
-  "version": "0.2.0",
+  "version": "0.6.0",
   "description": "Pi extension that opens the mark diff reviewer from /mark.",
   "keywords": [
     "diff",
