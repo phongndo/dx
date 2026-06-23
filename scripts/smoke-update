@@ -11,10 +11,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$repo_dir"
-cargo build -p dx-cli --locked
+cargo build -p mark-cli --locked
 
-install -m 755 "$repo_dir/target/debug/dx" "$install_dir/dx"
+install -m 755 "$repo_dir/target/debug/mark" "$install_dir/mark"
 
-"$install_dir/dx" update --target-version "$version" --install-dir "$install_dir"
-test -x "$install_dir/dx"
-"$install_dir/dx" --version
+"$install_dir/mark" update --target-version "$version" --install-dir "$install_dir"
+test -x "$install_dir/mark"
+"$install_dir/mark" --version

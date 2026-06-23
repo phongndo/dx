@@ -1,6 +1,6 @@
 setup:
     cargo fetch --locked
-    cargo build -p dx-cli --locked
+    cargo build -p mark-cli --locked
 
 check:
     rust-analyzer diagnostics .
@@ -14,13 +14,13 @@ test:
     cargo test --workspace --all-targets --all-features --locked
 
 build:
-    cargo build -p dx-cli --locked
+    cargo build -p mark-cli --locked
 
 hooks:
     git config core.hooksPath .githooks
 
 pi-check:
-    cd pi-dx && pnpm run check
+    cd pi-mark && pnpm run check
 
 pi-dev:
-    pi -e ./pi-dx/extensions/pi-dx.ts
+    pi -e ./pi-mark/extensions/pi-mark.ts

@@ -49,7 +49,7 @@ jobs:
         run: |
           version="$(
             cargo metadata --locked --format-version 1 --no-deps \
-              | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "dx-cli"))'
+              | python3 -c 'import json, sys; print(next(package["version"] for package in json.load(sys.stdin)["packages"] if package["name"] == "mark-cli"))'
           )"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -59,7 +59,7 @@ jobs:
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
           if [ "$tag_version" != "${{ steps.package.outputs.version }}" ]; then
-            echo "tag version $tag_version does not match dx-cli version ${{ steps.package.outputs.version }}" >&2
+            echo "tag version $tag_version does not match mark-cli version ${{ steps.package.outputs.version }}" >&2
             exit 1
           fi
 
@@ -67,19 +67,19 @@ jobs:
         run: cargo test --workspace --all-targets --all-features --locked --target ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release -p dx-cli --locked --target ${{ matrix.target }}
+        run: cargo build --release -p mark-cli --locked --target ${{ matrix.target }}
 
       - name: Package release asset
         shell: bash
         run: |
           version="${{ steps.package.outputs.version }}"
-          package="dx-v${version}-${{ matrix.target }}"
-          binary="target/${{ matrix.target }}/release/dx"
+          package="mark-v${version}-${{ matrix.target }}"
+          binary="target/${{ matrix.target }}/release/mark"
           asset="dist/${package}.tar.gz"
 
           test -x "$binary"
           mkdir -p "dist/$package"
-          install -m 755 "$binary" "dist/$package/dx"
+          install -m 755 "$binary" "dist/$package/mark"
           cp README.md LICENSE "dist/$package/"
           tar -czf "$asset" -C dist "$package"
 
@@ -92,7 +92,7 @@ jobs:
       - name: Upload release asset
         uses: actions/upload-artifact@v7
         with:
-          name: dx-${{ matrix.target }}
+          name: mark-${{ matrix.target }}
           if-no-files-found: error
           path: |
             dist/*.tar.gz
@@ -142,7 +142,7 @@ jobs:
 
           tag_version="${release_tag#v}"
           if [ "$tag_version" != "$version" ]; then
-            echo "release tag $release_tag does not match dx-cli version $version" >&2
+            echo "release tag $release_tag does not match mark-cli version $version" >&2
             exit 1
           fi
 
@@ -152,7 +152,7 @@ jobs:
           Install with curl:
 
           \`\`\`sh
-          curl -fsSL https://raw.githubusercontent.com/phongndo/dx/main/scripts/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | sh
           \`\`\`
           EOF
 
@@ -168,6 +168,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               "${create_tag_args[@]}" \
               --latest \
-              --title "dx $version" \
+              --title "mark $version" \
               --notes-file release-notes.md
           fi

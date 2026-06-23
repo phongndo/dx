@@ -2,7 +2,7 @@
 set -eu
 
 version="${1:-latest}"
-repo="local/dx"
+repo="local/mark"
 repo_dir="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 tmp_dir="$(mktemp -d)"
 
@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$repo_dir"
-package_version="$(cargo pkgid -p dx-cli --locked | sed 's/.*#//')"
+package_version="$(cargo pkgid -p mark-cli --locked | sed 's/.*#//')"
 
 case "$version" in
   latest)
@@ -52,15 +52,15 @@ case "$(uname -m)" in
     ;;
 esac
 
-cargo build -p dx-cli --locked
+cargo build -p mark-cli --locked
 
 target="$arch-$platform"
-package="dx-$tag-$target"
+package="mark-$tag-$target"
 asset="$package.tar.gz"
 release_dir="$tmp_dir/release"
 
 mkdir -p "$release_dir/$package" "$tmp_dir/bin"
-install -m 755 "$repo_dir/target/debug/dx" "$release_dir/$package/dx"
+install -m 755 "$repo_dir/target/debug/mark" "$release_dir/$package/mark"
 tar -czf "$release_dir/$asset" -C "$release_dir" "$package"
 
 if command -v shasum >/dev/null 2>&1; then
@@ -136,28 +136,28 @@ http_not_found() {
   exit 22
 }
 
-api_url="https://api.github.com/repos/$DX_SMOKE_REPO/releases/latest"
-releases_url="https://api.github.com/repos/$DX_SMOKE_REPO/releases?per_page=100"
-installer_url="https://raw.githubusercontent.com/$DX_SMOKE_REPO/main/scripts/install.sh"
-download_prefix="https://github.com/$DX_SMOKE_REPO/releases/download/$DX_SMOKE_TAG/"
+api_url="https://api.github.com/repos/$MARK_SMOKE_REPO/releases/latest"
+releases_url="https://api.github.com/repos/$MARK_SMOKE_REPO/releases?per_page=100"
+installer_url="https://raw.githubusercontent.com/$MARK_SMOKE_REPO/main/scripts/install.sh"
+download_prefix="https://github.com/$MARK_SMOKE_REPO/releases/download/$MARK_SMOKE_TAG/"
 
 if [ "$url" = "$api_url" ]; then
-  printf '{"tag_name":"%s"}\n' "${DX_SMOKE_LATEST_TAG:-$DX_SMOKE_TAG}" | write_stdout_or_file
+  printf '{"tag_name":"%s"}\n' "${MARK_SMOKE_LATEST_TAG:-$MARK_SMOKE_TAG}" | write_stdout_or_file
   http_ok
   exit 0
 fi
 
 if [ "$url" = "$releases_url" ]; then
-  printf '[\n{"tag_name":"%s"},\n{"tag_name":"%s"}\n]\n' "${DX_SMOKE_LATEST_TAG:-$DX_SMOKE_TAG}" "$DX_SMOKE_TAG" | write_stdout_or_file
+  printf '[\n{"tag_name":"%s"},\n{"tag_name":"%s"}\n]\n' "${MARK_SMOKE_LATEST_TAG:-$MARK_SMOKE_TAG}" "$MARK_SMOKE_TAG" | write_stdout_or_file
   http_ok
   exit 0
 fi
 
 if [ "$url" = "$installer_url" ]; then
   if [ -n "$out" ]; then
-    cp "$DX_SMOKE_INSTALLER" "$out"
+    cp "$MARK_SMOKE_INSTALLER" "$out"
   else
-    cat "$DX_SMOKE_INSTALLER"
+    cat "$MARK_SMOKE_INSTALLER"
   fi
   http_ok
   exit 0
@@ -166,7 +166,7 @@ fi
 case "$url" in
   "$download_prefix"*)
     file="${url#"$download_prefix"}"
-    source="$DX_SMOKE_RELEASE_DIR/$file"
+    source="$MARK_SMOKE_RELEASE_DIR/$file"
     if [ ! -f "$source" ]; then
       echo "fake curl: missing release asset: $file" >&2
       http_not_found
@@ -186,21 +186,21 @@ esac
 SH
 chmod +x "$tmp_dir/bin/curl"
 
-DX_INSTALLER= \
-DX_INSTALLER_URL="https://raw.githubusercontent.com/$repo/main/scripts/install.sh" \
-DX_REPO="$repo" \
-DX_SMOKE_LATEST_TAG="pi-dx-v0.1.1" \
-DX_SMOKE_INSTALLER="$repo_dir/scripts/install.sh" \
-DX_SMOKE_RELEASE_DIR="$release_dir" \
-DX_SMOKE_REPO="$repo" \
-DX_SMOKE_TAG="$tag" \
+MARK_INSTALLER= \
+MARK_INSTALLER_URL="https://raw.githubusercontent.com/$repo/main/scripts/install.sh" \
+MARK_REPO="$repo" \
+MARK_SMOKE_LATEST_TAG="pi-mark-v0.1.1" \
+MARK_SMOKE_INSTALLER="$repo_dir/scripts/install.sh" \
+MARK_SMOKE_RELEASE_DIR="$release_dir" \
+MARK_SMOKE_REPO="$repo" \
+MARK_SMOKE_TAG="$tag" \
 PATH="$tmp_dir/bin:$PATH" \
   "$repo_dir/scripts/smoke-curl-install" "$version"
 
-DX_REPO="$repo" \
-DX_SMOKE_LATEST_TAG="pi-dx-v0.1.1" \
-DX_SMOKE_RELEASE_DIR="$release_dir" \
-DX_SMOKE_REPO="$repo" \
-DX_SMOKE_TAG="$tag" \
+MARK_REPO="$repo" \
+MARK_SMOKE_LATEST_TAG="pi-mark-v0.1.1" \
+MARK_SMOKE_RELEASE_DIR="$release_dir" \
+MARK_SMOKE_REPO="$repo" \
+MARK_SMOKE_TAG="$tag" \
 PATH="$tmp_dir/bin:$PATH" \
   "$repo_dir/scripts/smoke-update" "$version"

@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-repo="${DX_REPO:-phongndo/dx}"
-version="${DX_VERSION:-latest}"
-install_dir="${DX_INSTALL_DIR:-$HOME/.local/bin}"
-binary="${DX_BINARY:-dx}"
-action="${DX_INSTALL_ACTION:-install}"
+repo="${MARK_REPO:-phongndo/mark}"
+version="${MARK_VERSION:-latest}"
+install_dir="${MARK_INSTALL_DIR:-$HOME/.local/bin}"
+binary="${MARK_BINARY:-mark}"
+action="${MARK_INSTALL_ACTION:-install}"
 case "$action" in
   install | update)
     ;;
@@ -17,8 +17,8 @@ esac
 print_plan() {
   if [ "$action" = "update" ]; then
     printf 'Updating %s\n' "$binary"
-    if [ -n "${DX_CURRENT_VERSION:-}" ]; then
-      printf '  from: v%s\n' "${DX_CURRENT_VERSION#v}"
+    if [ -n "${MARK_CURRENT_VERSION:-}" ]; then
+      printf '  from: v%s\n' "${MARK_CURRENT_VERSION#v}"
     fi
     printf '  to:   %s\n' "$tag"
     printf '  path: %s\n' "$install_dir/$binary"
@@ -81,8 +81,8 @@ refuse_managed_path() {
     return 0
   fi
 
-  echo "dx $action: refusing to write to $manager-managed $label: $path" >&2
-  echo "dx $action: choose an unmanaged directory, for example: $HOME/.local/bin" >&2
+  echo "mark $action: refusing to write to $manager-managed $label: $path" >&2
+  echo "mark $action: choose an unmanaged directory, for example: $HOME/.local/bin" >&2
   exit 1
 }
 
@@ -141,27 +141,27 @@ print_download_error() {
   url="$2"
 
   if [ "$download_status" = "000" ]; then
-    echo "dx $action: $context: request failed: $url" >&2
+    echo "mark $action: $context: request failed: $url" >&2
   else
-    echo "dx $action: $context: HTTP $download_status: $url" >&2
+    echo "mark $action: $context: HTTP $download_status: $url" >&2
   fi
 
   if [ -s "$download_error" ]; then
     while IFS= read -r line; do
-      echo "dx $action: curl: $line" >&2
+      echo "mark $action: curl: $line" >&2
     done <"$download_error"
   fi
 }
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
-    echo "dx $action: missing required command: $1" >&2
+    echo "mark $action: missing required command: $1" >&2
     exit 1
   fi
 }
 
 allow_unverified() {
-  case "${DX_ALLOW_UNVERIFIED:-}" in
+  case "${MARK_ALLOW_UNVERIFIED:-}" in
     1 | [Tt][Rr][Uu][Ee] | [Yy][Ee][Ss])
       return 0
       ;;
@@ -171,7 +171,7 @@ allow_unverified() {
   esac
 }
 
-is_dx_release_tag() {
+is_mark_release_tag() {
   case "$1" in
     v[0-9]*.[0-9]*.[0-9]*)
       case "${1#v}" in
@@ -193,9 +193,9 @@ release_tags_from_json() {
   sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1"
 }
 
-latest_dx_release_tag_from_json() {
+latest_mark_release_tag_from_json() {
   for candidate in $(release_tags_from_json "$1"); do
-    if is_dx_release_tag "$candidate"; then
+    if is_mark_release_tag "$candidate"; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -216,7 +216,7 @@ case "$(uname -s)" in
     platform="unknown-linux-gnu"
     ;;
   *)
-    echo "dx $action: unsupported OS: $(uname -s)" >&2
+    echo "mark $action: unsupported OS: $(uname -s)" >&2
     exit 1
     ;;
 esac
@@ -229,7 +229,7 @@ case "$(uname -m)" in
     arch="x86_64"
     ;;
   *)
-    echo "dx $action: unsupported architecture: $(uname -m)" >&2
+    echo "mark $action: unsupported architecture: $(uname -m)" >&2
     exit 1
     ;;
 esac
@@ -251,13 +251,13 @@ if [ "$version" = "latest" ]; then
   if ! curl_download "$latest_url" "$latest_json"; then
     print_download_error "could not resolve latest release for $repo" "$latest_url"
     if [ "$download_status" = "404" ]; then
-      echo "dx $action: no latest GitHub release exists for $repo" >&2
-      echo "dx $action: create a GitHub release with dx-$target assets, or set DX_VERSION to an existing release" >&2
+      echo "mark $action: no latest GitHub release exists for $repo" >&2
+      echo "mark $action: create a GitHub release with mark-$target assets, or set MARK_VERSION to an existing release" >&2
     fi
     exit 1
   fi
 
-  tag="$(latest_dx_release_tag_from_json "$latest_json" || true)"
+  tag="$(latest_mark_release_tag_from_json "$latest_json" || true)"
   if [ -z "$tag" ]; then
     releases_json="$tmp_dir/releases.json"
     releases_url="https://api.github.com/repos/$repo/releases?per_page=100"
@@ -266,17 +266,17 @@ if [ "$version" = "latest" ]; then
       exit 1
     fi
 
-    tag="$(latest_dx_release_tag_from_json "$releases_json" || true)"
+    tag="$(latest_mark_release_tag_from_json "$releases_json" || true)"
   fi
 
   if [ -z "$tag" ]; then
     latest_tag="$(release_tags_from_json "$latest_json" | head -n 1)"
     if [ -n "$latest_tag" ]; then
-      echo "dx $action: latest GitHub release for $repo is $latest_tag, which is not a dx binary release" >&2
+      echo "mark $action: latest GitHub release for $repo is $latest_tag, which is not a mark binary release" >&2
     else
-      echo "dx $action: could not resolve latest release for $repo: response did not contain tag_name" >&2
+      echo "mark $action: could not resolve latest release for $repo: response did not contain tag_name" >&2
     fi
-    echo "dx $action: expected a release tagged like v0.2.0 with dx-$target assets" >&2
+    echo "mark $action: expected a release tagged like v0.2.0 with mark-$target assets" >&2
     exit 1
   fi
 else
@@ -286,7 +286,7 @@ else
   esac
 fi
 
-package="dx-$tag-$target"
+package="mark-$tag-$target"
 asset="$package.tar.gz"
 base_url="https://github.com/$repo/releases/download/$tag"
 
@@ -295,7 +295,7 @@ print_plan
 cd "$tmp_dir"
 if ! curl_download "$base_url/$asset" "$asset"; then
   print_download_error "could not download release asset $asset" "$base_url/$asset"
-  echo "dx $action: release $tag for $repo must include $asset" >&2
+  echo "mark $action: release $tag for $repo must include $asset" >&2
   exit 1
 fi
 checksum="$asset.sha256"
@@ -313,23 +313,23 @@ if curl_download "$base_url/$checksum" "$checksum"; then
       sha256sum -c "$checksum"
     fi
   elif allow_unverified; then
-    echo "dx $action: warning: shasum or sha256sum not found; skipping checksum verification" >&2
+    echo "mark $action: warning: shasum or sha256sum not found; skipping checksum verification" >&2
   else
-    echo "dx $action: shasum or sha256sum not found; set DX_ALLOW_UNVERIFIED=1 to skip checksum verification" >&2
+    echo "mark $action: shasum or sha256sum not found; set MARK_ALLOW_UNVERIFIED=1 to skip checksum verification" >&2
     exit 1
   fi
 elif allow_unverified; then
-  echo "dx $action: warning: checksum file not available; skipping checksum verification" >&2
+  echo "mark $action: warning: checksum file not available; skipping checksum verification" >&2
 else
   print_download_error "could not download checksum $checksum" "$base_url/$checksum"
-  echo "dx $action: checksum file not available; set DX_ALLOW_UNVERIFIED=1 to skip checksum verification" >&2
+  echo "mark $action: checksum file not available; set MARK_ALLOW_UNVERIFIED=1 to skip checksum verification" >&2
   exit 1
 fi
 
 tar -xzf "$asset"
-install_source="$package/dx"
+install_source="$package/mark"
 if [ ! -d "$package" ] || [ ! -x "$install_source" ]; then
-  echo "dx $action: extracted archive does not contain executable $install_source" >&2
+  echo "mark $action: extracted archive does not contain executable $install_source" >&2
   exit 1
 fi
 

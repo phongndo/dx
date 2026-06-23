@@ -18,7 +18,7 @@
 - [ ] `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 - [ ] `cargo test --workspace --all-targets --all-features --locked`
 - [ ] `cargo build --workspace --all-targets --all-features --locked`
-- [ ] `cd pi-dx && pnpm run check`
+- [ ] `cd pi-mark && pnpm run check`
 - Not run:
 
 ## Risk

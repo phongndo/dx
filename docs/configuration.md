@@ -1,24 +1,24 @@
 # Configuration
 
-`dx` works without a config file. Create one only when you want to override
+`mark` works without a config file. Create one only when you want to override
 syntax behavior, colors, diff rendering, highlight performance limits, or
 keybindings.
 
 Print the exact config path for the current machine:
 
 ```sh
-dx config
+mark config
 ```
 
-On XDG systems this is usually `~/.config/dx/config.toml`. `XDG_CONFIG_HOME` is
+On XDG systems this is usually `~/.config/mark/config.toml`. `XDG_CONFIG_HOME` is
 honored. Windows uses `APPDATA` when `XDG_CONFIG_HOME` is unset.
 
 Parser registry state is stored separately as `tree-sitter.json` under the same
-`dx` config directory. Parser cache files live under the user cache directory.
+`mark` config directory. Parser cache files live under the user cache directory.
 Inspect all syntax paths with:
 
 ```sh
-dx syntax path
+mark syntax path
 ```
 
 ## Example
@@ -76,12 +76,12 @@ mode = "enabled"
 
 Supported values:
 
-- `enabled` - core languages plus languages enabled with `dx syntax add`.
+- `enabled` - core languages plus languages enabled with `mark syntax add`.
 - `builtin` - all bundled languages with parser and highlight support.
 - `all` - bundled languages plus trusted installed parser caches.
 
-Use `dx --no-syntax`, `dx diff --no-syntax`, `dx show --no-syntax`, or
-`dx patch --no-syntax changes.diff` to disable syntax highlighting for one run.
+Use `mark --no-syntax`, `mark diff --no-syntax`, `mark show --no-syntax`, or
+`mark patch --no-syntax changes.diff` to disable syntax highlighting for one run.
 
 ## Colorschemes and colors
 
@@ -185,5 +185,5 @@ Key names include printable characters plus names such as `space`, `enter`,
 `esc`, `tab`, `shift-tab`, `up`, `down`, `left`, `right`, and modified keys such
 as `ctrl-g`.
 
-If the keymap cannot be parsed, `dx` ignores it for that run and shows a notice
+If the keymap cannot be parsed, `mark` ignores it for that run and shows a notice
 inside the TUI instead of failing the diff review.

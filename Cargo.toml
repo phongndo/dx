@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "dx-cli",
-    "dx-command",
-    "dx-core",
-    "dx-diff",
-    "dx-bench",
-    "dx-git",
-    "dx-syntax",
-    "dx-tui",
+    "mark-cli",
+    "mark-command",
+    "mark-core",
+    "mark-diff",
+    "mark-bench",
+    "mark-git",
+    "mark-syntax",
+    "mark-tui",
 ]
 resolver = "3"
 
@@ -17,7 +17,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 description = "Fast terminal Git diff review tool."
-repository = "https://github.com/phongndo/dx"
+repository = "https://github.com/phongndo/mark"
 keywords = ["diff", "git", "review", "cli", "terminal"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -41,9 +41,9 @@ tree-sitter-language-pack = "1.9.0-rc.18"
 time = { version = "=0.3.45", default-features = false, features = ["local-offset", "std"] }
 unicode-width = "0.2"
 
-dx-core = { path = "dx-core" }
-dx-command = { path = "dx-command" }
-dx-diff = { path = "dx-diff" }
-dx-git = { path = "dx-git" }
-dx-syntax = { path = "dx-syntax" }
-dx-tui = { path = "dx-tui" }
+mark-core = { path = "mark-core" }
+mark-command = { path = "mark-command" }
+mark-diff = { path = "mark-diff" }
+mark-git = { path = "mark-git" }
+mark-syntax = { path = "mark-syntax" }
+mark-tui = { path = "mark-tui" }

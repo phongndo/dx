@@ -14,7 +14,7 @@ body:
     attributes:
       label: Summary
       description: What happened, and what did you expect instead?
-      placeholder: dx ... failed when ..., but I expected ...
+      placeholder: mark ... failed when ..., but I expected ...
     validations:
       required: true
 
@@ -24,7 +24,7 @@ body:
       label: Reproduction steps
       description: Include the exact commands and repository state needed to reproduce the issue.
       placeholder: |
-        1. Run `dx ...`
+        1. Run `mark ...`
         2. See ...
     validations:
       required: true
@@ -42,7 +42,7 @@ body:
     id: expected
     attributes:
       label: Expected behavior
-      description: What should dx have done?
+      description: What should mark have done?
     validations:
       required: true
 
@@ -50,8 +50,8 @@ body:
     id: version
     attributes:
       label: Version or commit
-      description: Paste `dx --version`, a release version, or the commit SHA you tested.
-      placeholder: dx 0.0.0 / abc1234
+      description: Paste `mark --version`, a release version, or the commit SHA you tested.
+      placeholder: mark 0.0.0 / abc1234
     validations:
       required: true
 

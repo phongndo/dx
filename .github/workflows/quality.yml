@@ -128,12 +128,12 @@ jobs:
 
       - name: Benchmark smoke
         run: |
-          cargo run -p dx-bench --locked -- fixtures \
-            --out "$RUNNER_TEMP/dx-bench" \
+          cargo run -p mark-bench --locked -- fixtures \
+            --out "$RUNNER_TEMP/mark-bench" \
             --scenario many-small-files \
             --force
-          cargo run -p dx-bench --locked -- measure \
-            --fixtures "$RUNNER_TEMP/dx-bench" \
+          cargo run -p mark-bench --locked -- measure \
+            --fixtures "$RUNNER_TEMP/mark-bench" \
             --scenario many-small-files \
             --json
 
@@ -143,8 +143,8 @@ jobs:
       - name: Smoke installer and update
         run: scripts/smoke-installer-update
 
-  pi-dx:
-    name: pi-dx package quality
+  pi-mark:
+    name: pi-mark package quality
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -164,12 +164,12 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: pi-dx/pnpm-lock.yaml
+          cache-dependency-path: pi-mark/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: pi-dx
+        working-directory: pi-mark
         run: pnpm install --frozen-lockfile
 
-      - name: Check pi-dx
-        working-directory: pi-dx
+      - name: Check pi-mark
+        working-directory: pi-mark
         run: pnpm run check

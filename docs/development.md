@@ -9,7 +9,7 @@ make the smallest safe diff, and document user-visible behavior changes.
 - Rust toolchain from [`rust-toolchain.toml`](../rust-toolchain.toml)
 - `curl`, `tar`, and `install` for installer smoke tests
 - `just` for repository recipes
-- Node.js 24 and pnpm 11 for `pi-dx`
+- Node.js 24 and pnpm 11 for `pi-mark`
 - Nix, optional but preferred for a complete local shell
 
 Do not install global tools just to work in the repo when `nix develop` or the
@@ -28,7 +28,7 @@ Without Nix:
 
 ```sh
 cargo fetch --locked
-cargo build -p dx-cli --locked
+cargo build -p mark-cli --locked
 ```
 
 Install the optional Git hook:
@@ -46,13 +46,13 @@ just check
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-targets --all-features --locked
-cargo build -p dx-cli --locked
+cargo build -p mark-cli --locked
 ```
 
 For the Pi package:
 
 ```sh
-cd pi-dx
+cd pi-mark
 pnpm install
 pnpm run check
 ```
@@ -60,7 +60,7 @@ pnpm run check
 Run the local extension from the repository root with:
 
 ```sh
-pi -e ./pi-dx/extensions/pi-dx.ts
+pi -e ./pi-mark/extensions/pi-mark.ts
 ```
 
 ## Verification ladder
@@ -70,7 +70,7 @@ Use the cheapest check that proves the change first:
 1. `rust-analyzer diagnostics .`
 2. `cargo fmt --all --check`
 3. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-4. Focused unit test, for example `cargo test -p dx-tui filter`
+4. Focused unit test, for example `cargo test -p mark-tui filter`
 5. Focused integration or smoke test
 6. `cargo test --workspace --all-targets --all-features --locked`
 7. `cargo build --workspace --all-targets --all-features --locked`
@@ -97,7 +97,7 @@ The interactive smoke test must run in a terminal.
 
 ## Release flow
 
-The main `dx` binary release uses GitHub Releases.
+The main `mark` binary release uses GitHub Releases.
 
 1. Update the workspace package version in [`Cargo.toml`](../Cargo.toml).
 2. Merge the change.
@@ -106,21 +106,21 @@ The main `dx` binary release uses GitHub Releases.
 The Release workflow builds macOS and Linux assets named like:
 
 ```text
-dx-vX.Y.Z-aarch64-apple-darwin.tar.gz
-dx-vX.Y.Z-x86_64-apple-darwin.tar.gz
-dx-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz
-dx-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
+mark-vX.Y.Z-aarch64-apple-darwin.tar.gz
+mark-vX.Y.Z-x86_64-apple-darwin.tar.gz
+mark-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz
+mark-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 Those names are part of the installer contract.
 
-## pi-dx release flow
+## pi-mark release flow
 
-`pi-dx` is published separately to npm.
+`pi-mark` is published separately to npm.
 
-1. Update `pi-dx/package.json` version.
+1. Update `pi-mark/package.json` version.
 2. Merge the change.
-3. Run the `Publish pi-dx` workflow.
+3. Run the `Publish pi-mark` workflow.
 
 The workflow validates the package, publishes with npm provenance, and can
-create a `pi-dx-vX.Y.Z` GitHub release.
+create a `pi-mark-vX.Y.Z` GitHub release.

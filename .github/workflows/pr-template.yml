@@ -69,7 +69,7 @@ jobs:
           require_non_empty_section "Summary"
           require_non_empty_section "Risk"
 
-          if ! printf '%s\n' "$body" | grep -Eq -- '- \[[xX]\] `(cargo check|cargo fmt|cargo clippy|cargo test|cargo build|cd pi-dx && pnpm run check)'; then
+          if ! printf '%s\n' "$body" | grep -Eq -- '- \[[xX]\] `(cargo check|cargo fmt|cargo clippy|cargo test|cargo build|cd pi-mark && pnpm run check)'; then
             printf 'Mark at least one verification command as completed.\n'
             missing=1
           fi

@@ -1,0 +1,13 @@
+[package]
+name = "mark-command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+mark-core.workspace = true
+mark-diff.workspace = true
+mark-git.workspace = true
+mark-syntax.workspace = true

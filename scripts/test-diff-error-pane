@@ -8,7 +8,7 @@ if [ ! -t 1 ]; then
   exit 1
 fi
 
-cargo build -p dx-cli
+cargo build -p mark-cli
 
 tmp_dir=$(mktemp -d)
 cleanup() {
@@ -17,8 +17,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 config_home="$tmp_dir/config"
-mkdir -p "$config_home/dx"
-cat > "$config_home/dx/config.toml" <<'TOML'
+mkdir -p "$config_home/mark"
+cat > "$config_home/mark/config.toml" <<'TOML'
 # Intentionally invalid values for the interactive error-pane smoke test.
 addition_fg = "octarine"
 
@@ -29,8 +29,8 @@ TOML
 fixture_repo="$tmp_dir/repo"
 mkdir -p "$fixture_repo/src"
 git -C "$fixture_repo" init -q
-git -C "$fixture_repo" config user.email dx-test@example.invalid
-git -C "$fixture_repo" config user.name "dx test"
+git -C "$fixture_repo" config user.email mark-test@example.invalid
+git -C "$fixture_repo" config user.name "mark test"
 
 cat > "$fixture_repo/src/example.rs" <<'RS'
 pub fn answer() -> usize {
@@ -52,12 +52,12 @@ RS
 
 cat <<EOF
 
-Launching dx against a temporary repo with an intentionally invalid isolated config.
+Launching mark against a temporary repo with an intentionally invalid isolated config.
 
 Example error-log cases:
   On launch              invalid color/keymap config should open the error pane
   Ctrl-Shift-C           copy the full error pane text to the terminal clipboard
-  Esc                    close the error pane; Esc should NOT quit dx
+  Esc                    close the error pane; Esc should NOT quit mark
   Ctrl-G                 open editor for focused hunk; EDITOR is intentionally invalid, so an error pane should open
   Space o, j j j, Space  toggle disabled Live reload; --no-watch should open an error pane
   rm -rf "$fixture_repo/.git", then press r
@@ -71,7 +71,7 @@ Try this in the TUI:
   q        quit
 
 Temporary repo: $fixture_repo
-Temporary config: $config_home/dx/config.toml
+Temporary config: $config_home/mark/config.toml
 
 EOF
 
@@ -79,4 +79,4 @@ XDG_CONFIG_HOME="$config_home" \
 VISUAL="$tmp_dir/definitely-missing-editor" \
 GIT_EDITOR="$tmp_dir/definitely-missing-editor" \
 EDITOR="$tmp_dir/definitely-missing-editor" \
-  "$repo_dir/target/debug/dx" diff --repo "$fixture_repo" --no-watch --no-syntax
+  "$repo_dir/target/debug/mark" diff --repo "$fixture_repo" --no-watch --no-syntax

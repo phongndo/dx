@@ -1,68 +1,68 @@
 # Usage
 
-`dx` reviews Git diffs in an interactive terminal UI when stdout is a terminal.
+`mark` reviews Git diffs in an interactive terminal UI when stdout is a terminal.
 When stdout is not a terminal it streams rendered diff output instead. When
 `--stat` is requested it streams diff statistics instead of opening the UI.
 
-Run `dx --help` for the authoritative command list.
+Run `mark --help` for the authoritative command list.
 
 ## Diff sources
 
-`dx` is a shortcut for `dx diff`:
+`mark` is a shortcut for `mark diff`:
 
 ```sh
-dx
-dx diff
+mark
+mark diff
 ```
 
 Common local review modes:
 
 ```sh
-dx diff --staged
-dx diff --unstaged
-dx diff --no-untracked
-dx diff --base main
-dx diff main feature
+mark diff --staged
+mark diff --unstaged
+mark diff --no-untracked
+mark diff --base main
+mark diff main feature
 ```
 
 Use `--repo` when running from outside the target repository:
 
 ```sh
-dx diff --repo ../project --staged
-dx show --repo ../project HEAD~1
+mark diff --repo ../project --staged
+mark show --repo ../project HEAD~1
 ```
 
 Use `--no-watch` to disable local worktree reloads for one run, and
 `--no-syntax` to disable syntax highlighting for one run:
 
 ```sh
-dx diff --no-watch
-dx diff --no-syntax
+mark diff --no-watch
+mark diff --no-syntax
 ```
 
 Use `--stat` to print summary statistics instead of opening the interactive UI:
 
 ```sh
-dx diff --stat
-dx show HEAD~1 --stat
+mark diff --stat
+mark show HEAD~1 --stat
 ```
 
 ## Revisions and hosted reviews
 
-`dx show` reviews a revision. With no target it shows `HEAD`:
+`mark show` reviews a revision. With no target it shows `HEAD`:
 
 ```sh
-dx show
-dx show HEAD~1
+mark show
+mark show HEAD~1
 ```
 
 Hosted reviews currently support GitHub pull requests:
 
 ```sh
-dx show review 123
-dx show review https://github.com/owner/repo/pull/123
-dx diff --pr 123
-dx diff --pr https://github.com/owner/repo/pull/123
+mark show review 123
+mark show review https://github.com/owner/repo/pull/123
+mark diff --pr 123
+mark diff --pr https://github.com/owner/repo/pull/123
 ```
 
 Numeric pull request targets are resolved from the current repository's
@@ -75,54 +75,54 @@ private repositories or higher rate limits.
 Review an existing unified diff:
 
 ```sh
-dx patch changes.diff
-cat changes.diff | dx patch -
+mark patch changes.diff
+cat changes.diff | mark patch -
 ```
 
 The older top-level form still works:
 
 ```sh
-dx --patch changes.diff
+mark --patch changes.diff
 ```
 
 ## Pager mode
 
-Use `dx pager` for `git diff` and `git show` output:
+Use `mark pager` for `git diff` and `git show` output:
 
 ```sh
-git config --global core.pager "dx pager"
-git diff | dx pager
+git config --global core.pager "mark pager"
+git diff | mark pager
 ```
 
-`dx pager` reads stdin. Diff input opens the interactive reviewer when possible
+`mark pager` reads stdin. Diff input opens the interactive reviewer when possible
 and falls back to static ANSI output in captured pager hosts such as lazygit.
 Non-diff input is passed through the user's text pager.
 
-Static diff output reuses dx's renderer, colorscheme, syntax highlighting, and
+Static diff output reuses mark's renderer, colorscheme, syntax highlighting, and
 layout. Override the static layout when needed:
 
 ```sh
-dx pager --layout split
-dx pager --layout unified
-dx pager --no-syntax
+mark pager --layout split
+mark pager --layout unified
+mark pager --no-syntax
 ```
 
 ## Difftool mode
 
-Configure Git to launch `dx` for Git-provided file pairs:
+Configure Git to launch `mark` for Git-provided file pairs:
 
 ```sh
-git config --global diff.tool dx
-git config --global difftool.dx.cmd 'dx difftool -- "$LOCAL" "$REMOTE" "$MERGED"'
+git config --global diff.tool mark
+git config --global difftool.mark.cmd 'mark difftool -- "$LOCAL" "$REMOTE" "$MERGED"'
 ```
 
 Git sets `$LOCAL` to the pre-image, `$REMOTE` to the post-image, and `$MERGED`
-to the display path. `dx difftool` turns that pair into a normal review:
+to the display path. `mark difftool` turns that pair into a normal review:
 
 ```sh
 git difftool HEAD -- src/file.rs
-dx difftool -- "$LOCAL" "$REMOTE" "$MERGED"
-dx difftool --watch -- "$LOCAL" "$REMOTE" "$MERGED"
+mark difftool -- "$LOCAL" "$REMOTE" "$MERGED"
+mark difftool --watch -- "$LOCAL" "$REMOTE" "$MERGED"
 ```
 
 ## Interactive controls
@@ -166,32 +166,32 @@ Keybindings can be customized in the user config file. See
 Core languages are bundled. Extra languages can be installed and managed with:
 
 ```sh
-dx syntax add ruby elixir
-dx syntax update --all
-dx syntax available --installed
-dx syntax rm ruby
-dx syntax list
-dx syntax doctor
-dx syntax clean
-dx syntax path
+mark syntax add ruby elixir
+mark syntax update --all
+mark syntax available --installed
+mark syntax rm ruby
+mark syntax list
+mark syntax doctor
+mark syntax clean
+mark syntax path
 ```
 
-Custom Tree-sitter support can be registered without rebuilding `dx`:
+Custom Tree-sitter support can be registered without rebuilding `mark`:
 
 ```sh
-dx syntax add mylang \
+mark syntax add mylang \
   --parser ~/parsers/libtree_sitter_mylang.dylib \
   --query ~/parsers/mylang/highlights.scm \
   --ext mylang
 ```
 
-User highlight queries are read from `~/.config/dx/queries/<lang>/highlights.scm`
+User highlight queries are read from `~/.config/mark/queries/<lang>/highlights.scm`
 and take precedence over bundled queries.
 
 ## Pi package
 
-The `pi-dx` package adds `/diff`, `/show`, and `/patch` slash commands to Pi.
-It shells out to `dx`, so install the CLI first and keep it on `PATH`, or set
-`PI_DX_BIN` to the executable path.
+The `pi-mark` package adds a `/mark` slash command to Pi. It shells out to
+`mark`, so install the CLI first and keep it on `PATH`, or set `PI_MARK_BIN` to
+the executable path.
 
-See [`../pi-dx/README.md`](../pi-dx/README.md).
+See [`../pi-mark/README.md`](../pi-mark/README.md).

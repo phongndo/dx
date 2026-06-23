@@ -1,0 +1,27 @@
+[package]
+name = "mark-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "mark"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+crossterm.workspace = true
+mark-command.workspace = true
+mark-core.workspace = true
+mark-diff.workspace = true
+mark-tui.workspace = true
+shlex.workspace = true
+unicode-width.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true

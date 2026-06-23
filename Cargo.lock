@@ -402,43 +402,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "dx-bench"
+name = "mark-bench"
 version = "0.5.3"
 dependencies = [
  "clap",
- "dx-diff",
- "dx-tui",
+ "mark-diff",
+ "mark-tui",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "dx-cli"
+name = "mark-cli"
 version = "0.5.3"
 dependencies = [
  "clap",
  "crossterm",
- "dx-command",
- "dx-core",
- "dx-diff",
- "dx-tui",
+ "mark-command",
+ "mark-core",
+ "mark-diff",
+ "mark-tui",
  "rustix 0.38.44",
  "shlex",
  "unicode-width 0.2.0",
 ]
 
 [[package]]
-name = "dx-command"
+name = "mark-command"
 version = "0.5.3"
 dependencies = [
- "dx-core",
- "dx-diff",
- "dx-git",
- "dx-syntax",
+ "mark-core",
+ "mark-diff",
+ "mark-git",
+ "mark-syntax",
 ]
 
 [[package]]
-name = "dx-core"
+name = "mark-core"
 version = "0.5.3"
 dependencies = [
  "serde",
@@ -446,25 +446,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "dx-diff"
+name = "mark-diff"
 version = "0.5.3"
 dependencies = [
- "dx-core",
- "dx-git",
+ "mark-core",
+ "mark-git",
 ]
 
 [[package]]
-name = "dx-git"
+name = "mark-git"
 version = "0.5.3"
 dependencies = [
- "dx-core",
+ "mark-core",
 ]
 
 [[package]]
-name = "dx-syntax"
+name = "mark-syntax"
 version = "0.5.3"
 dependencies = [
- "dx-core",
+ "mark-core",
  "serde",
  "serde_json",
  "sha2",
@@ -474,14 +474,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "dx-tui"
+name = "mark-tui"
 version = "0.5.3"
 dependencies = [
  "crossterm",
- "dx-core",
- "dx-diff",
- "dx-git",
- "dx-syntax",
+ "mark-core",
+ "mark-diff",
+ "mark-git",
+ "mark-syntax",
  "fff-grep",
  "memchr",
  "notify",

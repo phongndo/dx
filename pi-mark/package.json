@@ -1,0 +1,51 @@
+{
+  "name": "pi-mark",
+  "version": "0.2.0",
+  "description": "Pi extension that opens the mark diff reviewer from /mark.",
+  "keywords": [
+    "diff",
+    "git",
+    "mark",
+    "pi-extension",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phongndo/mark.git",
+    "directory": "pi-mark"
+  },
+  "files": [
+    "README.md",
+    "extensions"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint extensions tests --import-plugin --node-plugin",
+    "format": "oxfmt extensions tests package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
+    "format:check": "oxfmt --check extensions tests package.json tsconfig.json .oxlintrc.json .oxfmtrc.json",
+    "lsp:oxfmt": "oxfmt --lsp",
+    "lsp:oxlint": "oxlint --lsp",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "check": "node --experimental-strip-types --check extensions/pi-mark.ts && pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm test && pnpm pack --dry-run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "oxfmt": "^0.55.0",
+    "oxlint": "^1.70.0",
+    "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "pi": {
+    "extensions": [
+      "./extensions/pi-mark.ts"
+    ]
+  }
+}
