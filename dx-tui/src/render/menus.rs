@@ -69,7 +69,6 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
                     selector_entry_line(
                         choice.label(),
                         &app.diff_choice_detail(*choice),
-                        quick_key_label(index).unwrap_or(" "),
                         inner.width as usize,
                         app.theme,
                         highlighted,
@@ -132,16 +131,7 @@ fn diff_menu_floating_width(app: &DiffApp, choices: &[DiffChoice]) -> u16 {
     let input = app.diff_menu_input.width().saturating_add(12);
     let rows = choices
         .iter()
-        .enumerate()
-        .map(|(index, choice)| {
-            format!(
-                " {}  {}  {} ",
-                choice.label(),
-                app.diff_choice_detail(*choice),
-                quick_key_label(index).unwrap_or(" "),
-            )
-            .width()
-        })
+        .map(|choice| format!(" {}  {} ", choice.label(), app.diff_choice_detail(*choice),).width())
         .max()
         .unwrap_or_else(|| " no matching diff types ".width());
     let selected = app
@@ -252,10 +242,6 @@ fn selector_count_color(theme: DiffTheme) -> Color {
     theme.syntax.comment.unwrap_or(theme.muted)
 }
 
-fn selector_number_color(theme: DiffTheme) -> Color {
-    theme.syntax.number.unwrap_or(theme.hunk)
-}
-
 fn selector_highlight_color(theme: DiffTheme) -> Color {
     theme.syntax.keyword.unwrap_or(theme.header)
 }
@@ -263,7 +249,6 @@ fn selector_highlight_color(theme: DiffTheme) -> Color {
 fn selector_entry_line(
     label: &str,
     detail: &str,
-    key: &str,
     width: usize,
     theme: DiffTheme,
     highlighted: bool,
@@ -273,43 +258,10 @@ fn selector_entry_line(
     } else {
         format!(" {label}  {detail}")
     };
-    let right_width = key.width();
-    let left_width = width.saturating_sub(right_width).saturating_sub(1);
-    let bg = if highlighted {
-        header_bg(theme)
-    } else {
-        base_bg(theme)
-    };
-    Line::from(vec![
-        Span::styled(
-            fit_padded(&left, left_width),
-            selector_row_style(theme, highlighted),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            key.to_owned(),
-            Style::default()
-                .fg(selector_number_color(theme))
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ])
-}
-
-fn quick_key_label(index: usize) -> Option<&'static str> {
-    match index {
-        0 => Some("1"),
-        1 => Some("2"),
-        2 => Some("3"),
-        3 => Some("4"),
-        4 => Some("5"),
-        5 => Some("6"),
-        6 => Some("7"),
-        7 => Some("8"),
-        8 => Some("9"),
-        9 => Some("0"),
-        _ => None,
-    }
+    Line::from(Span::styled(
+        fit_padded(&left, width),
+        selector_row_style(theme, highlighted),
+    ))
 }
 
 pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
@@ -653,14 +605,7 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
                 .take(remaining_rows)
                 .map(|(index, branch)| {
                     let highlighted = index == app.branch_menu_selected;
-                    selector_entry_line(
-                        branch,
-                        "",
-                        quick_key_label(index).unwrap_or(" "),
-                        inner.width as usize,
-                        app.theme,
-                        highlighted,
-                    )
+                    selector_entry_line(branch, "", inner.width as usize, app.theme, highlighted)
                 }),
         );
     }

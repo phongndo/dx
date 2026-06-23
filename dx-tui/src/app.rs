@@ -360,24 +360,6 @@ pub(crate) fn is_plain_char_key(key: KeyEvent, character: char) -> bool {
         && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
-fn number_key_index(key: KeyEvent) -> Option<usize> {
-    if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
-        return None;
-    }
-    let KeyCode::Char(character) = key.code else {
-        return None;
-    };
-    number_key_index_for_char(character)
-}
-
-fn number_key_index_for_char(character: char) -> Option<usize> {
-    match character {
-        '1'..='9' => Some(character as usize - '1' as usize),
-        '0' => Some(9),
-        _ => None,
-    }
-}
-
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
     column >= area.x
         && column < area.x.saturating_add(area.width)
@@ -1069,16 +1051,6 @@ impl DiffApp {
                     self.select_highlighted_branch_match();
                     return Ok(false);
                 }
-                _ if self.select_branch_for_number_key(key) => {
-                    return Ok(false);
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT)
-                        && number_key_index_for_char(character).is_some() =>
-                {
-                    return Ok(false);
-                }
                 KeyCode::Tab => {
                     self.cycle_branch_completion(1);
                     return Ok(false);
@@ -1321,15 +1293,6 @@ impl DiffApp {
     pub(crate) fn handle_diff_menu_key(&mut self, key: KeyEvent) -> DxResult<bool> {
         if key.code == KeyCode::Esc {
             self.close_diff_menu();
-            return Ok(false);
-        }
-
-        if let Some(choice) = self.diff_choice_for_number_key(key) {
-            self.close_diff_menu();
-            self.select_diff_choice(choice);
-            return Ok(false);
-        }
-        if number_key_index(key).is_some() {
             return Ok(false);
         }
 
@@ -2952,26 +2915,6 @@ impl DiffApp {
         self.select_branch(menu, branch);
     }
 
-    pub(crate) fn branch_choice_for_number_key(&self, key: KeyEvent) -> Option<String> {
-        let index = number_key_index(key)?;
-        self.filtered_branches()
-            .get(index)
-            .map(|branch| (*branch).to_owned())
-    }
-
-    pub(crate) fn select_branch_for_number_key(&mut self, key: KeyEvent) -> bool {
-        let Some(menu) = self.branch_menu_open else {
-            return false;
-        };
-        let Some(branch) = self.branch_choice_for_number_key(key) else {
-            return false;
-        };
-
-        self.close_branch_menu();
-        self.select_branch(menu, branch);
-        true
-    }
-
     pub(crate) fn is_branch_diff(&self) -> bool {
         matches!(
             &self.options.source,
@@ -3173,11 +3116,6 @@ impl DiffApp {
         self.filtered_diff_choices()
             .get(self.diff_menu_selected)
             .copied()
-    }
-
-    pub(crate) fn diff_choice_for_number_key(&self, key: KeyEvent) -> Option<DiffChoice> {
-        let index = number_key_index(key)?;
-        self.filtered_diff_choices().get(index).copied()
     }
 
     pub(crate) fn move_diff_menu_selection(&mut self, delta: isize) {

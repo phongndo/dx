@@ -154,8 +154,8 @@ Shift-Tab      previous diff type
 ```
 
 Selector panes (diff type, branch) keep focus in the filter input: type to
-filter, Enter selects, Esc closes, 1-0 quick-select the first ten matches, and
-Tab / Shift-Tab or Ctrl-N / Ctrl-P move the highlighted row.
+filter, Enter selects, Esc closes, and Tab / Shift-Tab or Ctrl-N / Ctrl-P move
+the highlighted row.
 
 Keybindings can be customized in the user config file. See
 [configuration](configuration.md#keybindings).

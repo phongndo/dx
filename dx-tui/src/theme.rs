@@ -123,7 +123,6 @@ pub(crate) const HELP_MENU_RIGHT_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Branch filter"),
     HelpMenuRow::Binding(HelpMenuKey::Static("type"), "filter branches"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "select branch"),
-    HelpMenuRow::Binding(HelpMenuKey::Static("1-0"), "quick select"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Tab/Shift-Tab"), "cycle matches"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-N/Ctrl-P"), "cycle matches"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Backspace"), "delete char"),

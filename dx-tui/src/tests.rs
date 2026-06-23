@@ -3336,7 +3336,7 @@ fn diff_menu_branch_keys_do_not_open_branch_picker() {
 }
 
 #[test]
-fn diff_menu_number_keys_apply_choice() {
+fn diff_menu_number_keys_filter_input() {
     let mut app = DiffApp::new(
         DiffOptions::default(),
         changeset_with_context_lines(1),
@@ -3348,15 +3348,11 @@ fn diff_menu_number_keys_apply_choice() {
 
     app.open_diff_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
-        .expect("2 should switch to unstaged");
+        .expect("2 should filter diff choices");
 
-    assert!(!app.diff_menu_open);
-    let load = app
-        .pending_diff_load
-        .as_ref()
-        .expect("number key should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::Unstaged);
+    assert!(app.diff_menu_open);
+    assert_eq!(app.diff_menu_input, "2");
+    assert!(app.pending_diff_load.is_none());
 }
 
 #[test]
@@ -3396,11 +3392,11 @@ fn diff_menu_draws_centered_floating_menu() {
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("Unstaged") && row.contains("1 │"))
+            .any(|row| row.contains("│  Unstaged") && !row.contains("1 │"))
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("Staged") && row.contains("2 │"))
+            .any(|row| row.contains("│  Staged") && !row.contains("2 │"))
     );
 }
 
@@ -4057,7 +4053,7 @@ fn cache_invalidation_preserves_pending_diff_load() {
 }
 
 #[test]
-fn number_key_ignores_unavailable_diff_choice_for_show_source() {
+fn number_key_does_not_switch_show_source_diff_choice() {
     let options = DiffOptions {
         source: DiffSource::Show("HEAD".to_owned()),
         ..DiffOptions::default()
@@ -4072,7 +4068,7 @@ fn number_key_ignores_unavailable_diff_choice_for_show_source() {
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE))
-        .expect("number shortcut should be handled");
+        .expect("number key should be handled");
 
     assert!(!should_quit);
     assert!(app.pending_diff_load.is_none());
@@ -4230,7 +4226,7 @@ fn branch_menu_draws_centered_floating_filter() {
 }
 
 #[test]
-fn branch_menu_number_keys_quick_select_top_ten() {
+fn branch_menu_number_keys_filter_branch_names() {
     let options = DiffOptions {
         source: DiffSource::Base("main".to_owned()),
         ..DiffOptions::default()
@@ -4243,30 +4239,26 @@ fn branch_menu_number_keys_quick_select_top_ten() {
     app.branch_base = Some("main".to_owned());
     app.branch_head = Some("feature".to_owned());
     app.current_head = Some("feature".to_owned());
-    app.comparison_branches = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"]
-        .into_iter()
-        .map(|suffix| format!("topic-{suffix}"))
-        .collect();
+    app.comparison_branches = vec![
+        "release/2026".to_owned(),
+        "release/2025".to_owned(),
+        "topic-a".to_owned(),
+    ];
 
     app.toggle_branch_menu(BranchMenu::Head);
-    for character in "topic".chars() {
+    for character in "release/".chars() {
         app.push_branch_input(character);
     }
-    app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE))
-        .expect("0 should quick-select the tenth branch");
+    app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
+        .expect("2 should filter branch names");
 
-    assert!(app.branch_menu_open.is_none());
-    let load = app
-        .pending_diff_load
-        .as_ref()
-        .expect("quick-select should queue branch diff");
+    assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
+    assert_eq!(app.branch_menu_input, "release/2");
     assert_eq!(
-        load.options.source,
-        DiffSource::Branch {
-            base: "main".to_owned(),
-            head: "topic-jj".to_owned(),
-        }
+        app.filtered_branches(),
+        vec!["release/2026", "release/2025"]
     );
+    assert!(app.pending_diff_load.is_none());
 }
 
 #[test]

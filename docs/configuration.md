@@ -159,7 +159,7 @@ prefetch_viewports = 1
 ## Keybindings
 
 Global multi-key bindings must start with the configured leader key. Menu
-bindings are single-key and apply to selector and options menus.
+bindings are single-key and apply to the options menu.
 
 Bindings can be a string or a list of strings:
 
