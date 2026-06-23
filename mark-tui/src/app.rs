@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fs,
     io::{self, Write},
@@ -891,6 +892,25 @@ fn context_expansion_config_value(expansion: DiffContextExpansion) -> toml::Valu
 }
 
 #[derive(Debug)]
+struct WrappedVisualLayout {
+    layout: DiffLayoutMode,
+    viewport_width: usize,
+    model_rows: usize,
+    model_rows_ptr: usize,
+    row_starts: Vec<usize>,
+    total_rows: usize,
+}
+
+impl WrappedVisualLayout {
+    fn matches(&self, app: &DiffApp) -> bool {
+        self.layout == app.layout
+            && self.viewport_width == app.viewport_width
+            && self.model_rows == app.model.len()
+            && self.model_rows_ptr == app.model.rows.as_ptr() as usize
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct DiffApp {
     pub(crate) options: DiffOptions,
     pub(crate) base_changeset: Changeset,
@@ -907,6 +927,7 @@ pub(crate) struct DiffApp {
     pub(crate) viewport_rows: usize,
     pub(crate) viewport_width: usize,
     pub(crate) max_line_width: usize,
+    wrapped_visual_layout: RefCell<Option<WrappedVisualLayout>>,
     pub(crate) manual_hunk_focus: Option<(usize, usize)>,
     pub(crate) selected_file: usize,
     pub(crate) file_sidebar_open: bool,
@@ -1173,6 +1194,7 @@ impl DiffApp {
             viewport_rows: 1,
             viewport_width: 1,
             max_line_width,
+            wrapped_visual_layout: RefCell::new(None),
             manual_hunk_focus,
             selected_file: 0,
             file_sidebar_open: false,
@@ -2690,6 +2712,7 @@ impl DiffApp {
                 .map(ContextSourceEntry::Lines)
                 .unwrap_or(ContextSourceEntry::Unavailable);
             self.context_cache.insert(key, entry);
+            self.invalidate_wrapped_visual_layout();
         }
 
         match self.context_cache.get(&key) {
@@ -4114,6 +4137,10 @@ impl DiffApp {
         self.set_scroll_with_grep_sync(scroll, true, HunkFocusScrollBehavior::ClearOnScroll);
     }
 
+    fn invalidate_wrapped_visual_layout(&self) {
+        self.wrapped_visual_layout.borrow_mut().take();
+    }
+
     fn cached_context_line_text(
         &self,
         file: usize,
@@ -4200,18 +4227,71 @@ impl DiffApp {
         }
     }
 
+    fn ensure_wrapped_visual_layout(&self) {
+        if self
+            .wrapped_visual_layout
+            .borrow()
+            .as_ref()
+            .is_some_and(|layout| layout.matches(self))
+        {
+            return;
+        }
+
+        let mut row_starts = Vec::with_capacity(self.model.len().saturating_add(1));
+        row_starts.push(0);
+        let mut total_rows = 0usize;
+        for row_index in 0..self.model.len() {
+            let height = self
+                .model
+                .row(row_index)
+                .map(|row| self.wrapped_visual_height_for_row(row))
+                .unwrap_or(1)
+                .max(1);
+            total_rows = total_rows.saturating_add(height);
+            row_starts.push(total_rows);
+        }
+
+        *self.wrapped_visual_layout.borrow_mut() = Some(WrappedVisualLayout {
+            layout: self.layout,
+            viewport_width: self.viewport_width,
+            model_rows: self.model.len(),
+            model_rows_ptr: self.model.rows.as_ptr() as usize,
+            row_starts,
+            total_rows,
+        });
+    }
+
     fn wrapped_visual_row_count(&self) -> usize {
-        (0..self.model.len())
-            .filter_map(|row_index| self.model.row(row_index))
-            .map(|row| self.wrapped_visual_height_for_row(row))
-            .sum()
+        self.ensure_wrapped_visual_layout();
+        self.wrapped_visual_layout
+            .borrow()
+            .as_ref()
+            .map(|layout| layout.total_rows)
+            .unwrap_or_default()
     }
 
     pub(crate) fn wrapped_visual_scroll_for_model_row(&self, row_index: usize) -> usize {
-        (0..row_index.min(self.model.len()))
-            .filter_map(|row_index| self.model.row(row_index))
-            .map(|row| self.wrapped_visual_height_for_row(row))
-            .sum()
+        self.ensure_wrapped_visual_layout();
+        self.wrapped_visual_layout
+            .borrow()
+            .as_ref()
+            .and_then(|layout| layout.row_starts.get(row_index.min(layout.model_rows)))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn wrapped_visual_height_for_model_row(&self, row_index: usize) -> usize {
+        self.ensure_wrapped_visual_layout();
+        self.wrapped_visual_layout
+            .borrow()
+            .as_ref()
+            .and_then(|layout| {
+                let row_index = row_index.min(layout.model_rows);
+                let start = layout.row_starts.get(row_index)?;
+                let end = layout.row_starts.get(row_index.saturating_add(1))?;
+                Some(end.saturating_sub(*start))
+            })
+            .unwrap_or(1)
     }
 
     pub(crate) fn model_row_at_scroll(&self, scroll: usize) -> Option<(usize, usize)> {
@@ -4219,16 +4299,23 @@ impl DiffApp {
             return self.model.row(scroll).map(|_| (scroll, 0));
         }
 
-        let mut remaining = scroll;
-        for row_index in 0..self.model.len() {
-            let row = self.model.row(row_index)?;
-            let height = self.wrapped_visual_height_for_row(row);
-            if remaining < height {
-                return Some((row_index, remaining));
-            }
-            remaining = remaining.saturating_sub(height);
+        self.ensure_wrapped_visual_layout();
+        let layout = self.wrapped_visual_layout.borrow();
+        let layout = layout.as_ref()?;
+        if scroll >= layout.total_rows {
+            return None;
         }
-        None
+
+        let row_index = layout
+            .row_starts
+            .partition_point(|row_start| *row_start <= scroll)
+            .saturating_sub(1);
+        let row_start = layout
+            .row_starts
+            .get(row_index)
+            .copied()
+            .unwrap_or_default();
+        Some((row_index, scroll.saturating_sub(row_start)))
     }
 
     fn scroll_for_model_row(&self, row: usize) -> usize {
@@ -4284,6 +4371,7 @@ impl DiffApp {
             &self.context_expansions,
             visible_files,
         );
+        self.invalidate_wrapped_visual_layout();
         self.manual_hunk_focus = match hunk_focus_behavior {
             HunkFocusModelBehavior::PreserveIfValid => previous_manual_hunk_focus
                 .filter(|(file, hunk)| self.model.hunk_start_row(*file, *hunk).is_some()),
@@ -4759,14 +4847,11 @@ impl DiffApp {
             .then(|| self.model_row_at_scroll(self.scroll))
             .flatten();
         self.viewport_width = width;
+        self.invalidate_wrapped_visual_layout();
         self.set_horizontal_scroll(self.horizontal_scroll);
         if let Some((row, row_offset)) = wrapped_position {
             let row_scroll = self.wrapped_visual_scroll_for_model_row(row);
-            let row_height = self
-                .model
-                .row(row)
-                .map(|row| self.wrapped_visual_height_for_row(row))
-                .unwrap_or(1);
+            let row_height = self.wrapped_visual_height_for_model_row(row);
             self.set_scroll(
                 row_scroll.saturating_add(row_offset.min(row_height.saturating_sub(1))),
             );
@@ -5388,11 +5473,7 @@ impl DiffApp {
             return scroll >= self.scroll;
         }
 
-        let height = self
-            .model
-            .row(row)
-            .map(|row| self.wrapped_visual_height_for_row(row))
-            .unwrap_or(1);
+        let height = self.wrapped_visual_height_for_model_row(row);
         scroll.saturating_add(height) > self.scroll
     }
 
@@ -5664,6 +5745,7 @@ impl DiffApp {
 
     pub(crate) fn apply_responsive_layout(&mut self, width: u16) {
         self.viewport_width = (width as usize).max(1);
+        self.invalidate_wrapped_visual_layout();
         let responsive_layout = default_layout_for_width(width);
         let layout = match self.layout_override {
             Some(DiffLayoutMode::Split) if responsive_layout == DiffLayoutMode::Unified => {
@@ -5861,6 +5943,7 @@ impl DiffApp {
                 DiffLayoutMode::Split => split_model,
                 DiffLayoutMode::Unified => unified_model,
             };
+            self.invalidate_wrapped_visual_layout();
             self.manual_hunk_focus = None;
             self.selected_file = selected_path
                 .and_then(|path| {

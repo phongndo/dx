@@ -4196,6 +4196,20 @@ fn line_wrapping_scrolls_through_continuation_rows() {
 }
 
 #[test]
+fn line_wrapping_recomputes_scroll_bounds_after_width_change() {
+    let changeset = changeset_with_line_text("abcdefghijkl");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.line_wrapping = true;
+    app.set_viewport_rows(1);
+
+    app.set_viewport_width(18);
+    assert_eq!(app.max_scroll(), 4);
+
+    app.set_viewport_width(22);
+    assert_eq!(app.max_scroll(), 3);
+}
+
+#[test]
 fn select_file_scrolls_to_visual_file_start_for_wrapped_no_hunk_file() {
     let mut changeset = changeset_with_wrapped_leading_file();
     changeset.files[1].hunks.clear();
@@ -5742,6 +5756,83 @@ fn split_empty_cells_use_default_gutter_and_hatched_fill() {
     assert_eq!(spans[1].content.as_ref(), "       ");
     assert_eq!(spans[1].style.bg, Some(DiffTheme::default().gutter_bg));
     assert_eq!(spans[2].style.fg, Some(DiffTheme::default().empty_diff));
+}
+
+#[test]
+fn split_wrapped_empty_cells_follow_visual_rows() {
+    let changeset = Changeset {
+        repo: PathBuf::from("/repo"),
+        title: "test".to_owned(),
+        files: vec![mark_diff::DiffFile {
+            old_path: Some("file.rs".to_owned()),
+            new_path: Some("file.rs".to_owned()),
+            status: FileStatus::Modified,
+            hunks: vec![mark_diff::DiffHunk {
+                header: "@@ -0,0 +1,2 @@".to_owned(),
+                old_start: 0,
+                old_count: 0,
+                new_start: 1,
+                new_count: 2,
+                lines: vec![
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        old_line: None,
+                        new_line: Some(1),
+                        text: "abcdefgh".to_owned(),
+                    },
+                    DiffLine {
+                        kind: DiffLineKind::Addition,
+                        old_line: None,
+                        new_line: Some(2),
+                        text: "ijkl".to_owned(),
+                    },
+                ],
+            }],
+            additions: 2,
+            deletions: 0,
+            is_binary: false,
+        }],
+        raw_patch: Vec::new(),
+    };
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
+    app.line_wrapping = true;
+    app.set_viewport_width(24);
+
+    let first_row = app.model.row(2).expect("first addition row should exist");
+    let second_row = app.model.row(3).expect("second addition row should exist");
+    let first = render_row_wrapped_with_focus(&mut app, 2, first_row, 24, None);
+    let second = render_row_wrapped_with_focus(&mut app, 3, second_row, 24, None);
+
+    let left_width = 12usize;
+    let content_offset = 1 + GUTTER_WIDTH.min(left_width.saturating_sub(1));
+    let content_width = split_cell_content_width(left_width);
+    let left_fill = |line: &Line<'_>| {
+        line_text(line)
+            .chars()
+            .skip(content_offset)
+            .take(content_width)
+            .collect::<String>()
+    };
+    let first_visual_row = app.wrapped_visual_scroll_for_model_row(2);
+    let second_visual_row = app.wrapped_visual_scroll_for_model_row(3);
+
+    assert_eq!(first.len(), 2);
+    assert_eq!(second.len(), 1);
+    assert_eq!(first_visual_row, 2);
+    assert_eq!(second_visual_row, 4);
+    assert_eq!(
+        left_fill(&first[0]),
+        empty_diff_fill_from(content_width, first_visual_row, content_offset)
+    );
+    assert_eq!(
+        left_fill(&first[1]),
+        empty_diff_fill_from(content_width, first_visual_row + 1, content_offset)
+    );
+    assert_eq!(
+        left_fill(&second[0]),
+        empty_diff_fill_from(content_width, second_visual_row, content_offset)
+    );
+    assert_ne!(left_fill(&first[0]), left_fill(&first[1]));
 }
 
 #[test]

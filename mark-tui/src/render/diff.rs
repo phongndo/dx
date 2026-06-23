@@ -431,7 +431,14 @@ pub(crate) fn render_context_line_wrapped(
             &app.grep_filter,
         ),
         DiffLayoutMode::Split => {
-            render_split_context_line_wrapped(&diff_line, syntax.as_ref(), row_index, width, theme)
+            let visual_row_start = app.wrapped_visual_scroll_for_model_row(row_index);
+            render_split_context_line_wrapped(
+                &diff_line,
+                syntax.as_ref(),
+                visual_row_start,
+                width,
+                theme,
+            )
         }
     }
 }
@@ -500,13 +507,14 @@ pub(crate) fn render_split_context_line_wrapped(
     for wrap_index in 0..rows {
         let left_scroll = wrapped_segment_scroll(&left_scrolls, text_width, wrap_index);
         let right_scroll = wrapped_segment_scroll(&right_scrolls, text_width, wrap_index);
+        let visual_row = row_index.saturating_add(wrap_index);
         let mut spans = split_cell_spans_at_scroll_with_focus_and_continuation(
             Some(line),
             syntax,
             &[],
             SplitCellRender {
                 side: SplitSide::Old,
-                row_index,
+                row_index: visual_row,
                 width: left_width,
                 theme,
             },
@@ -520,7 +528,7 @@ pub(crate) fn render_split_context_line_wrapped(
             &[],
             SplitCellRender {
                 side: SplitSide::New,
-                row_index,
+                row_index: visual_row,
                 width: right_width,
                 theme,
             },
@@ -1171,17 +1179,19 @@ pub(crate) fn render_split_line_wrapped_with_focus(
     let left_text_width = left_line.map(|line| line.text.width()).unwrap_or(0);
     let right_text_width = right_line.map(|line| line.text.width()).unwrap_or(0);
     let rows = left_scrolls.len().max(right_scrolls.len()).max(1);
+    let visual_row_start = app.wrapped_visual_scroll_for_model_row(row_index);
     let mut rendered_lines = Vec::with_capacity(rows);
     for wrap_index in 0..rows {
         let left_scroll = wrapped_segment_scroll(&left_scrolls, left_text_width, wrap_index);
         let right_scroll = wrapped_segment_scroll(&right_scrolls, right_text_width, wrap_index);
+        let visual_row = visual_row_start.saturating_add(wrap_index);
         let mut spans = split_cell_spans_at_scroll_with_focus_and_continuation(
             left_line,
             left_syntax.as_ref(),
             &left_inline,
             SplitCellRender {
                 side: SplitSide::Old,
-                row_index,
+                row_index: visual_row,
                 width: left_width,
                 theme,
             },
@@ -1195,7 +1205,7 @@ pub(crate) fn render_split_line_wrapped_with_focus(
             &right_inline,
             SplitCellRender {
                 side: SplitSide::New,
-                row_index,
+                row_index: visual_row,
                 width: right_width,
                 theme,
             },
