@@ -554,11 +554,13 @@ pub(crate) fn render_unified_line_at_scroll_with_focus(
         line,
         syntax,
         inline,
-        width,
-        theme,
-        horizontal_scroll,
-        focused,
-        false,
+        UnifiedLineRender {
+            width,
+            theme,
+            horizontal_scroll,
+            focused,
+            continuation: false,
+        },
     )
 }
 
@@ -580,11 +582,13 @@ pub(crate) fn render_unified_line_wrapped_with_focus(
             line,
             syntax,
             inline,
-            width,
-            theme,
-            horizontal_scroll,
-            focused,
-            wrap_index > 0,
+            UnifiedLineRender {
+                width,
+                theme,
+                horizontal_scroll,
+                focused,
+                continuation: wrap_index > 0,
+            },
         );
         lines.push(highlight_wrapped_unified_grep_line(
             rendered,
@@ -598,16 +602,29 @@ pub(crate) fn render_unified_line_wrapped_with_focus(
     lines
 }
 
-fn render_unified_line_segment_with_focus(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    inline: &[InlineRange],
+#[derive(Debug, Clone, Copy)]
+struct UnifiedLineRender {
     width: usize,
     theme: DiffTheme,
     horizontal_scroll: usize,
     focused: bool,
     continuation: bool,
+}
+
+fn render_unified_line_segment_with_focus(
+    line: &DiffLine,
+    syntax: Option<&HighlightedLine>,
+    inline: &[InlineRange],
+    render: UnifiedLineRender,
 ) -> Line<'static> {
+    let UnifiedLineRender {
+        width,
+        theme,
+        horizontal_scroll,
+        focused,
+        continuation,
+    } = render;
+
     if width == 0 {
         return Line::default();
     }
@@ -1186,26 +1203,41 @@ pub(crate) fn render_split_line_wrapped_with_focus(
             line,
             left_line,
             right_line,
-            &app.grep_filter,
-            width,
-            left_scroll,
-            right_scroll,
-            theme,
+            SplitGrepRender {
+                query: &app.grep_filter,
+                width,
+                left_scroll,
+                right_scroll,
+                theme,
+            },
         ));
     }
     rendered_lines
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SplitGrepRender<'a> {
+    query: &'a str,
+    width: usize,
+    left_scroll: usize,
+    right_scroll: usize,
+    theme: DiffTheme,
 }
 
 fn highlight_wrapped_split_grep_line(
     rendered: Line<'static>,
     left_line: Option<&DiffLine>,
     right_line: Option<&DiffLine>,
-    query: &str,
-    width: usize,
-    left_scroll: usize,
-    right_scroll: usize,
-    theme: DiffTheme,
+    render: SplitGrepRender<'_>,
 ) -> Line<'static> {
+    let SplitGrepRender {
+        query,
+        width,
+        left_scroll,
+        right_scroll,
+        theme,
+    } = render;
+
     if query.is_empty() {
         return rendered;
     }
