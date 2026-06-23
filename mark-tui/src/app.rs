@@ -22,7 +22,7 @@ use mark_syntax::{
 };
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc::Receiver, oneshot};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     controls::{
@@ -5320,14 +5320,7 @@ impl DiffApp {
         self.selected_grep_match = self
             .grep_matches
             .iter()
-            .position(|row| {
-                let scroll = if self.line_wrapping {
-                    self.wrapped_visual_scroll_for_model_row(*row)
-                } else {
-                    *row
-                };
-                scroll >= self.scroll
-            })
+            .position(|row| self.grep_match_is_visible_or_below_scroll(*row))
             .or_else(|| self.grep_matches.len().checked_sub(1));
     }
 
@@ -5347,14 +5340,7 @@ impl DiffApp {
         let current = self.selected_grep_match.unwrap_or_else(|| {
             self.grep_matches
                 .iter()
-                .position(|row| {
-                    let scroll = if self.line_wrapping {
-                        self.wrapped_visual_scroll_for_model_row(*row)
-                    } else {
-                        *row
-                    };
-                    scroll >= self.scroll
-                })
+                .position(|row| self.grep_match_is_visible_or_below_scroll(*row))
                 .unwrap_or(0)
         });
         let next = if delta < 0 {
@@ -5369,6 +5355,20 @@ impl DiffApp {
         self.selected_grep_match = Some(next);
         self.set_scroll_for_grep_navigation(self.grep_matches[next]);
         self.dirty = true;
+    }
+
+    fn grep_match_is_visible_or_below_scroll(&self, row: usize) -> bool {
+        let scroll = self.scroll_for_model_row(row);
+        if !self.line_wrapping {
+            return scroll >= self.scroll;
+        }
+
+        let height = self
+            .model
+            .row(row)
+            .map(|row| self.wrapped_visual_height_for_row(row))
+            .unwrap_or(1);
+        scroll.saturating_add(height) > self.scroll
     }
 
     pub(crate) fn set_scroll_for_grep_navigation(&mut self, row: usize) {
@@ -6126,9 +6126,44 @@ pub(crate) fn split_cell_content_width(width: usize) -> usize {
 }
 
 pub(crate) fn wrapped_line_count(text: &str, content_width: usize) -> usize {
+    let mut count = 1usize;
+    for_wrapped_line_start_after_first(text, content_width, |_| {
+        count = count.saturating_add(1);
+    });
+    count
+}
+
+pub(crate) fn wrapped_line_start_columns(text: &str, content_width: usize) -> Vec<usize> {
+    let mut starts = vec![0];
+    for_wrapped_line_start_after_first(text, content_width, |start| starts.push(start));
+    starts
+}
+
+fn for_wrapped_line_start_after_first(
+    text: &str,
+    content_width: usize,
+    mut visit: impl FnMut(usize),
+) {
     if content_width == 0 {
-        return 1;
+        return;
     }
 
-    (text.width().saturating_add(content_width - 1) / content_width.max(1)).max(1)
+    let mut line_width = 0usize;
+    let mut consumed_width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if ch_width == 0 {
+            continue;
+        }
+
+        if line_width == content_width
+            || (line_width > 0 && line_width.saturating_add(ch_width) > content_width)
+        {
+            visit(consumed_width);
+            line_width = 0;
+        }
+
+        line_width = line_width.saturating_add(ch_width);
+        consumed_width = consumed_width.saturating_add(ch_width);
+    }
 }

@@ -2092,6 +2092,33 @@ fn n_and_p_navigate_grep_by_line_not_match_count() {
 }
 
 #[test]
+fn wrapped_grep_selection_stays_on_visible_continuation_row() {
+    let changeset = changeset_with_line_texts(&["needle abcdefghijkl", "other", "needle second"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.line_wrapping = true;
+    app.set_viewport_width(18);
+    app.set_viewport_rows(2);
+    app.grep_filter = "needle".to_owned();
+    app.apply_filters(true);
+
+    assert_eq!(app.grep_matches.len(), 2);
+    let first = app.grep_matches[0];
+    let second = app.grep_matches[1];
+    let continuation_scroll = app
+        .wrapped_visual_scroll_for_model_row(first)
+        .saturating_add(1);
+
+    app.set_scroll(continuation_scroll);
+
+    assert_eq!(app.current_grep_match_row(), Some(first));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
+        .expect("n should move to the next grep match");
+
+    assert_eq!(app.current_grep_match_row(), Some(second));
+}
+
+#[test]
 fn grep_match_stays_centered_after_viewport_rows_are_known() {
     let changeset = changeset_with_line_texts(&[
         "other 0", "other 1", "other 2", "other 3", "other 4", "needle", "other 6", "other 7",
@@ -4075,6 +4102,40 @@ fn line_wrapping_wraps_long_unified_rows() {
     assert!(rendered[0].contains("abcd"));
     assert!(rendered[1].contains("efgh"));
     assert!(rendered[2].contains("ijkl"));
+}
+
+#[test]
+fn line_wrapping_preserves_wide_glyphs_at_unified_wrap_boundary() {
+    let changeset = changeset_with_line_text("abc界def");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.line_wrapping = true;
+
+    let row_index = 2;
+    let row = app.model.row(row_index).expect("diff line should exist");
+    let lines = render_row_wrapped_with_focus(&mut app, row_index, row, 18, None);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(rendered.len(), 3);
+    assert!(rendered[0].contains("abc"));
+    assert!(rendered[1].contains("界de"));
+    assert!(rendered[2].contains('f'));
+}
+
+#[test]
+fn line_wrapping_preserves_wide_glyphs_at_split_wrap_boundary() {
+    let changeset = changeset_with_line_text("abc界def");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
+    app.line_wrapping = true;
+
+    let row_index = 2;
+    let row = app.model.row(row_index).expect("diff line should exist");
+    let lines = render_row_wrapped_with_focus(&mut app, row_index, row, 24, None);
+    let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+
+    assert_eq!(rendered.len(), 3);
+    assert!(rendered[0].contains("abc"));
+    assert!(rendered[1].contains("界de"));
+    assert!(rendered[2].contains('f'));
 }
 
 #[test]

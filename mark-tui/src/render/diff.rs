@@ -6,9 +6,10 @@ use ratatui::{
     prelude::{Color, Line, Modifier, Span, Style, Text},
     widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{DiffApp, split_cell_content_width, unified_content_width, wrapped_line_count},
+    app::{DiffApp, split_cell_content_width, unified_content_width, wrapped_line_start_columns},
     controls::DiffLayoutMode,
     model::UiRow,
     render::{
@@ -491,10 +492,14 @@ pub(crate) fn render_split_context_line_wrapped(
     let right_width = width.saturating_sub(left_width);
     let left_content_width = split_cell_content_width(left_width);
     let right_content_width = split_cell_content_width(right_width);
-    let rows = wrapped_line_count(&line.text, left_content_width)
-        .max(wrapped_line_count(&line.text, right_content_width));
+    let left_scrolls = wrapped_line_start_columns(&line.text, left_content_width);
+    let right_scrolls = wrapped_line_start_columns(&line.text, right_content_width);
+    let text_width = line.text.width();
+    let rows = left_scrolls.len().max(right_scrolls.len());
     let mut lines = Vec::with_capacity(rows);
     for wrap_index in 0..rows {
+        let left_scroll = wrapped_segment_scroll(&left_scrolls, text_width, wrap_index);
+        let right_scroll = wrapped_segment_scroll(&right_scrolls, text_width, wrap_index);
         let mut spans = split_cell_spans_at_scroll_with_focus_and_continuation(
             Some(line),
             syntax,
@@ -505,7 +510,7 @@ pub(crate) fn render_split_context_line_wrapped(
                 width: left_width,
                 theme,
             },
-            wrap_index.saturating_mul(left_content_width),
+            left_scroll,
             false,
             wrap_index > 0,
         );
@@ -519,7 +524,7 @@ pub(crate) fn render_split_context_line_wrapped(
                 width: right_width,
                 theme,
             },
-            wrap_index.saturating_mul(right_content_width),
+            right_scroll,
             false,
             wrap_index > 0,
         ));
@@ -581,10 +586,9 @@ pub(crate) fn render_unified_line_wrapped_with_focus(
     grep_filter: &str,
 ) -> Vec<Line<'static>> {
     let content_width = unified_content_width(width);
-    let rows = wrapped_line_count(&line.text, content_width);
-    let mut lines = Vec::with_capacity(rows);
-    for wrap_index in 0..rows {
-        let horizontal_scroll = wrap_index.saturating_mul(content_width);
+    let scrolls = wrapped_line_start_columns(&line.text, content_width);
+    let mut lines = Vec::with_capacity(scrolls.len());
+    for (wrap_index, horizontal_scroll) in scrolls.iter().copied().enumerate() {
         let rendered = render_unified_line_segment_with_focus(
             line,
             syntax,
@@ -1158,17 +1162,19 @@ pub(crate) fn render_split_line_wrapped_with_focus(
     let right_line = right.and_then(|index| lines.get(index));
     let left_content_width = split_cell_content_width(left_width);
     let right_content_width = split_cell_content_width(right_width);
-    let left_rows = left_line
-        .map(|line| wrapped_line_count(&line.text, left_content_width))
-        .unwrap_or(1);
-    let right_rows = right_line
-        .map(|line| wrapped_line_count(&line.text, right_content_width))
-        .unwrap_or(1);
-    let rows = left_rows.max(right_rows).max(1);
+    let left_scrolls = left_line
+        .map(|line| wrapped_line_start_columns(&line.text, left_content_width))
+        .unwrap_or_else(|| vec![0]);
+    let right_scrolls = right_line
+        .map(|line| wrapped_line_start_columns(&line.text, right_content_width))
+        .unwrap_or_else(|| vec![0]);
+    let left_text_width = left_line.map(|line| line.text.width()).unwrap_or(0);
+    let right_text_width = right_line.map(|line| line.text.width()).unwrap_or(0);
+    let rows = left_scrolls.len().max(right_scrolls.len()).max(1);
     let mut rendered_lines = Vec::with_capacity(rows);
     for wrap_index in 0..rows {
-        let left_scroll = wrap_index.saturating_mul(left_content_width);
-        let right_scroll = wrap_index.saturating_mul(right_content_width);
+        let left_scroll = wrapped_segment_scroll(&left_scrolls, left_text_width, wrap_index);
+        let right_scroll = wrapped_segment_scroll(&right_scrolls, right_text_width, wrap_index);
         let mut spans = split_cell_spans_at_scroll_with_focus_and_continuation(
             left_line,
             left_syntax.as_ref(),
@@ -1212,6 +1218,10 @@ pub(crate) fn render_split_line_wrapped_with_focus(
         ));
     }
     rendered_lines
+}
+
+fn wrapped_segment_scroll(starts: &[usize], text_width: usize, wrap_index: usize) -> usize {
+    starts.get(wrap_index).copied().unwrap_or(text_width)
 }
 
 #[derive(Debug, Clone, Copy)]
