@@ -58,11 +58,11 @@ next_diff_type = "tab"
 previous_diff_type = "shift-tab"
 
 [keymap.menu]
-up = ["k", "up", "shift-tab", "ctrl-p"]
-down = ["j", "down", "tab", "ctrl-n"]
-select = "space"
+up = ["up", "shift-tab", "ctrl-p"]
+down = ["down", "tab", "ctrl-n"]
+select = []
 confirm = "enter"
-close = ["esc", "q"]
+close = "esc"
 ```
 
 ## Syntax mode
@@ -159,7 +159,8 @@ prefetch_viewports = 1
 ## Keybindings
 
 Global multi-key bindings must start with the configured leader key. Menu
-bindings are single-key and apply to the options menu.
+bindings are single-key and apply to searchable menus. Printable menu bindings
+override text input, so prefer non-printing keys to keep type-to-filter behavior.
 
 Bindings can be a string or a list of strings:
 
@@ -172,11 +173,11 @@ grep = ", /"
 quit = "q"
 
 [keymap.menu]
-up = ["k", "up"]
-down = ["j", "down"]
-select = "space"
+up = ["up", "ctrl-p"]
+down = ["down", "ctrl-n"]
+select = []
 confirm = "enter"
-close = ["esc", "q"]
+close = "esc"
 ```
 
 Key names include printable characters plus names such as `space`, `enter`,

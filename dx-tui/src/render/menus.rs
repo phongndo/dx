@@ -8,17 +8,15 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{DiffApp, OptionsMenuItem, color_scheme_label, context_expansion_label},
+    app::{COLOR_SCHEME_CHOICES, DiffApp, OptionsMenuItem, color_scheme_label, option_label},
     controls::{BranchMenu, DiffChoice, INPUT_CURSOR},
-    keymap::{Keymap, MenuAction},
+    keymap::Keymap,
     render::{
         style::{base_bg, header_bg},
         text::fit_padded,
     },
     theme::{
-        DiffTheme, HELP_KEY_COLUMN_WIDTH, HELP_MENU_COLUMN_GAP, HELP_MENU_HORIZONTAL_PADDING,
-        HELP_MENU_LEFT_ROWS, HELP_MENU_RIGHT_ROWS, HELP_MENU_TWO_COLUMN_MIN_WIDTH,
-        HELP_MENU_VERTICAL_PADDING, HELP_MENU_WIDTH, HelpMenuKey, HelpMenuRow,
+        DiffTheme, HELP_KEY_COLUMN_WIDTH, HELP_MENU_ROWS, HELP_MENU_WIDTH, HelpMenuKey, HelpMenuRow,
     },
 };
 
@@ -264,14 +262,16 @@ fn selector_entry_line(
     ))
 }
 
-pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
+pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
     if !app.options_menu_open || area.width < 24 || area.height < 5 {
         return;
     }
 
-    let width = options_menu_width(app).min(area.width);
-    let items = app.options_menu_items();
-    let height = (items.len() as u16).saturating_add(3).min(area.height);
+    let items = app.filtered_options_menu_items();
+    let width = options_menu_width(app, &items).min(area.width);
+    let height = (items.len().max(1) as u16)
+        .saturating_add(4)
+        .min(area.height);
     if width == 0 || height == 0 {
         return;
     }
@@ -284,41 +284,44 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect
     };
     let block = options_menu_block(app.theme);
     let inner = block.inner(menu_area);
-    let selected = app.options_menu_selected.min(items.len().saturating_sub(1));
-    let mut lines: Vec<_> = items
-        .iter()
-        .enumerate()
-        .take(inner.height.saturating_sub(1) as usize)
-        .map(|(index, item)| {
-            let highlighted = index == selected;
-            let cursor = if highlighted { "›" } else { " " };
-            let label = option_label(*item);
-            let value = option_value(app, *item);
-            let left = format!(" {cursor} {label}");
-            let available = inner.width as usize;
-            let gap = available.saturating_sub(left.width().saturating_add(value.width()));
-            let text = fit_padded(
-                &format!("{left}{}{}", " ".repeat(gap.max(2)), value),
-                available,
-            );
-            let mut style = Style::default()
-                .fg(app.theme.foreground)
-                .bg(base_bg(app.theme));
-            if highlighted {
-                style = style
-                    .fg(app.theme.header)
-                    .bg(header_bg(app.theme))
-                    .add_modifier(Modifier::BOLD);
-            }
-            Line::from(Span::styled(text, style))
-        })
-        .collect();
+    let remaining_rows = inner.height.saturating_sub(2) as usize;
+    app.ensure_options_menu_selection_visible(remaining_rows);
 
-    if inner.height as usize > lines.len() {
-        lines.push(Line::from(Span::styled(
-            fit_padded(&options_menu_footer(&app.keymap), inner.width as usize),
-            Style::default().fg(app.theme.muted).bg(base_bg(app.theme)),
-        )));
+    let selected = app.options_menu_selected.min(items.len().saturating_sub(1));
+    let mut lines = vec![selector_input_line(
+        &app.options_menu_input,
+        inner.width as usize,
+        app.theme,
+        items.len(),
+        app.options_menu_items().len(),
+    )];
+    lines.push(selector_separator_line(inner.width as usize, app.theme));
+    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    if items.is_empty() {
+        if remaining_rows > 0 {
+            lines.push(selector_empty_line(
+                " no matching settings",
+                inner.width as usize,
+                app.theme,
+            ));
+        }
+    } else {
+        lines.extend(
+            items
+                .iter()
+                .enumerate()
+                .skip(app.options_menu_scroll)
+                .take(remaining_rows)
+                .map(|(index, item)| {
+                    selector_setting_line(
+                        option_label(*item),
+                        &app.option_value(*item),
+                        inner.width as usize,
+                        app.theme,
+                        index == selected,
+                    )
+                }),
+        );
     }
 
     frame.render_widget(Clear, menu_area);
@@ -333,89 +336,49 @@ pub(crate) fn options_menu_block(theme: DiffTheme) -> Block<'static> {
     let bg = base_bg(theme);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.muted).bg(bg))
+        .border_style(Style::default().fg(selector_border_color(theme)).bg(bg))
         .style(Style::default().bg(bg))
         .padding(Padding::horizontal(1))
         .title(Line::from(Span::styled(
-            " options ",
+            " Settings ",
             Style::default()
-                .fg(theme.header)
+                .fg(selector_title_color(theme))
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )))
+        .title_alignment(Alignment::Center)
 }
 
-fn options_menu_width(app: &DiffApp) -> u16 {
-    let footer = options_menu_footer(&app.keymap).width();
-    let rows = app
-        .options_menu_items()
+fn options_menu_width(app: &DiffApp, items: &[OptionsMenuItem]) -> u16 {
+    let input = app.options_menu_input.width().saturating_add(12);
+    let rows = items
         .iter()
-        .map(|item| format!(" › {}  {} ", option_label(*item), option_value(app, *item)).width())
+        .map(|item| format!(" › {}  {} ", option_label(*item), app.option_value(*item)).width())
         .max()
-        .unwrap_or_default();
-    rows.max(footer).max(36).saturating_add(4).min(72) as u16
+        .unwrap_or_else(|| " no matching settings ".width());
+    rows.max(input).max(42).saturating_add(4).min(88) as u16
 }
 
-fn options_menu_footer(keymap: &Keymap) -> String {
-    format!(
-        " {} move · {} toggle/open · {} apply/open · {} close ",
-        menu_move_label(keymap),
-        keymap.menu_action_label(MenuAction::Select),
-        keymap.menu_action_label(MenuAction::Confirm),
-        keymap.menu_action_label(MenuAction::Close),
-    )
-}
+fn selector_setting_line(
+    label: &str,
+    value: &str,
+    width: usize,
+    theme: DiffTheme,
+    highlighted: bool,
+) -> Line<'static> {
+    let left = format!(" {label}");
+    let value_width = value.width();
+    let text = if value_width == 0 || width <= value_width.saturating_add(2) {
+        format!("{left}  {value}")
+    } else {
+        let left_width = width.saturating_sub(value_width).saturating_sub(1);
+        format!("{} {value}", fit_padded(&left, left_width))
+    };
 
-fn menu_move_label(keymap: &Keymap) -> String {
-    format!(
-        "{}/{}",
-        keymap.menu_action_label(MenuAction::Down),
-        keymap.menu_action_label(MenuAction::Up)
-    )
-}
-
-fn option_label(item: OptionsMenuItem) -> &'static str {
-    match item {
-        OptionsMenuItem::BranchHead => "Head branch",
-        OptionsMenuItem::BranchBase => "Base branch",
-        OptionsMenuItem::Layout => "Layout",
-        OptionsMenuItem::FileSidebar => "File sidebar",
-        OptionsMenuItem::IncludeUntracked => "Include untracked",
-        OptionsMenuItem::LiveReload => "Live reload",
-        OptionsMenuItem::ContextExpansion => "Context expand",
-        OptionsMenuItem::ColorScheme => "Colorscheme",
-    }
-}
-
-fn option_value(app: &DiffApp, item: OptionsMenuItem) -> String {
-    match item {
-        OptionsMenuItem::BranchHead => branch_option_value(app, crate::controls::BranchMenu::Head),
-        OptionsMenuItem::BranchBase => branch_option_value(app, crate::controls::BranchMenu::Base),
-        OptionsMenuItem::Layout => match app.options_menu_draft.layout {
-            crate::controls::DiffLayoutMode::Split => "split".to_owned(),
-            crate::controls::DiffLayoutMode::Unified => "unified".to_owned(),
-        },
-        OptionsMenuItem::FileSidebar => on_off(app.options_menu_draft.file_sidebar_open),
-        OptionsMenuItem::IncludeUntracked => on_off(app.options_menu_draft.include_untracked),
-        OptionsMenuItem::LiveReload if !app.live_updates_allowed => "disabled".to_owned(),
-        OptionsMenuItem::LiveReload => on_off(app.options_menu_draft.live_updates_enabled),
-        OptionsMenuItem::ContextExpansion => {
-            context_expansion_label(app.options_menu_draft.context_expansion)
-        }
-        OptionsMenuItem::ColorScheme => {
-            color_scheme_label(app.options_menu_draft.color_scheme).to_owned()
-        }
-    }
-}
-
-fn branch_option_value(app: &DiffApp, menu: crate::controls::BranchMenu) -> String {
-    app.branch_ref(menu)
-        .map(|branch| app.branch_label(menu, branch))
-        .unwrap_or_else(|| "unavailable".to_owned())
-}
-
-fn on_off(enabled: bool) -> String {
-    if enabled { "on" } else { "off" }.to_owned()
+    Line::from(Span::styled(
+        fit_padded(&text, width),
+        selector_row_style(theme, highlighted),
+    ))
 }
 
 pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
@@ -439,65 +402,40 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &DiffApp, are
     };
     let block = color_scheme_picker_block(app.theme);
     let inner = block.inner(picker_area);
-    let mut lines = Vec::new();
-    let input = if app.color_scheme_input.is_empty() {
-        INPUT_CURSOR.to_owned()
-    } else {
-        format!("{}{}", app.color_scheme_input, INPUT_CURSOR)
-    };
-    lines.push(Line::from(Span::styled(
-        fit_padded(&format!(" filter {input}"), inner.width as usize),
-        Style::default()
-            .fg(app.theme.foreground)
-            .bg(base_bg(app.theme)),
-    )));
-
     let choices = app.filtered_color_schemes();
+    let mut lines = vec![selector_input_line(
+        &app.color_scheme_input,
+        inner.width as usize,
+        app.theme,
+        choices.len(),
+        COLOR_SCHEME_CHOICES.len(),
+    )];
+    lines.push(selector_separator_line(inner.width as usize, app.theme));
+
+    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
     if choices.is_empty() {
-        lines.push(Line::from(Span::styled(
-            fit_padded(" no matching colorscheme", inner.width as usize),
-            Style::default().fg(app.theme.muted).bg(base_bg(app.theme)),
-        )));
+        if remaining_rows > 0 {
+            lines.push(selector_empty_line(
+                " no matching colorscheme",
+                inner.width as usize,
+                app.theme,
+            ));
+        }
     } else {
         lines.extend(
             choices
                 .iter()
                 .enumerate()
                 .skip(app.color_scheme_scroll)
-                .take(inner.height.saturating_sub(2) as usize)
+                .take(remaining_rows)
                 .map(|(index, choice)| {
                     let highlighted = index == app.color_scheme_selected;
                     let active = *choice == app.options_menu_draft.color_scheme;
-                    let cursor = if highlighted { "›" } else { " " };
-                    let marker = if active { "✓" } else { " " };
                     let label = color_scheme_label(*choice);
-                    let text =
-                        fit_padded(&format!(" {cursor} {marker} {label}"), inner.width as usize);
-                    let mut style = Style::default()
-                        .fg(app.theme.foreground)
-                        .bg(base_bg(app.theme));
-                    if active {
-                        style = style.add_modifier(Modifier::BOLD);
-                    }
-                    if highlighted {
-                        style = style
-                            .fg(app.theme.header)
-                            .bg(header_bg(app.theme))
-                            .add_modifier(Modifier::BOLD);
-                    }
-                    Line::from(Span::styled(text, style))
+                    let detail = if active { "current" } else { "" };
+                    selector_entry_line(label, detail, inner.width as usize, app.theme, highlighted)
                 }),
         );
-    }
-
-    if inner.height as usize > lines.len() {
-        lines.push(Line::from(Span::styled(
-            fit_padded(
-                " type filter · j/k move · Enter choose · Esc close ",
-                inner.width as usize,
-            ),
-            Style::default().fg(app.theme.muted).bg(base_bg(app.theme)),
-        )));
     }
 
     frame.render_widget(Clear, picker_area);
@@ -512,35 +450,28 @@ pub(crate) fn color_scheme_picker_block(theme: DiffTheme) -> Block<'static> {
     let bg = base_bg(theme);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.muted).bg(bg))
+        .border_style(Style::default().fg(selector_border_color(theme)).bg(bg))
         .style(Style::default().bg(bg))
         .padding(Padding::horizontal(1))
         .title(Line::from(Span::styled(
-            " colorscheme ",
+            " Colorscheme ",
             Style::default()
-                .fg(theme.header)
+                .fg(selector_title_color(theme))
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )))
+        .title_alignment(Alignment::Center)
 }
 
 fn color_scheme_picker_width(app: &DiffApp) -> u16 {
-    let footer = " type filter · j/k move · Enter choose · Esc close ".width();
-    let input = app
-        .color_scheme_input
-        .width()
-        .saturating_add(" filter ".width() + 1);
+    let input = app.color_scheme_input.width().saturating_add(12);
     let rows = app
         .filtered_color_schemes()
         .iter()
-        .map(|choice| format!(" › ✓ {} ", color_scheme_label(*choice)).width())
+        .map(|choice| format!(" › {}  current ", color_scheme_label(*choice)).width())
         .max()
         .unwrap_or_else(|| " no matching colorscheme ".width());
-    rows.max(input)
-        .max(footer)
-        .max(36)
-        .saturating_add(4)
-        .min(64) as u16
+    rows.max(input).max(42).saturating_add(4).min(64) as u16
 }
 
 pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
@@ -639,20 +570,16 @@ pub(crate) fn branch_menu_block(theme: DiffTheme, menu: BranchMenu) -> Block<'st
         .title_alignment(Alignment::Center)
 }
 
-pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
+pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
     if !app.help_menu_open || area.width < 4 || area.height < 3 {
         return;
     }
 
-    let width = HELP_MENU_WIDTH.min(area.width);
-    let content_width = width
-        .saturating_sub(2)
-        .saturating_sub(HELP_MENU_HORIZONTAL_PADDING.saturating_mul(2))
-        as usize;
-    let desired_height = (help_menu_content_rows(content_width) as u16)
-        .saturating_add(2)
-        .saturating_add(HELP_MENU_VERTICAL_PADDING.saturating_mul(2));
-    let height = desired_height.min(area.height);
+    let rows = app.filtered_help_menu_rows();
+    let width = help_menu_width(app, &rows).min(area.width);
+    let height = (rows.len().max(1) as u16)
+        .saturating_add(4)
+        .min(area.height);
     if height == 0 {
         return;
     }
@@ -666,17 +593,49 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
 
     let block = help_menu_block(app.theme);
     let inner = block.inner(menu_area);
+    let remaining_rows = inner.height.saturating_sub(2) as usize;
+    app.ensure_help_menu_selection_visible(remaining_rows);
+
+    let selected = app.help_menu_selected.min(rows.len().saturating_sub(1));
+    let mut lines = vec![selector_input_line(
+        &app.help_menu_input,
+        inner.width as usize,
+        app.theme,
+        rows.len(),
+        HELP_MENU_ROWS.len(),
+    )];
+    lines.push(selector_separator_line(inner.width as usize, app.theme));
+    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    if rows.is_empty() {
+        if remaining_rows > 0 {
+            lines.push(selector_empty_line(
+                " no matching keybindings",
+                inner.width as usize,
+                app.theme,
+            ));
+        }
+    } else {
+        lines.extend(
+            rows.iter()
+                .enumerate()
+                .skip(app.help_menu_scroll)
+                .take(remaining_rows)
+                .map(|(index, row)| {
+                    help_menu_row_line(
+                        *row,
+                        inner.width as usize,
+                        app.theme,
+                        &app.keymap,
+                        index == selected,
+                    )
+                }),
+        );
+    }
 
     frame.render_widget(Clear, menu_area);
     frame.render_widget(block, menu_area);
     frame.render_widget(
-        Paragraph::new(Text::from(help_menu_lines(
-            inner.width as usize,
-            inner.height as usize,
-            app.theme,
-            &app.keymap,
-        )))
-        .style(Style::default().bg(help_menu_bg(app.theme))),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(help_menu_bg(app.theme))),
         inner,
     );
 }
@@ -685,29 +644,26 @@ pub(crate) fn help_menu_block(theme: DiffTheme) -> Block<'static> {
     let bg = help_menu_bg(theme);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme.muted).bg(bg))
+        .border_style(Style::default().fg(selector_border_color(theme)).bg(bg))
         .style(Style::default().bg(bg))
-        .padding(Padding::new(
-            HELP_MENU_HORIZONTAL_PADDING,
-            HELP_MENU_HORIZONTAL_PADDING,
-            HELP_MENU_VERTICAL_PADDING,
-            HELP_MENU_VERTICAL_PADDING,
-        ))
+        .padding(Padding::horizontal(1))
         .title(Line::from(Span::styled(
-            " keybindings ",
+            " Keybindings ",
             Style::default()
-                .fg(help_menu_title_color(theme))
+                .fg(selector_title_color(theme))
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         )))
+        .title_alignment(Alignment::Center)
 }
 
 pub(crate) fn help_menu_bg(theme: DiffTheme) -> Color {
     base_bg(theme)
 }
 
+#[cfg(test)]
 pub(crate) fn help_menu_title_color(theme: DiffTheme) -> Color {
-    theme.syntax.keyword.unwrap_or(theme.hunk)
+    selector_title_color(theme)
 }
 
 pub(crate) fn help_menu_section_color(theme: DiffTheme) -> Color {
@@ -722,66 +678,49 @@ pub(crate) fn help_menu_description_color(theme: DiffTheme) -> Color {
     theme.foreground
 }
 
+fn help_menu_width(app: &DiffApp, rows: &[HelpMenuRow]) -> u16 {
+    let input = app.help_menu_input.width().saturating_add(12);
+    let rows = rows
+        .iter()
+        .map(|row| help_menu_row_text(*row, &app.keymap).width())
+        .max()
+        .unwrap_or_else(|| " no matching keybindings ".width());
+    rows.max(input)
+        .max(42)
+        .saturating_add(4)
+        .min(HELP_MENU_WIDTH as usize) as u16
+}
+
+fn help_menu_row_text(row: HelpMenuRow, keymap: &Keymap) -> String {
+    match row {
+        HelpMenuRow::Section(section) => format!(" {section}"),
+        HelpMenuRow::Binding(keys, description) => {
+            format!(" {}{}", help_menu_key_label(keys, keymap), description)
+        }
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn help_menu_lines(
     width: usize,
     height: usize,
     theme: DiffTheme,
     keymap: &Keymap,
 ) -> Vec<Line<'static>> {
-    if help_menu_uses_two_columns(width) {
-        return (0..height.min(help_menu_content_rows(width)))
-            .map(|index| help_menu_columns_line(index, width, theme, keymap))
-            .collect();
-    }
-
-    HELP_MENU_LEFT_ROWS
+    HELP_MENU_ROWS
         .iter()
-        .chain(HELP_MENU_RIGHT_ROWS)
         .take(height)
-        .map(|row| Line::from(help_menu_row_spans(*row, width, theme, keymap)))
+        .map(|row| help_menu_row_line(*row, width, theme, keymap, false))
         .collect()
 }
 
-pub(crate) fn help_menu_columns_line(
-    index: usize,
-    width: usize,
-    theme: DiffTheme,
-    keymap: &Keymap,
-) -> Line<'static> {
-    let gap_width = HELP_MENU_COLUMN_GAP.min(width);
-    let left_width = width.saturating_sub(gap_width) / 2;
-    let right_width = width.saturating_sub(left_width).saturating_sub(gap_width);
-    let bg = help_menu_bg(theme);
-
-    let mut spans = help_menu_row_at(HELP_MENU_LEFT_ROWS, index)
-        .map(|row| help_menu_row_spans(row, left_width, theme, keymap))
-        .unwrap_or_else(|| help_menu_empty_spans(left_width, bg));
-    spans.push(Span::styled(" ".repeat(gap_width), Style::default().bg(bg)));
-    spans.extend(
-        help_menu_row_at(HELP_MENU_RIGHT_ROWS, index)
-            .map(|row| help_menu_row_spans(row, right_width, theme, keymap))
-            .unwrap_or_else(|| help_menu_empty_spans(right_width, bg)),
-    );
-
-    Line::from(spans)
-}
-
-pub(crate) fn help_menu_row_at(rows: &[HelpMenuRow], index: usize) -> Option<HelpMenuRow> {
-    rows.get(index).copied()
-}
-
+#[cfg(test)]
 pub(crate) fn help_menu_content_rows(width: usize) -> usize {
-    if help_menu_uses_two_columns(width) {
-        HELP_MENU_LEFT_ROWS.len().max(HELP_MENU_RIGHT_ROWS.len())
-    } else {
-        HELP_MENU_LEFT_ROWS.len() + HELP_MENU_RIGHT_ROWS.len()
-    }
+    let _ = width;
+    HELP_MENU_ROWS.len()
 }
 
-pub(crate) fn help_menu_uses_two_columns(width: usize) -> bool {
-    width >= HELP_MENU_TWO_COLUMN_MIN_WIDTH
-}
-
+#[cfg(test)]
 pub(crate) fn help_menu_row_spans(
     row: HelpMenuRow,
     width: usize,
@@ -820,6 +759,57 @@ pub(crate) fn help_menu_row_spans(
     }
 }
 
+pub(crate) fn help_menu_row_line(
+    row: HelpMenuRow,
+    width: usize,
+    theme: DiffTheme,
+    keymap: &Keymap,
+    highlighted: bool,
+) -> Line<'static> {
+    match row {
+        HelpMenuRow::Section(section) => {
+            let mut style = Style::default()
+                .fg(help_menu_section_color(theme))
+                .bg(help_menu_bg(theme))
+                .add_modifier(Modifier::BOLD);
+            if highlighted {
+                style = selector_row_style(theme, true);
+            }
+            Line::from(Span::styled(
+                fit_padded(&format!(" {section}"), width),
+                style,
+            ))
+        }
+        HelpMenuRow::Binding(keys, description) => {
+            let key_label = help_menu_key_label(keys, keymap);
+            let key_width = HELP_KEY_COLUMN_WIDTH.min(width);
+            let description_width = width.saturating_sub(key_width);
+            let key_style = if highlighted {
+                selector_row_style(theme, true)
+            } else {
+                Style::default()
+                    .fg(help_menu_key_color(theme))
+                    .bg(help_menu_bg(theme))
+                    .add_modifier(Modifier::BOLD)
+            };
+            let description_style = if highlighted {
+                selector_row_style(theme, true)
+            } else {
+                Style::default()
+                    .fg(help_menu_description_color(theme))
+                    .bg(help_menu_bg(theme))
+            };
+            Line::from(vec![
+                Span::styled(fit_padded(&format!(" {key_label}"), key_width), key_style),
+                Span::styled(
+                    fit_padded(description, description_width),
+                    description_style,
+                ),
+            ])
+        }
+    }
+}
+
 pub(crate) fn help_menu_key_label(key: HelpMenuKey, keymap: &Keymap) -> String {
     match key {
         HelpMenuKey::Static(label) => label.to_owned(),
@@ -831,10 +821,6 @@ pub(crate) fn help_menu_key_label(key: HelpMenuKey, keymap: &Keymap) -> String {
             keymap.global_action_label(second)
         ),
     }
-}
-
-pub(crate) fn help_menu_empty_spans(width: usize, bg: Color) -> Vec<Span<'static>> {
-    vec![Span::styled(" ".repeat(width), Style::default().bg(bg))]
 }
 
 pub(crate) fn diff_selector_text(options: &DiffOptions) -> String {

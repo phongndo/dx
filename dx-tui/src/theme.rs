@@ -52,10 +52,6 @@ pub(crate) const STATUSLINE_INFO_BG: Color = Color::Rgb(0x48, 0x49, 0x52);
 pub(crate) const STATUSLINE_INFO_FG: Color = Color::Rgb(0xd7, 0xd6, 0xe8);
 pub(crate) const STATUSLINE_SELECTOR_GAP: &str = " ";
 pub(crate) const HELP_MENU_WIDTH: u16 = 90;
-pub(crate) const HELP_MENU_HORIZONTAL_PADDING: u16 = 2;
-pub(crate) const HELP_MENU_VERTICAL_PADDING: u16 = 1;
-pub(crate) const HELP_MENU_TWO_COLUMN_MIN_WIDTH: usize = 64;
-pub(crate) const HELP_MENU_COLUMN_GAP: usize = 4;
 pub(crate) const HELP_KEY_COLUMN_WIDTH: usize = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,9 +68,9 @@ pub(crate) enum HelpMenuRow {
     Binding(HelpMenuKey, &'static str),
 }
 
-pub(crate) const HELP_MENU_LEFT_ROWS: &[HelpMenuRow] = &[
+pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Global"),
-    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Help), "toggle this help"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Help), "open keybindings"),
     HelpMenuRow::Binding(HelpMenuKey::Leader, "leader"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Quit), "quit"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-C"), "force quit"),
@@ -94,9 +90,6 @@ pub(crate) const HELP_MENU_LEFT_ROWS: &[HelpMenuRow] = &[
         HelpMenuKey::GlobalPair(GlobalAction::NextDiffType, GlobalAction::PreviousDiffType),
         "cycle diff type",
     ),
-];
-
-pub(crate) const HELP_MENU_RIGHT_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Actions"),
     HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::FileFilter),
@@ -113,7 +106,7 @@ pub(crate) const HELP_MENU_RIGHT_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::DiffMenu), "diff selector"),
     HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::OptionsMenu),
-        "options menu",
+        "settings menu",
     ),
     HelpMenuRow::Section("Filter input"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "keep filter"),

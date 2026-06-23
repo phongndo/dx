@@ -2137,7 +2137,7 @@ fn grep_highlight_ignores_unified_gutter_numbers() {
 }
 
 #[test]
-fn question_mark_key_toggles_help_menu() {
+fn question_mark_key_opens_help_menu_and_filters_when_open() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
@@ -2149,13 +2149,18 @@ fn question_mark_key_toggles_help_menu() {
     assert!(!should_quit);
     assert!(app.help_menu_open);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE))
-        .expect("? should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
+        .expect("? should filter help");
+    assert!(app.help_menu_open);
+    assert_eq!(app.help_menu_input, "?");
+
+    app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .expect("Esc should close help");
     assert!(!app.help_menu_open);
 }
 
 #[test]
-fn configured_help_key_toggles_help_menu_closed() {
+fn configured_help_key_filters_help_menu_when_open() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.keymap = Keymap::parse(
@@ -2171,12 +2176,13 @@ fn configured_help_key_toggles_help_menu_closed() {
     assert!(app.help_menu_open);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
-        .expect("configured help key should close help");
-    assert!(!app.help_menu_open);
+        .expect("configured help key should filter help");
+    assert!(app.help_menu_open);
+    assert_eq!(app.help_menu_input, "h");
 }
 
 #[test]
-fn configured_leader_help_key_toggles_help_menu_closed() {
+fn configured_leader_help_key_filters_help_menu_when_open() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.keymap = Keymap::parse(
@@ -2194,11 +2200,12 @@ fn configured_leader_help_key_toggles_help_menu_closed() {
     assert!(app.help_menu_open);
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled while help is open");
-    assert!(app.leader_pending);
+        .expect("space should filter while help is open");
+    assert!(!app.leader_pending);
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
-        .expect("leader help should close help");
-    assert!(!app.help_menu_open);
+        .expect("h should filter while help is open");
+    assert!(app.help_menu_open);
+    assert_eq!(app.help_menu_input, " h");
     assert!(!app.leader_pending);
 }
 
@@ -2503,7 +2510,8 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
         handle_test_key_event(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert!(!should_quit);
-    assert!(!app.options_menu_open);
+    assert!(app.options_menu_open);
+    assert_eq!(app.layout, DiffLayoutMode::Split);
     assert!(app.error_log.is_none());
 
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -2802,6 +2810,25 @@ fn help_menu_lines_use_configured_keymap_labels() {
 }
 
 #[test]
+fn help_menu_filter_matches_section_headers() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toggle_help_menu();
+    for character in "branch".chars() {
+        app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
+            .expect("typing should filter help");
+    }
+
+    let rows = app.filtered_help_menu_rows();
+    assert!(rows.contains(&HelpMenuRow::Section("Branch filter")));
+    assert!(rows.contains(&HelpMenuRow::Binding(
+        HelpMenuKey::Static("type"),
+        "filter branches"
+    )));
+    assert!(!rows.contains(&HelpMenuRow::Section("Global")));
+}
+
+#[test]
 fn help_menu_uses_diff_theme_colors() {
     let default_theme = DiffTheme::default();
     let section_color = Color::Rgb(10, 11, 12);
@@ -2819,7 +2846,7 @@ fn help_menu_uses_diff_theme_colors() {
     };
 
     assert_eq!(help_menu_bg(theme), theme.background);
-    assert_eq!(help_menu_title_color(theme), section_color);
+    assert_eq!(help_menu_title_color(theme), key_color);
 
     let keymap = Keymap::default();
     let section = help_menu_row_spans(HelpMenuRow::Section("Section"), 20, theme, &keymap);
@@ -3452,21 +3479,63 @@ fn diff_menu_mouse_ignores_old_top_left_choice_coordinates() {
 }
 
 #[test]
-fn options_menu_toggles_draft_and_applies_on_enter() {
+fn options_menu_toggles_setting_on_enter() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.open_options_menu();
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should toggle layout draft");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should toggle layout");
+
+    assert!(app.options_menu_open);
+    assert_eq!(app.layout, DiffLayoutMode::Split);
+}
+
+#[test]
+fn options_menu_plain_letters_filter_input() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.open_options_menu();
+    app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+        .expect("x should filter settings");
+
+    assert!(app.options_menu_open);
+    assert_eq!(app.options_menu_input, "x");
     assert_eq!(app.layout, DiffLayoutMode::Unified);
-    assert_eq!(app.options_menu_draft.layout, DiffLayoutMode::Split);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::IncludeUntracked)
+    );
+}
+
+#[test]
+fn options_menu_toggles_syntax_highlighting() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new_with_syntax(
+        DiffOptions::default(),
+        changeset,
+        DiffLayoutMode::Unified,
+        SyntaxStartupMode::Disabled,
+    );
+    app.syntax = Some(syntax_runtime_with_queue(SyntaxWorkerQueue::new(
+        1,
+        app.generation,
+    )));
+
+    app.open_options_menu();
+    app.move_options_menu_selection(5);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::SyntaxHighlighting)
+    );
+    assert_eq!(app.option_value(OptionsMenuItem::SyntaxHighlighting), "[x]");
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should apply options");
+        .expect("enter should toggle syntax highlighting");
 
-    assert!(!app.options_menu_open);
-    assert_eq!(app.layout, DiffLayoutMode::Split);
+    assert!(app.syntax.is_none());
+    assert_eq!(app.option_value(OptionsMenuItem::SyntaxHighlighting), "[ ]");
 }
 
 #[test]
@@ -3481,11 +3550,8 @@ fn options_menu_include_untracked_applies_with_single_reload() {
         app.highlighted_option(),
         Some(OptionsMenuItem::IncludeUntracked)
     );
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should toggle include-untracked draft");
-    assert!(app.pending_diff_load.is_none());
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should apply options");
+        .expect("enter should toggle include-untracked");
 
     let load = app
         .pending_diff_load
@@ -3502,11 +3568,11 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
     app.theme = DiffTheme::system();
 
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(6);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::ColorScheme));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should open colorscheme input");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should open colorscheme input");
     assert!(app.color_scheme_picker_open);
     for character in ['d', 'a', 'r', 'k'] {
         app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
@@ -3526,18 +3592,13 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
         app.options_menu_draft.color_scheme,
         ColorSchemeChoice::TerminalDark
     );
-
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should apply colorscheme");
-
-    assert!(!app.options_menu_open);
     assert_eq!(app.color_scheme, ColorSchemeChoice::TerminalDark);
     assert_eq!(app.theme.background, DiffTheme::terminal_dark().background);
     assert!(app.pending_diff_load.is_none());
 }
 
 #[test]
-fn options_menu_shows_branch_options_for_branch_diff() {
+fn options_menu_omits_branch_options_for_branch_diff() {
     let options = DiffOptions {
         source: DiffSource::Branch {
             base: "main".to_owned(),
@@ -3554,15 +3615,23 @@ fn options_menu_shows_branch_options_for_branch_diff() {
 
     app.open_options_menu();
 
-    assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::BranchHead));
+    assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::Layout));
     assert_eq!(
-        app.options_menu_items().get(1),
-        Some(&OptionsMenuItem::BranchBase)
+        app.options_menu_items(),
+        [
+            OptionsMenuItem::Layout,
+            OptionsMenuItem::FileSidebar,
+            OptionsMenuItem::IncludeUntracked,
+            OptionsMenuItem::LiveReload,
+            OptionsMenuItem::ContextExpansion,
+            OptionsMenuItem::SyntaxHighlighting,
+            OptionsMenuItem::ColorScheme,
+        ]
     );
 }
 
 #[test]
-fn options_menu_branch_rows_open_branch_picker() {
+fn options_menu_does_not_open_branch_picker_for_branch_diff() {
     let options = DiffOptions {
         source: DiffSource::Branch {
             base: "main".to_owned(),
@@ -3579,17 +3648,9 @@ fn options_menu_branch_rows_open_branch_picker() {
 
     app.open_options_menu();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should open head branch picker");
-    assert!(!app.options_menu_open);
-    assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
-
-    app.close_branch_menu();
-    app.open_options_menu();
-    app.move_options_menu_selection(1);
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should open base branch picker");
-    assert!(!app.options_menu_open);
-    assert_eq!(app.branch_menu_open, Some(BranchMenu::Base));
+        .expect("enter should toggle first setting");
+    assert!(app.options_menu_open);
+    assert!(app.branch_menu_open.is_none());
 }
 
 #[test]
@@ -3601,11 +3662,8 @@ fn options_menu_live_reload_toggles_without_reloading_diff() {
     app.open_options_menu();
     app.move_options_menu_selection(3);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should toggle live reload draft");
-    assert!(app.live_updates_enabled);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should apply options");
+        .expect("enter should toggle live reload");
 
     assert!(!app.live_updates_enabled);
     assert!(app.pending_diff_load.is_none());
@@ -3620,10 +3678,8 @@ fn options_menu_reenabling_live_reload_reloads_diff() {
     app.open_options_menu();
     app.move_options_menu_selection(3);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should toggle live reload draft");
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-        .expect("enter should apply options");
+        .expect("enter should toggle live reload");
 
     assert!(app.live_updates_enabled);
     let load = app
@@ -3642,8 +3698,8 @@ fn options_menu_does_not_enable_live_reload_when_watch_is_disabled() {
 
     app.open_options_menu();
     app.move_options_menu_selection(3);
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should be handled");
 
     assert!(!app.options_menu_draft.live_updates_enabled);
     assert_eq!(
@@ -3675,19 +3731,63 @@ fn options_menu_draws_centered_floating_menu() {
     let title = rows
         .iter()
         .enumerate()
-        .find_map(|(row, text)| text.find("options").map(|column| (row, column)))
+        .find_map(|(row, text)| {
+            text.find("Settings")
+                .map(|column| (row, text[..column].width()))
+        })
         .expect("floating options menu should render title");
 
-    assert!(title.0 > 4 && title.0 < 12, "title row was {}", title.0);
-    assert!(title.1 > 8 && title.1 < 32, "title column was {}", title.1);
+    assert!(title.0 >= 4 && title.0 < 12, "title row was {}", title.0);
+    assert!(title.1 > 30 && title.1 < 48, "title column was {}", title.1);
+    assert!(rows.iter().any(|row| row.contains("> │")));
     assert!(rows.iter().any(|row| row.contains("Layout")));
     assert!(rows.iter().any(|row| row.contains("Include untracked")));
     assert!(rows.iter().any(|row| row.contains("Live reload")));
+    assert!(rows.iter().any(|row| row.contains("Syntax highlighting")));
     assert!(rows.iter().any(|row| row.contains("Colorscheme")));
+
+    let layout_row = rows
+        .iter()
+        .find(|row| row.contains("Layout") && row.contains("[unified]"))
+        .expect("layout row should show current value");
+    let label_column = layout_row.find("Layout").expect("label should render");
+    let value_column = layout_row.rfind("[unified]").expect("value should render");
+    assert!(
+        value_column > label_column + 20,
+        "setting value should be right aligned: {layout_row}"
+    );
+
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Include untracked") && row.contains("[x]"))
+    );
 }
 
 #[test]
-fn menu_footers_use_configured_keymap_labels() {
+fn options_menu_scrolls_selected_setting_into_short_terminal() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.open_options_menu();
+    app.set_options_menu_selection(6);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 5))
+        .expect("test terminal should be created");
+
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("options menu draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(app.options_menu_scroll > 0);
+    assert!(rows.iter().any(|row| row.contains("Colorscheme")));
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("Layout") && row.contains("[unified]"))
+    );
+}
+
+#[test]
+fn selector_menus_do_not_render_footers() {
     let keymap = Keymap::parse(
         r#"
         [keymap.menu]
@@ -3710,11 +3810,8 @@ fn menu_footers_use_configured_keymap_labels() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("options menu draw should succeed");
     let rows = buffer_rows(terminal.backend().buffer());
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("d/u move · x toggle/open · a apply/open · z close"))
-    );
-    assert!(!rows.iter().any(|row| row.contains("Space toggle/open")));
+    assert!(!rows.iter().any(|row| row.contains("toggle/open")));
+    assert!(!rows.iter().any(|row| row.contains("apply/open")));
 
     app.close_options_menu();
     app.open_diff_menu();
@@ -3736,9 +3833,9 @@ fn colorscheme_picker_draws_input_dropdown() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.open_options_menu();
-    app.move_options_menu_selection(5);
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("space should open colorscheme picker");
+    app.move_options_menu_selection(6);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should open colorscheme picker");
     app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
         .expect("typing should filter colorschemes");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20))
@@ -3757,8 +3854,8 @@ fn colorscheme_picker_draws_input_dropdown() {
         })
         .collect();
 
-    assert!(rows.iter().any(|row| row.contains("colorscheme")));
-    assert!(rows.iter().any(|row| row.contains("filter d")));
+    assert!(rows.iter().any(|row| row.contains("Colorscheme")));
+    assert!(rows.iter().any(|row| row.contains("> d│")));
     assert!(rows.iter().any(|row| row.contains("terminal-dark")));
 }
 

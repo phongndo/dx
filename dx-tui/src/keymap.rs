@@ -68,11 +68,11 @@ impl Default for Keymap {
             edit_hunk: key_sequences(&["ctrl-g"]),
             next_diff_type: key_sequences(&["tab"]),
             previous_diff_type: key_sequences(&["shift-tab"]),
-            menu_up: key_sequences(&["k", "up", "shift-tab", "ctrl-p"]),
-            menu_down: key_sequences(&["j", "down", "tab", "ctrl-n"]),
-            menu_select: key_sequences(&["space"]),
+            menu_up: key_sequences(&["up", "shift-tab", "ctrl-p"]),
+            menu_down: key_sequences(&["down", "tab", "ctrl-n"]),
+            menu_select: Vec::new(),
             menu_confirm: key_sequences(&["enter"]),
-            menu_close: key_sequences(&["esc", "q"]),
+            menu_close: key_sequences(&["esc"]),
         }
     }
 }
@@ -261,12 +261,6 @@ impl Keymap {
             .any(|sequence| sequence.0.as_slice() == [self.leader, key])
     }
 
-    pub(crate) fn has_leader_sequence(&self, action: GlobalAction) -> bool {
-        self.global_sequences(action)
-            .iter()
-            .any(|sequence| sequence.0.len() == 2 && sequence.0.first() == Some(&self.leader))
-    }
-
     pub(crate) fn leader_label(&self) -> String {
         key_display_label(&self.leader)
     }
@@ -280,13 +274,6 @@ impl Keymap {
         self.menu_sequences(action)
             .iter()
             .any(|sequence| sequence.0.as_slice() == [key])
-    }
-
-    pub(crate) fn menu_action_label(&self, action: MenuAction) -> String {
-        self.menu_sequences(action)
-            .first()
-            .map(sequence_display_label)
-            .unwrap_or_else(|| "unbound".to_owned())
     }
 
     fn global_sequences(&self, action: GlobalAction) -> &[KeySequence] {

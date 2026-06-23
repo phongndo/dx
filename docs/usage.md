@@ -145,7 +145,7 @@ f              file filter
 n / p          next / previous grep match
 r              reload
 Space m        diff type selector
-Space o        options menu
+Space o        settings menu
 Space b        file browser
 Space s        toggle split/unified layout
 Ctrl-G         open the focused hunk in `$VISUAL`, `$GIT_EDITOR`, or `$EDITOR`
@@ -153,9 +153,9 @@ Tab            next diff type
 Shift-Tab      previous diff type
 ```
 
-Selector panes (diff type, branch) keep focus in the filter input: type to
-filter, Enter selects, Esc closes, and Tab / Shift-Tab or Ctrl-N / Ctrl-P move
-the highlighted row.
+Selector panes keep focus in the filter input: type to filter, Enter selects or
+toggles, Esc closes, and arrows, Tab / Shift-Tab, or Ctrl-N / Ctrl-P move the
+highlighted row. Settings with multiple values can also cycle with Left / Right.
 
 Keybindings can be customized in the user config file. See
 [configuration](configuration.md#keybindings).
