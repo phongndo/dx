@@ -248,45 +248,6 @@ fn compiler_languages_have_queries_where_expected() {
     assert!(has_highlights("tablegen"));
 }
 
-#[test]
-fn cached_language_fallback_queries_are_available() {
-    assert!(has_highlights("commonlisp"));
-    assert!(has_highlights("ocaml"));
-}
-
-#[test]
-fn cached_language_fallback_queries_highlight_when_installed() {
-    let samples = [
-        (
-            "commonlisp",
-            "(defun hello (name) (format t \"hello ~A\" name))",
-        ),
-        (
-            "ocaml",
-            "let hello name = print_endline (\"hello \" ^ name)",
-        ),
-    ];
-    let mut highlighter = SyntaxHighlighter::new();
-
-    for (language, source) in samples {
-        if !is_language_trusted(language) {
-            continue;
-        }
-
-        let highlighted = highlighter
-            .highlight(language, source)
-            .unwrap_or_else(|error| panic!("{language} fallback query should highlight: {error}"));
-
-        assert!(
-            highlighted
-                .lines
-                .iter()
-                .flat_map(|line| line.segments.iter())
-                .any(|segment| segment.class.is_some()),
-            "{language} fallback query should produce styled segments"
-        );
-    }
-}
 
 #[test]
 fn typescript_query_fallback_highlights() {

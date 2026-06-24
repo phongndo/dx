@@ -10,9 +10,9 @@ use std::{
 };
 
 use crate::{
-    ARTIFACT_SOURCE, ASM_HIGHLIGHTS_QUERY, BASENAME_LANGUAGES, COMMONLISP_HIGHLIGHTS_QUERY,
+    ARTIFACT_SOURCE, ASM_HIGHLIGHTS_QUERY, BASENAME_LANGUAGES,
     CORE_LANGUAGES, CUSTOM_PARSER_SOURCE, CUSTOM_PARSER_VERSION, DiffContextExpansion,
-    DiffSettings, HIGHLIGHT_NAMES, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION, OCAML_HIGHLIGHTS_QUERY,
+    DiffSettings, HIGHLIGHT_NAMES, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION,
     StoredDiffContextExpansion, StoredDiffContextExpansionMode, StoredDiffSettings,
     StoredLanguageMapping, StoredParserArtifact, StoredSyntaxConfig, StoredSyntaxLimits,
     StoredSyntaxSettings, StoredSyntaxThemeConfig, StoredSyntaxThemeTable, SyntaxLimits,
@@ -488,8 +488,6 @@ pub(crate) fn highlights_query(language: &str) -> Option<Cow<'static, str>> {
 
     match language {
         "asm" => Some(Cow::Borrowed(ASM_HIGHLIGHTS_QUERY)),
-        "commonlisp" => Some(Cow::Borrowed(COMMONLISP_HIGHLIGHTS_QUERY)),
-        "ocaml" => Some(Cow::Borrowed(OCAML_HIGHLIGHTS_QUERY)),
         "typescript" | "tsx" => {
             tree_sitter_language_pack::get_highlights_query("javascript").map(Cow::Borrowed)
         }

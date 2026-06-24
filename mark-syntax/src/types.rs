@@ -132,9 +132,6 @@ pub(crate) const ASM_HIGHLIGHTS_QUERY: &str = r#"
 (int) @number
 "#;
 
-pub(crate) const COMMONLISP_HIGHLIGHTS_QUERY: &str =
-    include_str!("queries/commonlisp/highlights.scm");
-pub(crate) const OCAML_HIGHLIGHTS_QUERY: &str = include_str!("queries/ocaml/highlights.scm");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SyntaxClass {
