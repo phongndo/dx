@@ -798,10 +798,6 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
 
     let block = help_menu_block(app.theme);
     let inner = block.inner(menu_area);
-    let remaining_rows = inner.height.saturating_sub(2) as usize;
-    app.ensure_help_menu_selection_visible(remaining_rows);
-
-    let selected = app.help_menu_selected.min(rows.len().saturating_sub(1));
     let mut lines = vec![selector_input_line(
         &app.help_menu_input,
         inner.width as usize,
@@ -811,6 +807,8 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
     )];
     lines.push(selector_separator_line(inner.width as usize, app.theme));
     let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    app.help_menu_visible_rows = remaining_rows.max(1);
+    app.clamp_help_menu_scroll(remaining_rows);
     if rows.is_empty() {
         if remaining_rows > 0 {
             lines.push(selector_empty_line(
@@ -821,17 +819,11 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
         }
     } else {
         let scroll = app.help_menu_scroll;
-        lines.extend(scrolled_selector_items(&rows, scroll, remaining_rows).map(
-            |(global_index, row)| {
-                help_menu_row_line(
-                    *row,
-                    inner.width as usize,
-                    app.theme,
-                    &app.keymap,
-                    global_index == selected,
-                )
-            },
-        ));
+        lines.extend(
+            scrolled_selector_items(&rows, scroll, remaining_rows).map(|(_, row)| {
+                help_menu_row_line(*row, inner.width as usize, app.theme, &app.keymap)
+            }),
+        );
     }
 
     frame.render_widget(Clear, menu_area);
@@ -912,7 +904,7 @@ pub(crate) fn help_menu_lines(
     HELP_MENU_ROWS
         .iter()
         .take(height)
-        .map(|row| help_menu_row_line(*row, width, theme, keymap, false))
+        .map(|row| help_menu_row_line(*row, width, theme, keymap))
         .collect()
 }
 
@@ -966,46 +958,32 @@ pub(crate) fn help_menu_row_line(
     width: usize,
     theme: DiffTheme,
     keymap: &Keymap,
-    highlighted: bool,
 ) -> Line<'static> {
     match row {
-        HelpMenuRow::Section(section) => {
-            let mut style = Style::default()
+        HelpMenuRow::Section(section) => Line::from(Span::styled(
+            fit_padded(&format!(" {section}"), width),
+            Style::default()
                 .fg(help_menu_section_color(theme))
                 .bg(help_menu_bg(theme))
-                .add_modifier(Modifier::BOLD);
-            if highlighted {
-                style = selector_row_style(theme, true);
-            }
-            Line::from(Span::styled(
-                fit_padded(&format!(" {section}"), width),
-                style,
-            ))
-        }
+                .add_modifier(Modifier::BOLD),
+        )),
         HelpMenuRow::Binding(keys, description) => {
             let key_label = help_menu_key_label(keys, keymap);
             let key_width = HELP_KEY_COLUMN_WIDTH.min(width);
             let description_width = width.saturating_sub(key_width);
-            let key_style = if highlighted {
-                selector_row_style(theme, true)
-            } else {
-                Style::default()
-                    .fg(help_menu_key_color(theme))
-                    .bg(help_menu_bg(theme))
-                    .add_modifier(Modifier::BOLD)
-            };
-            let description_style = if highlighted {
-                selector_row_style(theme, true)
-            } else {
-                Style::default()
-                    .fg(help_menu_description_color(theme))
-                    .bg(help_menu_bg(theme))
-            };
             Line::from(vec![
-                Span::styled(fit_padded(&format!(" {key_label}"), key_width), key_style),
+                Span::styled(
+                    fit_padded(&format!(" {key_label}"), key_width),
+                    Style::default()
+                        .fg(help_menu_key_color(theme))
+                        .bg(help_menu_bg(theme))
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(
                     fit_padded(description, description_width),
-                    description_style,
+                    Style::default()
+                        .fg(help_menu_description_color(theme))
+                        .bg(help_menu_bg(theme)),
                 ),
             ])
         }
