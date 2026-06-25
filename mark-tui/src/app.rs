@@ -3774,15 +3774,14 @@ impl DiffApp {
             DiffSource::Show(rev) => Some(rev.as_str()),
             _ => None,
         });
-        let label = match rev {
+        match rev {
             None | Some("HEAD") => self
                 .current_head
                 .clone()
                 .or_else(|| current_head_label(&self.changeset.repo))
                 .unwrap_or_else(|| "HEAD".to_owned()),
             Some(symbolic) => rev_display_label(symbolic).to_owned(),
-        };
-        format!("Show {label}")
+        }
     }
 
     pub(crate) fn commit_menu_height(&self) -> usize {

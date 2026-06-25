@@ -3551,11 +3551,11 @@ fn diff_menu_show_detail_uses_resolved_head_sha() {
         DiffLayoutMode::Unified,
     );
     app.current_head = Some("feature".to_owned());
-    assert_eq!(app.show_rev_menu_detail(), "Show feature");
+    assert_eq!(app.show_rev_menu_detail(), "feature");
     app.current_head = Some("a1b2c3d".to_owned());
-    assert_eq!(app.show_rev_menu_detail(), "Show a1b2c3d");
+    assert_eq!(app.show_rev_menu_detail(), "a1b2c3d");
     app.show_rev = Some("HEAD~1".to_owned());
-    assert_eq!(app.show_rev_menu_detail(), "Show HEAD~1");
+    assert_eq!(app.show_rev_menu_detail(), "HEAD~1");
 }
 
 #[test]

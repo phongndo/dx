@@ -202,15 +202,25 @@ fn selector_disabled_line(
     width: usize,
     theme: DiffTheme,
 ) -> Line<'static> {
-    let text = if detail.is_empty() {
-        format!(" {label}")
-    } else {
-        format!(" {label}  {detail}")
-    };
     Line::from(Span::styled(
-        fit_padded(&text, width),
+        selector_label_detail_text(label, detail, width),
         Style::default().fg(theme.muted).bg(base_bg(theme)),
     ))
+}
+
+fn selector_label_detail_text(label: &str, detail: &str, width: usize) -> String {
+    let left = format!(" {label}");
+    if detail.is_empty() {
+        return fit_padded(&left, width);
+    }
+
+    let detail_width = detail.width();
+    if width <= detail_width.saturating_add(2) {
+        return fit_padded(&format!("{left}  {detail}"), width);
+    }
+
+    let left_width = width.saturating_sub(detail_width).saturating_sub(1);
+    format!("{} {detail}", fit_padded(&left, left_width))
 }
 
 fn selector_row_style(theme: DiffTheme, highlighted: bool) -> Style {
@@ -251,13 +261,8 @@ fn selector_entry_line(
     theme: DiffTheme,
     highlighted: bool,
 ) -> Line<'static> {
-    let left = if detail.is_empty() {
-        format!(" {label}")
-    } else {
-        format!(" {label}  {detail}")
-    };
     Line::from(Span::styled(
-        fit_padded(&left, width),
+        selector_label_detail_text(label, detail, width),
         selector_row_style(theme, highlighted),
     ))
 }
