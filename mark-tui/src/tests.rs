@@ -3338,23 +3338,17 @@ fn copy_marks_omits_annotations_without_current_diff_line() {
 
     let changeset = changeset_with_replacement_pair();
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    let old_row = app
-        .model
-        .rows
-        .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
-        .expect("deletion line");
     let new_row = app
         .model
         .rows
         .iter()
         .position(|row| matches!(row, UiRow::UnifiedLine { line: 1, .. }))
         .expect("addition line");
-    let old_key = AnnotationKey::from_ui_row(
-        &app.changeset,
-        app.model.row(old_row).expect("old diff row"),
-    )
-    .expect("old-side key");
+    let old_key = AnnotationKey {
+        path: "file.rs".to_owned(),
+        side: AnnotationSide::Old,
+        line: 1,
+    };
     let new_key = AnnotationKey::from_ui_row(
         &app.changeset,
         app.model.row(new_row).expect("new diff row"),
@@ -6903,7 +6897,7 @@ fn annotation_add_button_opens_input_under_hovered_line() {
 }
 
 #[test]
-fn split_annotation_add_button_opens_draft_for_clicked_side() {
+fn split_annotation_add_button_uses_current_side_for_paired_row() {
     use crate::annotation::{AnnotationKey, AnnotationSide};
 
     let changeset = changeset_with_replacement_pair();
@@ -6926,16 +6920,9 @@ fn split_annotation_add_button_opens_draft_for_clicked_side() {
 
     let row = app.model.row(split_row).expect("row");
     let keys = AnnotationKey::candidates_from_ui_row(&app.changeset, row);
-    let old_key = keys
-        .iter()
-        .find(|key| key.side == AnnotationSide::Old)
-        .cloned()
-        .expect("old-side key");
-    let new_key = keys
-        .iter()
-        .find(|key| key.side == AnnotationSide::New)
-        .cloned()
-        .expect("new-side key");
+    assert_eq!(keys.len(), 1);
+    let key = keys[0].clone();
+    assert_eq!(key.side, AnnotationSide::New);
     let left_width = app.viewport_width / 2;
     let old_button_column = (left_width - 1) as u16;
     app.update_diff_mouse_hover(old_button_column, 1);
@@ -6944,15 +6931,23 @@ fn split_annotation_add_button_opens_draft_for_clicked_side() {
     let hover_text = line_text(&hover_lines[0]);
     let (old_button_text, _) = skip_display_prefix(&hover_text, left_width - 4);
     assert!(
-        old_button_text.starts_with(" [+]"),
-        "old-side add button missing from {hover_text:?}"
+        !old_button_text.starts_with(" [+]"),
+        "paired row should not expose an old-side add button: {hover_text:?}"
     );
+    assert!(hover_text.ends_with(" [+]"));
+    assert!(!app.handle_diff_click(old_button_column, 1));
+    assert!(app.annotation_draft.is_none());
 
-    assert!(app.handle_diff_click(old_button_column, 1));
+    let new_button_column = (app.viewport_width - 1) as u16;
+    app.update_diff_mouse_hover(new_button_column, 1);
+    let hover_lines = crate::render::diff::build_diff_viewport_lines(&mut app, 60, 3);
+    assert!(line_text(&hover_lines[0]).ends_with(" [+]"));
+
+    assert!(app.handle_diff_click(new_button_column, 1));
     let draft = app.annotation_draft.as_ref().expect("draft");
-    assert_eq!(draft.key, old_key);
+    assert_eq!(draft.key, key);
 
-    for character in "old note".chars() {
+    for character in "new note".chars() {
         app.handle_annotation_input_key(KeyEvent::new(
             KeyCode::Char(character),
             KeyModifiers::NONE,
@@ -6961,183 +6956,134 @@ fn split_annotation_add_button_opens_draft_for_clicked_side() {
     app.handle_annotation_input_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
 
     assert_eq!(
-        app.annotations.get(&old_key).map(String::as_str),
-        Some("old note")
+        app.annotations.get(&key).map(String::as_str),
+        Some("new note")
     );
-    assert!(!app.annotations.contains_key(&new_key));
+    let json = app.marks_clipboard_json().expect("marks JSON");
+    assert!(json.contains("\"old_line\": 1"));
+    assert!(json.contains("\"new_line\": 1"));
 }
 
 #[test]
-fn split_row_draft_keeps_sibling_annotation_visible() {
-    use crate::annotation::{AnnotationDraft, AnnotationKey, AnnotationSide};
-    use crate::render::viewport_plan::{ViewportSlotKind, plan_diff_viewport_rows};
+fn annotation_pairing_spans_no_newline_meta_line() {
+    use crate::annotation::{AnnotationKey, AnnotationSide};
 
-    for line_wrapping in [false, true] {
-        for draft_side in [AnnotationSide::Old, AnnotationSide::New] {
-            let changeset = changeset_with_replacement_pair();
-            let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
-            app.set_viewport_width(60);
-            app.set_viewport_rows(12);
-            app.line_wrapping = line_wrapping;
+    let mut changeset = changeset_with_replacement_pair();
+    changeset.files[0].hunks[0].lines.insert(
+        1,
+        DiffLine {
+            kind: DiffLineKind::Meta,
+            old_line: None,
+            new_line: None,
+            text: "\\ No newline at end of file".to_owned(),
+        },
+    );
 
-            let split_row = app
-                .model
-                .rows
-                .iter()
-                .position(|row| matches!(row, UiRow::SplitLine { .. }))
-                .expect("split line");
-            app.scroll = app.annotation_anchor_visual_scroll(split_row);
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset.clone(),
+        DiffLayoutMode::Unified,
+    );
+    let deletion_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
+        .expect("deletion line");
+    let addition_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: 2, .. }))
+        .expect("addition line");
 
-            let row = app.model.row(split_row).expect("row");
-            let keys = AnnotationKey::candidates_from_ui_row(&app.changeset, row);
-            let old_key = keys
-                .iter()
-                .find(|key| key.side == AnnotationSide::Old)
-                .cloned()
-                .expect("old-side key");
-            let new_key = keys
-                .iter()
-                .find(|key| key.side == AnnotationSide::New)
-                .cloned()
-                .expect("new-side key");
+    assert_eq!(
+        AnnotationKey::from_ui_row(&app.changeset, app.model.row(deletion_row).expect("row")),
+        None
+    );
+    let key = AnnotationKey::from_ui_row(&app.changeset, app.model.row(addition_row).expect("row"))
+        .expect("addition key");
+    assert_eq!(key.side, AnnotationSide::New);
+    app.annotations.insert(key, "note".to_owned());
+    let json = app.marks_clipboard_json().expect("marks JSON");
+    assert!(json.contains("\"old_line\": 1"));
+    assert!(json.contains("\"new_line\": 1"));
 
-            app.annotations
-                .insert(old_key.clone(), "old saved".to_owned());
-            app.annotations
-                .insert(new_key.clone(), "new saved".to_owned());
-
-            let (draft_key, draft_input, draft_saved, sibling_key, sibling_saved) = match draft_side
-            {
-                AnnotationSide::Old => (
-                    old_key.clone(),
-                    "old draft",
-                    "old saved",
-                    new_key.clone(),
-                    "new saved",
-                ),
-                AnnotationSide::New => (
-                    new_key.clone(),
-                    "new draft",
-                    "new saved",
-                    old_key.clone(),
-                    "old saved",
-                ),
-            };
-
-            app.annotation_draft = Some(AnnotationDraft {
-                key: draft_key.clone(),
-                model_row_index: split_row,
-                input: draft_input.to_owned(),
-                cursor: draft_input.len(),
-            });
-
-            let rendered: Vec<String> = build_diff_viewport_lines(&mut app, 60, 12)
-                .iter()
-                .map(line_text)
-                .collect();
-            assert!(rendered.iter().any(|line| line.contains(draft_input)));
-            assert!(
-                rendered.iter().any(|line| line.contains(sibling_saved)),
-                "sibling annotation should stay visible with line_wrapping={line_wrapping}, draft_side={draft_side:?}: {rendered:?}"
-            );
-            assert!(!rendered.iter().any(|line| line.contains(draft_saved)));
-
-            let saved_keys: Vec<AnnotationKey> = plan_diff_viewport_rows(&app, app.viewport_rows)
-                .into_iter()
-                .filter_map(|slot| match slot.kind {
-                    ViewportSlotKind::AnnotationSaved {
-                        key, block_row: 0, ..
-                    } => Some(key),
-                    _ => None,
-                })
-                .collect();
-            assert!(
-                saved_keys.contains(&sibling_key),
-                "sibling annotation hit target should stay planned with line_wrapping={line_wrapping}, draft_side={draft_side:?}"
-            );
-            assert!(!saved_keys.contains(&draft_key));
-        }
-    }
-}
-
-#[test]
-fn max_scroll_counts_sibling_annotation_while_drafting_same_split_row() {
-    use crate::annotation::{AnnotationDraft, AnnotationKey, AnnotationSide};
-
-    let mut changeset = changeset_with_line_texts(&[
-        "context 1",
-        "context 2",
-        "context 3",
-        "context 4",
-        "context 5",
-        "context 6",
-        "context 7",
-        "context 8",
-        "old",
-        "new",
-        "tail",
-    ]);
-    let hunk = &mut changeset.files[0].hunks[0];
-    hunk.old_count = 10;
-    hunk.new_count = 10;
-    hunk.lines[8].kind = DiffLineKind::Deletion;
-    hunk.lines[8].new_line = None;
-    hunk.lines[9].kind = DiffLineKind::Addition;
-    hunk.lines[9].old_line = None;
-    hunk.lines[9].new_line = Some(9);
-    hunk.lines[10].old_line = Some(10);
-    hunk.lines[10].new_line = Some(10);
-
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
-    app.set_viewport_width(60);
-    app.set_viewport_rows(8);
-
-    let split_row = app
+    let split_app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
+    let split_deletion_row = split_app
         .model
         .rows
         .iter()
         .position(|row| {
-            let UiRow::SplitLine {
-                hunk,
-                left: Some(left),
-                right: Some(right),
-                ..
-            } = *row
-            else {
-                return false;
-            };
-            let lines = &app.changeset.files[0].hunks[hunk].lines;
-            lines[left].kind == DiffLineKind::Deletion
-                && lines[right].kind == DiffLineKind::Addition
+            matches!(
+                row,
+                UiRow::SplitLine {
+                    left: Some(0),
+                    right: None,
+                    ..
+                }
+            )
         })
-        .expect("replacement split line");
+        .expect("split deletion row");
+    assert_eq!(
+        AnnotationKey::from_ui_row(
+            &split_app.changeset,
+            split_app.model.row(split_deletion_row).expect("row"),
+        ),
+        None
+    );
+}
+
+#[test]
+fn split_annotation_add_button_uses_right_edge_for_deletion_only_row() {
+    use crate::annotation::{AnnotationKey, AnnotationSide};
+
+    let mut changeset = changeset_with_replacement_pair();
+    changeset.files[0].additions = 0;
+    changeset.files[0].hunks[0].new_count = 0;
+    changeset.files[0].hunks[0].lines.truncate(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
+    app.set_rendered_diff_area(Rect {
+        x: 0,
+        y: 1,
+        width: 60,
+        height: 8,
+    });
+    app.set_viewport_width(60);
+    app.set_viewport_rows(8);
+    let split_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::SplitLine { .. }))
+        .expect("split line");
+    app.scroll = split_row;
+
     let row = app.model.row(split_row).expect("row");
     let keys = AnnotationKey::candidates_from_ui_row(&app.changeset, row);
-    let old_key = keys
-        .iter()
-        .find(|key| key.side == AnnotationSide::Old)
-        .cloned()
-        .expect("old-side key");
-    let new_key = keys
-        .iter()
-        .find(|key| key.side == AnnotationSide::New)
-        .cloned()
-        .expect("new-side key");
+    assert_eq!(keys.len(), 1);
+    let key = keys[0].clone();
+    assert_eq!(key.side, AnnotationSide::Old);
 
-    app.annotations
-        .insert(old_key.clone(), "old saved".to_owned());
-    app.annotations
-        .insert(new_key.clone(), "new saved".to_owned());
-    app.annotation_draft = Some(AnnotationDraft {
-        key: old_key,
-        model_row_index: split_row,
-        input: "old draft".to_owned(),
-        cursor: "old draft".len(),
-    });
+    let left_width = app.viewport_width / 2;
+    let old_button_column = (left_width - 1) as u16;
+    app.update_diff_mouse_hover(old_button_column, 1);
+    let hover_lines = crate::render::diff::build_diff_viewport_lines(&mut app, 60, 3);
+    let hover_text = line_text(&hover_lines[0]);
+    let (old_button_text, _) = skip_display_prefix(&hover_text, left_width - 4);
+    assert!(
+        !old_button_text.starts_with(" [+]"),
+        "deletion-only row should not expose a left-side add button: {hover_text:?}"
+    );
+    assert!(hover_text.ends_with(" [+]"));
+    assert!(!app.handle_diff_click(old_button_column, 1));
+    assert!(app.annotation_draft.is_none());
 
-    let max_scroll_with_sibling = app.max_scroll();
-    app.annotations.remove(&new_key);
-    assert!(max_scroll_with_sibling > app.max_scroll());
+    let new_button_column = (app.viewport_width - 1) as u16;
+    app.update_diff_mouse_hover(new_button_column, 1);
+    assert!(app.handle_diff_click(new_button_column, 1));
+    let draft = app.annotation_draft.as_ref().expect("draft");
+    assert_eq!(draft.key, key);
 }
 
 #[test]
@@ -7515,11 +7461,14 @@ fn diff_modals_suppress_stale_mouse_hover_highlight() {
 }
 
 #[test]
-fn old_side_annotation_renders_and_edits_on_paired_split_row() {
+fn old_side_annotation_renders_and_edits_on_deletion_only_split_row() {
     use crate::annotation::{AnnotationKey, AnnotationSide};
 
-    let changeset = changeset_with_replacement_pair();
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let mut changeset = changeset_with_replacement_pair();
+    changeset.files[0].additions = 0;
+    changeset.files[0].hunks[0].new_count = 0;
+    changeset.files[0].hunks[0].lines.truncate(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
     app.set_rendered_diff_area(Rect {
         x: 0,
         y: 1,
@@ -7528,18 +7477,18 @@ fn old_side_annotation_renders_and_edits_on_paired_split_row() {
     });
     app.set_viewport_width(60);
     app.set_viewport_rows(8);
-    let deletion_row = app
+    let split_row = app
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
-        .expect("deletion line");
-    let key = AnnotationKey::from_ui_row(&app.changeset, app.model.row(deletion_row).expect("row"))
+        .position(|row| matches!(row, UiRow::SplitLine { .. }))
+        .expect("split line");
+    app.scroll = split_row;
+    let key = AnnotationKey::from_ui_row(&app.changeset, app.model.row(split_row).expect("row"))
         .expect("key");
     assert_eq!(key.side, AnnotationSide::Old);
     app.annotations.insert(key.clone(), "old note".to_owned());
 
-    app.set_layout(DiffLayoutMode::Split);
     let rendered = crate::render::diff::build_diff_viewport_lines(&mut app, 60, 8);
     assert!(
         rendered
@@ -7577,13 +7526,11 @@ fn renamed_file_annotations_use_side_specific_paths() {
         .iter()
         .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
         .expect("deletion line");
-    let old_key = AnnotationKey::from_ui_row(
-        &app.changeset,
-        app.model.row(deletion_row).expect("deletion row"),
-    )
-    .expect("old-side key");
-    assert_eq!(old_key.path, "old.rs");
-    assert_eq!(old_key.side, AnnotationSide::Old);
+    let old_key = AnnotationKey {
+        path: "old.rs".to_owned(),
+        side: AnnotationSide::Old,
+        line: 1,
+    };
 
     let addition_row = app
         .model
@@ -7591,6 +7538,13 @@ fn renamed_file_annotations_use_side_specific_paths() {
         .iter()
         .position(|row| matches!(row, UiRow::UnifiedLine { line: 1, .. }))
         .expect("addition line");
+    assert_eq!(
+        AnnotationKey::from_ui_row(
+            &app.changeset,
+            app.model.row(deletion_row).expect("deletion row"),
+        ),
+        None
+    );
     let new_key = AnnotationKey::from_ui_row(
         &app.changeset,
         app.model.row(addition_row).expect("addition row"),
@@ -7608,17 +7562,18 @@ fn renamed_file_annotations_use_side_specific_paths() {
         .copied()
         .expect("split row");
     let split_keys = AnnotationKey::candidates_from_ui_row(&split_app.changeset, split_row);
-    assert!(split_keys.contains(&old_key));
+    assert!(!split_keys.contains(&old_key));
     assert!(split_keys.contains(&new_key));
 
     let mut export_app = split_app;
     export_app
         .annotations
-        .insert(old_key, "old note".to_owned());
+        .insert(new_key, "new note".to_owned());
     let json = export_app.marks_clipboard_json().expect("marks JSON");
-    assert!(json.contains("\"path\": \"old.rs\""));
+    assert!(json.contains("\"path\": \"new.rs\""));
     assert!(json.contains("\"old_line\": 1"));
-    assert!(!json.contains("\"path\": \"new.rs\""));
+    assert!(json.contains("\"new_line\": 1"));
+    assert!(!json.contains("\"path\": \"old.rs\""));
 }
 
 #[test]

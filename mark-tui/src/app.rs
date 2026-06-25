@@ -28,7 +28,10 @@ use tokio::sync::{mpsc::Receiver, oneshot};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    annotation::{AnnotationDraft, AnnotationKey, AnnotationSide, AnnotationStore},
+    annotation::{
+        AnnotationDraft, AnnotationKey, AnnotationSide, AnnotationStore,
+        paired_old_line_for_addition,
+    },
     controls::{
         BranchMenu, CrosstermTerminal, DiffChoice, DiffFilterKind, DiffLayoutMode, GitCommit,
         branch_base_from_options, branch_head_from_options, branch_match_score, commit_match_score,
@@ -48,7 +51,7 @@ use crate::{
         annotations::{
             annotation_close_hit_at_column, annotation_compose_block_height,
             annotation_edit_hit_at_column, annotation_hit_at_column, annotation_saved_block_height,
-            annotation_submit_hit_at_column, split_annotation_hit_side_at_column,
+            annotation_submit_hit_at_column,
         },
         draw,
         menus::{
@@ -2542,8 +2545,31 @@ impl DiffApp {
     fn annotation_key_lines(&self, key: &AnnotationKey) -> Option<(Option<usize>, Option<usize>)> {
         match key.side {
             AnnotationSide::Old => Some((Some(key.line), None)),
-            AnnotationSide::New => Some((None, Some(key.line))),
+            AnnotationSide::New => {
+                Some((self.paired_old_line_for_new_annotation(key), Some(key.line)))
+            }
         }
+    }
+
+    fn paired_old_line_for_new_annotation(&self, key: &AnnotationKey) -> Option<usize> {
+        self.changeset.files.iter().find_map(|file| {
+            if AnnotationKey::path_for_side(file, AnnotationSide::New) != Some(key.path.as_str()) {
+                return None;
+            }
+
+            file.hunks.iter().find_map(|hunk| {
+                hunk.lines
+                    .iter()
+                    .enumerate()
+                    .find_map(|(line_index, line)| {
+                        if line.new_line == Some(key.line) {
+                            paired_old_line_for_addition(&hunk.lines, line_index)
+                        } else {
+                            None
+                        }
+                    })
+            })
+        })
     }
 
     pub(crate) fn resize_error_log(&mut self, delta: isize) -> bool {
@@ -3379,13 +3405,6 @@ impl DiffApp {
     }
 
     fn annotation_key_for_add_click(&self, row: UiRow, column: u16) -> Option<AnnotationKey> {
-        if self.layout == DiffLayoutMode::Split && matches!(row, UiRow::SplitLine { .. }) {
-            let side = split_annotation_hit_side_at_column(column, self.viewport_width)?;
-            return AnnotationKey::candidates_from_ui_row(&self.changeset, row)
-                .into_iter()
-                .find(|key| key.side == side);
-        }
-
         if !annotation_hit_at_column(column, self.viewport_width) {
             return None;
         }

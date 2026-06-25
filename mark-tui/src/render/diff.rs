@@ -9,15 +9,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    annotation::{AnnotationKey, AnnotationSide},
+    annotation::AnnotationKey,
     app::{DiffApp, split_cell_content_width, unified_content_width, wrapped_line_start_columns},
     controls::DiffLayoutMode,
     model::UiRow,
     render::{
         annotations::{
-            append_annotation_add_button, append_split_annotation_add_button,
-            render_annotation_compose_block, render_annotation_saved_block,
-            split_annotation_side_at_column,
+            append_annotation_add_button, render_annotation_compose_block,
+            render_annotation_saved_block,
         },
         grep::{
             diff_line_grep_highlight_text, grep_highlight_target_for_columns,
@@ -100,10 +99,8 @@ pub(crate) fn build_diff_viewport_lines(
             && draft.is_none()
         {
             line = highlighted_mouse_diff_content_line(line, layout, width, theme);
-            if let Some((hover_column, _)) = mouse_highlight
-                && let Some(target) = annotation_add_button_target(app, row, hover_column, width)
-            {
-                line = append_annotation_add_button_for_target(line, width, target, theme);
+            if row_has_annotation_target(app, row) {
+                line = append_annotation_add_button(line, width, theme);
             }
         }
         lines.push(line);
@@ -173,12 +170,8 @@ fn build_wrapped_viewport_lines(
                 && draft.is_none()
             {
                 line = highlighted_mouse_diff_content_line(line, layout, width, theme);
-                if visual_row == anchor_visual
-                    && let Some((hover_column, _)) = mouse_highlight
-                    && let Some(target) =
-                        annotation_add_button_target(app, row, hover_column, width)
-                {
-                    line = append_annotation_add_button_for_target(line, width, target, theme);
+                if visual_row == anchor_visual && row_has_annotation_target(app, row) {
+                    line = append_annotation_add_button(line, width, theme);
                 }
             }
             lines.push(line);
@@ -240,41 +233,8 @@ fn mouse_highlight_for_viewport(app: &DiffApp) -> Option<(u16, usize)> {
         .map(|visual_row| (column, visual_row))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnnotationAddButtonTarget {
-    WholeLine,
-    SplitSide(AnnotationSide),
-}
-
-fn annotation_add_button_target(
-    app: &DiffApp,
-    row: UiRow,
-    column: u16,
-    width: usize,
-) -> Option<AnnotationAddButtonTarget> {
-    if app.layout == DiffLayoutMode::Split && matches!(row, UiRow::SplitLine { .. }) {
-        let side = split_annotation_side_at_column(column, width)?;
-        return AnnotationKey::candidates_from_ui_row(&app.changeset, row)
-            .into_iter()
-            .any(|key| key.side == side)
-            .then_some(AnnotationAddButtonTarget::SplitSide(side));
-    }
-
-    AnnotationKey::from_ui_row(&app.changeset, row).map(|_| AnnotationAddButtonTarget::WholeLine)
-}
-
-fn append_annotation_add_button_for_target(
-    line: Line<'static>,
-    width: usize,
-    target: AnnotationAddButtonTarget,
-    theme: DiffTheme,
-) -> Line<'static> {
-    match target {
-        AnnotationAddButtonTarget::WholeLine => append_annotation_add_button(line, width, theme),
-        AnnotationAddButtonTarget::SplitSide(side) => {
-            append_split_annotation_add_button(line, width, side, theme)
-        }
-    }
+fn row_has_annotation_target(app: &DiffApp, row: UiRow) -> bool {
+    AnnotationKey::from_ui_row(&app.changeset, row).is_some()
 }
 
 fn row_has_diff_code_content(row: UiRow) -> bool {

@@ -6,11 +6,11 @@ use crate::{
         ANNOTATION_ADD_BUTTON, ANNOTATION_ADD_BUTTON_WIDTH, ANNOTATION_CLOSE_BUTTON,
         ANNOTATION_CLOSE_BUTTON_WIDTH, ANNOTATION_EDIT_BUTTON, ANNOTATION_EDIT_BUTTON_ASCII,
         ANNOTATION_EDIT_BUTTON_WIDTH, ANNOTATION_SUBMIT_BUTTON, ANNOTATION_SUBMIT_BUTTON_ASCII,
-        ANNOTATION_SUBMIT_BUTTON_WIDTH, AnnotationDraft, AnnotationSide,
+        ANNOTATION_SUBMIT_BUTTON_WIDTH, AnnotationDraft,
     },
     controls::INPUT_CURSOR,
     render::style::base_bg,
-    render::text::{fit, fit_padded, fit_with_width, skip_display_prefix, spaces},
+    render::text::{fit, fit_padded, fit_with_width, spaces},
     theme::DiffTheme,
 };
 
@@ -64,85 +64,6 @@ pub(crate) fn append_annotation_add_button(
             .add_modifier(Modifier::BOLD),
     ));
     Line::from(out)
-}
-
-pub(crate) fn append_split_annotation_add_button(
-    line: Line<'static>,
-    width: usize,
-    side: AnnotationSide,
-    theme: DiffTheme,
-) -> Line<'static> {
-    let left_width = width / 2;
-    let right_width = width.saturating_sub(left_width);
-    match side {
-        AnnotationSide::Old if left_width >= ANNOTATION_ADD_BUTTON_WIDTH => {
-            append_annotation_add_button_ending_at(line, left_width, theme)
-        }
-        AnnotationSide::New if right_width >= ANNOTATION_ADD_BUTTON_WIDTH => {
-            append_annotation_add_button(line, width, theme)
-        }
-        _ => line,
-    }
-}
-
-fn append_annotation_add_button_ending_at(
-    line: Line<'static>,
-    end_width: usize,
-    theme: DiffTheme,
-) -> Line<'static> {
-    let (prefix, suffix) = split_line_at_width(line.spans, end_width);
-    let mut spans = append_annotation_add_button(Line::from(prefix), end_width, theme).spans;
-    spans.extend(suffix);
-    Line::from(spans)
-}
-
-fn split_line_at_width(
-    spans: Vec<Span<'static>>,
-    width: usize,
-) -> (Vec<Span<'static>>, Vec<Span<'static>>) {
-    if width == 0 {
-        return (Vec::new(), spans);
-    }
-
-    let mut left = Vec::new();
-    let mut right = Vec::new();
-    let mut used = 0usize;
-    let mut split = false;
-
-    for span in spans {
-        if split {
-            right.push(span);
-            continue;
-        }
-
-        let span_width = span.content.as_ref().width();
-        if used.saturating_add(span_width) <= width {
-            used = used.saturating_add(span_width);
-            left.push(span);
-            if used == width {
-                split = true;
-            }
-            continue;
-        }
-
-        let remaining = width.saturating_sub(used);
-        let style = span.style;
-        let text = span.content.into_owned();
-        let (left_text, left_width, _) = fit_with_width(&text, remaining);
-        if !left_text.is_empty() {
-            left.push(Span::styled(left_text, style));
-        }
-        if left_width < remaining {
-            left.push(Span::styled(spaces(remaining - left_width), style));
-        }
-        let (right_text, _) = skip_display_prefix(&text, remaining);
-        if !right_text.is_empty() {
-            right.push(Span::styled(right_text.to_owned(), style));
-        }
-        split = true;
-    }
-
-    (left, right)
 }
 
 fn annotation_top_border_line(
@@ -395,40 +316,6 @@ pub(crate) fn annotation_hit_at_column(column: u16, width: usize) -> bool {
     }
     let start = width.saturating_sub(ANNOTATION_ADD_BUTTON_WIDTH as u16);
     column >= start
-}
-
-pub(crate) fn split_annotation_side_at_column(column: u16, width: usize) -> Option<AnnotationSide> {
-    let width = width.min(usize::from(u16::MAX)) as u16;
-    if width == 0 || column >= width {
-        return None;
-    }
-    let left_width = width / 2;
-    if column < left_width {
-        Some(AnnotationSide::Old)
-    } else {
-        Some(AnnotationSide::New)
-    }
-}
-
-pub(crate) fn split_annotation_hit_side_at_column(
-    column: u16,
-    width: usize,
-) -> Option<AnnotationSide> {
-    let side = split_annotation_side_at_column(column, width)?;
-    let width = width.min(usize::from(u16::MAX)) as u16;
-    let left_width = width / 2;
-    let right_width = width.saturating_sub(left_width);
-    let (cell_start, cell_width) = match side {
-        AnnotationSide::Old => (0, left_width),
-        AnnotationSide::New => (left_width, right_width),
-    };
-    let button_width = ANNOTATION_ADD_BUTTON_WIDTH as u16;
-    if cell_width < button_width {
-        return None;
-    }
-    let start = cell_start.saturating_add(cell_width.saturating_sub(button_width));
-    let end = cell_start.saturating_add(cell_width);
-    (column >= start && column < end).then_some(side)
 }
 
 pub(crate) fn annotation_close_hit_at_column(column: u16, width: usize) -> bool {
