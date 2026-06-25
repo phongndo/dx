@@ -64,7 +64,7 @@ impl Default for Keymap {
             grep: key_sequences(&["/"]),
             diff_menu: key_sequences(&["space m"]),
             options_menu: key_sequences(&["space o"]),
-            file_browser: key_sequences(&["space b"]),
+            file_browser: key_sequences(&["b"]),
             quit: key_sequences(&["q"]),
             layout: key_sequences(&["space s"]),
             edit_hunk: key_sequences(&["ctrl-g"]),
