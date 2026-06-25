@@ -3468,11 +3468,10 @@ impl DiffApp {
     }
 
     fn commit_annotation_draft(&mut self, draft: AnnotationDraft) {
-        let text = draft.input.trim().to_owned();
-        if text.is_empty() {
+        if draft.input.trim().is_empty() {
             self.annotations.remove(&draft.key);
         } else {
-            self.annotations.insert(draft.key, text);
+            self.annotations.insert(draft.key, draft.input);
         }
         self.set_scroll_with_grep_sync(self.scroll, false, HunkFocusScrollBehavior::Preserve);
         self.dirty = true;
@@ -7643,6 +7642,9 @@ fn max_scroll_for_annotated_viewport(
     let target_rendered_scroll = row_count
         .saturating_add(annotation_rows)
         .saturating_sub(viewport_rows.max(1));
+    if target_rendered_scroll == 0 {
+        return 0;
+    }
 
     // `scroll` is expressed in diff visual rows, while annotations add rendered
     // rows after their anchors. Project the last rendered viewport start back to

@@ -235,6 +235,34 @@ fn max_scroll_reaches_rows_hidden_by_saved_annotation() {
 }
 
 #[test]
+fn max_scroll_stays_zero_when_annotated_diff_fits_viewport() {
+    use crate::annotation::AnnotationKey;
+
+    let lines: Vec<&str> = (0..3).map(|_| "line").collect();
+    let changeset = changeset_with_line_texts(&lines);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_width(40);
+    app.set_viewport_rows(20);
+
+    let annotated_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    let key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(annotated_row).expect("annotated row"),
+    )
+    .expect("annotation key");
+    app.annotations.insert(key, "note".to_owned());
+
+    assert_eq!(app.max_scroll(), 0);
+    app.set_scroll(usize::MAX);
+    assert_eq!(app.scroll, 0);
+}
+
+#[test]
 fn hunk_focus_moves_between_hunks_when_diff_fits_viewport() {
     let changeset = changeset_with_hunks_at(PathBuf::from("/repo"), &[1, 2, 3]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -6553,6 +6581,49 @@ fn annotation_add_button_opens_input_under_hovered_line() {
 }
 
 #[test]
+fn annotation_save_preserves_body_whitespace_but_deletes_blank_drafts() {
+    use crate::annotation::{AnnotationDraft, AnnotationKey};
+
+    let changeset = changeset_with_line_text("hello");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let code_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    let row = app.model.row(code_row).expect("row");
+    let key = AnnotationKey::from_ui_row(&app.changeset, row).expect("key");
+
+    let body = "  indented\n    code  ";
+    app.annotation_draft = Some(AnnotationDraft {
+        key: key.clone(),
+        model_row_index: code_row,
+        input: body.to_owned(),
+        cursor: body.len(),
+    });
+    let save_key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert!(app.handle_annotation_input_key(save_key));
+    assert_eq!(app.annotations.get(&key).map(String::as_str), Some(body));
+    assert!(
+        app.marks_clipboard_json()
+            .expect("marks JSON")
+            .contains("\"body\": \"  indented\\n    code  \"")
+    );
+
+    let blank = " \n\t ";
+    app.annotation_draft = Some(AnnotationDraft {
+        key: key.clone(),
+        model_row_index: code_row,
+        input: blank.to_owned(),
+        cursor: blank.len(),
+    });
+    let save_key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert!(app.handle_annotation_input_key(save_key));
+    assert!(!app.annotations.contains_key(&key));
+}
+
+#[test]
 fn annotation_button_hit_tests_use_diff_relative_columns() {
     let changeset = changeset_with_line_text("hello");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -7048,7 +7119,7 @@ fn annotation_input_supports_native_cursor_shortcuts() {
     let key = AnnotationKey::from_ui_row(&app.changeset, row).expect("key");
     assert_eq!(
         app.annotations.get(&key).map(String::as_str),
-        Some(">hello world!")
+        Some(">hello world!\n")
     );
 }
 
@@ -7092,7 +7163,13 @@ fn annotation_save_and_cancel_use_configured_keybindings() {
     let key = AnnotationKey::from_ui_row(&app.changeset, row).expect("key");
     assert_eq!(app.annotations.get(&key).map(String::as_str), Some("n"));
 
-    assert!(app.handle_diff_click(38, 4));
+    let rendered = build_diff_viewport_lines(&mut app, 40, 8);
+    let edit_row = rendered
+        .iter()
+        .position(|line| line_text(line).ends_with("[↻]"))
+        .expect("saved annotation edit footer") as u16
+        + app.rendered_diff_area.expect("diff area").y;
+    assert!(app.handle_diff_click(38, edit_row));
     assert!(app.annotation_draft.is_some());
     app.handle_annotation_input_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
     assert!(app.annotation_draft.is_none());
