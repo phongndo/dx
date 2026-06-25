@@ -1,7 +1,8 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
-    fs,
+    env, fs,
+    hash::{Hash, Hasher},
     io::{self, Write},
     ops::Range,
     path::{Path, PathBuf},
@@ -26,6 +27,7 @@ use tokio::sync::{mpsc::Receiver, oneshot};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
+    annotation::{AnnotationDraft, AnnotationKey, AnnotationLineKind, AnnotationStore},
     controls::{
         BranchMenu, CrosstermTerminal, DiffChoice, DiffFilterKind, DiffLayoutMode, GitCommit,
         branch_base_from_options, branch_head_from_options, branch_match_score, commit_match_score,
@@ -33,7 +35,7 @@ use crate::{
         current_head_label, default_branch_base, default_layout_for_width, diff_stats_for_files,
         rev_display_label,
     },
-    editor::{EditorTarget, configured_editor, open_editor, repo_file_path},
+    editor::{EditorTarget, configured_editor, open_editor, open_text_in_editor, repo_file_path},
     event_reader::TerminalEventReader,
     keymap::{GlobalAction, Keymap, MenuAction},
     live_diff::{LiveDiff, LiveDiffReload, live_diff_supported},
@@ -42,12 +44,21 @@ use crate::{
         UiRow, context_expansion_direction,
     },
     render::{
+        annotations::{
+            annotation_close_hit_at_column, annotation_edit_hit_at_column,
+            annotation_hit_at_column, annotation_submit_hit_at_column,
+        },
         draw,
         menus::{
             branch_menu_block, branch_menu_width, color_scheme_picker_block, commit_menu_block,
             diff_menu_block, diff_selector_width, help_menu_list_visible_rows,
         },
         sidebar::max_file_sidebar_width,
+        viewport_plan::{
+            annotation_saved_model_at_top_border, compose_block_bottom_viewport_row,
+            compose_block_top_viewport_row, model_row_for_viewport_row,
+            saved_block_bottom_viewport_row, visual_scroll_for_viewport_row,
+        },
     },
     runtime,
     search::{DiffSearchIndex, DiffSearchResult, grep_match_rows},
@@ -154,6 +165,15 @@ pub(crate) struct Notice {
     pub(crate) expires_at: Instant,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkExport {
+    model_row_index: usize,
+    path: String,
+    old_line: Option<usize>,
+    new_line: Option<usize>,
+    body: String,
+}
+
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub(crate) fn osc52_clipboard_sequence(text: &str) -> String {
@@ -186,6 +206,39 @@ fn base64_encode(bytes: &[u8]) -> String {
         }
     }
     encoded
+}
+
+fn json_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            character if character <= '\u{1f}' => {
+                out.push_str("\\u00");
+                let value = character as u8;
+                out.push(hex_digit(value >> 4));
+                out.push(hex_digit(value & 0x0f));
+            }
+            character => out.push(character),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'a' + (value - 10)) as char,
+        _ => '0',
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -378,7 +431,11 @@ pub(crate) fn handle_event(
             if app.keymap.matches_single(GlobalAction::EditHunk, key)
                 && app.editor_shortcut_available() =>
         {
-            if let Some(editor) = app.prepare_focused_hunk_editor() {
+            if app.annotation_draft.is_some() {
+                let paused_events = events.pause();
+                app.open_annotation_draft_in_editor();
+                paused_events.resume()?;
+            } else if let Some(editor) = app.prepare_focused_hunk_editor() {
                 let paused_events = events.pause();
                 app.open_prepared_hunk_in_editor(editor, Some(live_diff));
                 paused_events.resume()?;
@@ -390,7 +447,12 @@ pub(crate) fn handle_event(
             app.handle_mouse(mouse)?;
             Ok(false)
         }
+        Event::FocusLost => {
+            app.clear_diff_mouse_hover();
+            Ok(false)
+        }
         Event::Resize(width, height) => {
+            app.clear_diff_mouse_hover();
             app.set_terminal_area(Rect {
                 x: 0,
                 y: 0,
@@ -414,6 +476,255 @@ pub(crate) fn is_plain_char_key(key: KeyEvent, character: char) -> bool {
     key.code == KeyCode::Char(character)
         && !key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextInputKeyResult {
+    Ignored,
+    Handled,
+    Moved,
+    Edited,
+}
+
+fn handle_text_input_key(
+    input: &mut String,
+    cursor: &mut usize,
+    key: KeyEvent,
+) -> TextInputKeyResult {
+    clamp_text_cursor(input, cursor);
+    if input.is_empty() {
+        match key.code {
+            KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Backspace
+            | KeyCode::Delete => return TextInputKeyResult::Ignored,
+            KeyCode::Char('a' | 'e' | 'u' | 'k' | 'w')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                return TextInputKeyResult::Ignored;
+            }
+            _ => {}
+        }
+    }
+    let before_input = input.clone();
+    let before_cursor = *cursor;
+
+    let handled = match key.code {
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *cursor = line_start(input, *cursor);
+            true
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            *cursor = line_end(input, *cursor);
+            true
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            delete_range(input, cursor, line_start(input, *cursor), *cursor);
+            true
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            delete_range(input, cursor, *cursor, line_end(input, *cursor));
+            true
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            delete_range(
+                input,
+                cursor,
+                previous_word_boundary(input, *cursor),
+                *cursor,
+            );
+            true
+        }
+        KeyCode::Home => {
+            *cursor = line_start(input, *cursor);
+            true
+        }
+        KeyCode::End => {
+            *cursor = line_end(input, *cursor);
+            true
+        }
+        KeyCode::Left if key_has_command_modifier(key.modifiers) => {
+            *cursor = line_start(input, *cursor);
+            true
+        }
+        KeyCode::Right if key_has_command_modifier(key.modifiers) => {
+            *cursor = line_end(input, *cursor);
+            true
+        }
+        KeyCode::Left if key_has_word_modifier(key.modifiers) => {
+            *cursor = previous_word_boundary(input, *cursor);
+            true
+        }
+        KeyCode::Right if key_has_word_modifier(key.modifiers) => {
+            *cursor = next_word_boundary(input, *cursor);
+            true
+        }
+        KeyCode::Left => {
+            *cursor = previous_char_boundary(input, *cursor);
+            true
+        }
+        KeyCode::Right => {
+            *cursor = next_char_boundary(input, *cursor);
+            true
+        }
+        KeyCode::Backspace | KeyCode::Delete if key_has_command_modifier(key.modifiers) => {
+            delete_range(input, cursor, line_start(input, *cursor), *cursor);
+            true
+        }
+        KeyCode::Backspace if key_has_word_modifier(key.modifiers) => {
+            delete_range(
+                input,
+                cursor,
+                previous_word_boundary(input, *cursor),
+                *cursor,
+            );
+            true
+        }
+        KeyCode::Delete if key_has_word_modifier(key.modifiers) => {
+            delete_range(input, cursor, *cursor, next_word_boundary(input, *cursor));
+            true
+        }
+        KeyCode::Backspace => {
+            delete_range(
+                input,
+                cursor,
+                previous_char_boundary(input, *cursor),
+                *cursor,
+            );
+            true
+        }
+        KeyCode::Delete => {
+            delete_range(input, cursor, *cursor, next_char_boundary(input, *cursor));
+            true
+        }
+        KeyCode::Char(character) if is_text_input_character(key.modifiers) => {
+            input.insert(*cursor, character);
+            *cursor += character.len_utf8();
+            true
+        }
+        _ => false,
+    };
+
+    if !handled {
+        TextInputKeyResult::Ignored
+    } else if before_input != *input {
+        TextInputKeyResult::Edited
+    } else if before_cursor != *cursor {
+        TextInputKeyResult::Moved
+    } else {
+        TextInputKeyResult::Handled
+    }
+}
+
+fn is_text_input_character(modifiers: KeyModifiers) -> bool {
+    !modifiers.intersects(
+        KeyModifiers::CONTROL
+            | KeyModifiers::ALT
+            | KeyModifiers::SUPER
+            | KeyModifiers::HYPER
+            | KeyModifiers::META,
+    )
+}
+
+fn key_has_command_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::META)
+}
+
+fn key_has_word_modifier(modifiers: KeyModifiers) -> bool {
+    modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+}
+
+fn clamp_text_cursor(input: &str, cursor: &mut usize) {
+    *cursor = (*cursor).min(input.len());
+    while *cursor > 0 && !input.is_char_boundary(*cursor) {
+        *cursor -= 1;
+    }
+}
+
+fn delete_range(input: &mut String, cursor: &mut usize, start: usize, end: usize) {
+    let start = start.min(input.len());
+    let end = end.min(input.len());
+    if start >= end || !input.is_char_boundary(start) || !input.is_char_boundary(end) {
+        return;
+    }
+    input.replace_range(start..end, "");
+    *cursor = start;
+}
+
+fn previous_char_boundary(input: &str, cursor: usize) -> usize {
+    input[..cursor.min(input.len())]
+        .char_indices()
+        .last()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(input: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(input.len());
+    input[cursor..]
+        .chars()
+        .next()
+        .map(|character| cursor + character.len_utf8())
+        .unwrap_or(cursor)
+}
+
+fn line_start(input: &str, cursor: usize) -> usize {
+    input[..cursor.min(input.len())]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0)
+}
+
+fn line_end(input: &str, cursor: usize) -> usize {
+    let cursor = cursor.min(input.len());
+    input[cursor..]
+        .find('\n')
+        .map(|index| cursor + index)
+        .unwrap_or(input.len())
+}
+
+fn previous_word_boundary(input: &str, cursor: usize) -> usize {
+    let mut index = cursor.min(input.len());
+    while index > 0 {
+        let prev = previous_char_boundary(input, index);
+        let ch = input[prev..index].chars().next().unwrap_or_default();
+        if !ch.is_whitespace() {
+            break;
+        }
+        index = prev;
+    }
+    while index > 0 {
+        let prev = previous_char_boundary(input, index);
+        let ch = input[prev..index].chars().next().unwrap_or_default();
+        if ch.is_whitespace() {
+            break;
+        }
+        index = prev;
+    }
+    index
+}
+
+fn next_word_boundary(input: &str, cursor: usize) -> usize {
+    let mut index = cursor.min(input.len());
+    while index < input.len() {
+        let next = next_char_boundary(input, index);
+        let ch = input[index..next].chars().next().unwrap_or_default();
+        if ch.is_whitespace() {
+            break;
+        }
+        index = next;
+    }
+    while index < input.len() {
+        let next = next_char_boundary(input, index);
+        let ch = input[index..next].chars().next().unwrap_or_default();
+        if !ch.is_whitespace() {
+            break;
+        }
+        index = next;
+    }
+    index
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
@@ -975,35 +1286,46 @@ pub(crate) struct DiffApp {
     pub(crate) rendered_branch_menu_area: Option<Rect>,
     pub(crate) rendered_commit_menu_area: Option<Rect>,
     pub(crate) rendered_color_scheme_picker_area: Option<Rect>,
+    pub(crate) rendered_diff_area: Option<Rect>,
+    pub(crate) mouse_hover: Option<(u16, u16)>,
+    pub(crate) annotations: AnnotationStore,
+    pub(crate) annotation_draft: Option<AnnotationDraft>,
     pub(crate) leader_pending: bool,
     pub(crate) help_menu_open: bool,
     pub(crate) help_menu_input: String,
+    pub(crate) help_menu_input_cursor: usize,
     pub(crate) help_menu_scroll: usize,
     pub(crate) help_menu_visible_rows: usize,
     terminal_area: Rect,
     pub(crate) diff_menu_open: bool,
     pub(crate) diff_menu_input: String,
+    pub(crate) diff_menu_input_cursor: usize,
     pub(crate) diff_menu_selected: usize,
     pub(crate) options_menu_open: bool,
     pub(crate) options_menu_input: String,
+    pub(crate) options_menu_input_cursor: usize,
     pub(crate) options_menu_selected: usize,
     pub(crate) options_menu_scroll: usize,
     pub(crate) options_menu_draft: OptionsDraft,
     pub(crate) color_scheme_picker_open: bool,
     pub(crate) color_scheme_input: String,
+    pub(crate) color_scheme_input_cursor: usize,
     pub(crate) color_scheme_scroll: usize,
     pub(crate) color_scheme_selected: usize,
     pub(crate) color_scheme_preview_original: Option<(ColorSchemeChoice, DiffTheme)>,
     pub(crate) filter_input: Option<DiffFilterKind>,
     pub(crate) file_filter: String,
     pub(crate) file_filter_input: String,
+    pub(crate) file_filter_input_cursor: usize,
     pub(crate) grep_filter: String,
     pub(crate) grep_filter_input: String,
+    pub(crate) grep_filter_input_cursor: usize,
     pub(crate) grep_matches: Vec<usize>,
     pub(crate) grep_matches_truncated: bool,
     pub(crate) selected_grep_match: Option<usize>,
     pub(crate) branch_menu_open: Option<BranchMenu>,
     pub(crate) branch_menu_input: String,
+    pub(crate) branch_menu_input_cursor: usize,
     pub(crate) branch_menu_scroll: usize,
     pub(crate) branch_menu_selected: usize,
     pub(crate) branch_base: Option<String>,
@@ -1012,6 +1334,7 @@ pub(crate) struct DiffApp {
     pub(crate) comparison_branches: Vec<String>,
     pub(crate) commit_menu_open: bool,
     pub(crate) commit_menu_input: String,
+    pub(crate) commit_menu_input_cursor: usize,
     pub(crate) commit_menu_scroll: usize,
     pub(crate) commit_menu_selected: usize,
     pub(crate) show_rev: Option<String>,
@@ -1263,17 +1586,24 @@ impl DiffApp {
             rendered_branch_menu_area: None,
             rendered_commit_menu_area: None,
             rendered_color_scheme_picker_area: None,
+            rendered_diff_area: None,
+            mouse_hover: None,
+            annotations: AnnotationStore::default(),
+            annotation_draft: None,
             leader_pending: false,
             help_menu_open: false,
             help_menu_input: String::new(),
+            help_menu_input_cursor: 0,
             help_menu_scroll: 0,
             help_menu_visible_rows: 1,
             terminal_area: Rect::default(),
             diff_menu_open: false,
             diff_menu_input: String::new(),
+            diff_menu_input_cursor: 0,
             diff_menu_selected: 0,
             options_menu_open: false,
             options_menu_input: String::new(),
+            options_menu_input_cursor: 0,
             options_menu_selected: 0,
             options_menu_scroll: 0,
             options_menu_draft: OptionsDraft {
@@ -1286,19 +1616,23 @@ impl DiffApp {
             },
             color_scheme_picker_open: false,
             color_scheme_input: String::new(),
+            color_scheme_input_cursor: 0,
             color_scheme_scroll: 0,
             color_scheme_selected: 0,
             color_scheme_preview_original: None,
             filter_input: None,
             file_filter: String::new(),
             file_filter_input: String::new(),
+            file_filter_input_cursor: 0,
             grep_filter: String::new(),
             grep_filter_input: String::new(),
+            grep_filter_input_cursor: 0,
             grep_matches: Vec::new(),
             grep_matches_truncated: false,
             selected_grep_match: None,
             branch_menu_open: None,
             branch_menu_input: String::new(),
+            branch_menu_input_cursor: 0,
             branch_menu_scroll: 0,
             branch_menu_selected: 0,
             branch_base,
@@ -1307,6 +1641,7 @@ impl DiffApp {
             comparison_branches,
             commit_menu_open: false,
             commit_menu_input: String::new(),
+            commit_menu_input_cursor: 0,
             commit_menu_scroll: 0,
             commit_menu_selected: 0,
             show_rev,
@@ -1362,6 +1697,10 @@ impl DiffApp {
         self.mouse_scroll.reset();
 
         if self.filter_input.is_some() && self.handle_filter_input_key(key) {
+            return Ok(false);
+        }
+
+        if self.annotation_draft.is_some() && self.handle_annotation_input_key(key) {
             return Ok(false);
         }
 
@@ -1434,6 +1773,10 @@ impl DiffApp {
         }
         if self.keymap.matches_single(GlobalAction::EditHunk, key) {
             self.open_focused_hunk_in_editor();
+            return Ok(false);
+        }
+        if self.keymap.matches_single(GlobalAction::CopyMarks, key) {
+            self.copy_marks_to_terminal_clipboard();
             return Ok(false);
         }
         if self.error_log.is_some() && self.keymap.matches_single(GlobalAction::CopyErrorLog, key) {
@@ -1545,6 +1888,10 @@ impl DiffApp {
             self.toggle_file_sidebar();
             return Ok(false);
         }
+        if self.keymap.matches_leader(GlobalAction::CopyMarks, key) {
+            self.copy_marks_to_terminal_clipboard();
+            return Ok(false);
+        }
         if self.error_log.is_some() && self.keymap.matches_leader(GlobalAction::CopyErrorLog, key) {
             self.copy_error_log_to_terminal_clipboard();
             return Ok(false);
@@ -1579,20 +1926,10 @@ impl DiffApp {
             || self.keymap.matches_menu(MenuAction::Confirm, key)
         {
             self.select_highlighted_diff_choice();
-        } else {
+        } else if !self.apply_diff_menu_input_key(key) {
             match key.code {
                 KeyCode::Home => self.set_diff_menu_selection(0),
                 KeyCode::End => self.set_diff_menu_selection(usize::MAX),
-                KeyCode::Backspace => self.pop_diff_menu_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_diff_menu_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_diff_menu_input(character);
-                }
                 _ => {}
             }
         }
@@ -1614,22 +1951,12 @@ impl DiffApp {
             || self.keymap.matches_menu(MenuAction::Confirm, key)
         {
             self.select_highlighted_branch_match();
-        } else {
+        } else if !self.apply_branch_input_key(key) {
             match key.code {
                 KeyCode::PageDown => self.move_branch_selection(MAX_BRANCH_MENU_ROWS as isize),
                 KeyCode::PageUp => self.move_branch_selection(-(MAX_BRANCH_MENU_ROWS as isize)),
                 KeyCode::Home => self.set_branch_selection(0),
                 KeyCode::End => self.set_branch_selection(usize::MAX),
-                KeyCode::Backspace => self.pop_branch_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_branch_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_branch_input(character);
-                }
                 _ => {}
             }
         }
@@ -1651,22 +1978,12 @@ impl DiffApp {
             || self.keymap.matches_menu(MenuAction::Confirm, key)
         {
             self.select_highlighted_commit_match();
-        } else {
+        } else if !self.apply_commit_input_key(key) {
             match key.code {
                 KeyCode::PageDown => self.move_commit_selection(MAX_BRANCH_MENU_ROWS as isize),
                 KeyCode::PageUp => self.move_commit_selection(-(MAX_BRANCH_MENU_ROWS as isize)),
                 KeyCode::Home => self.set_commit_selection(0),
                 KeyCode::End => self.set_commit_selection(usize::MAX),
-                KeyCode::Backspace => self.pop_commit_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_commit_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_commit_input(character);
-                }
                 _ => {}
             }
         }
@@ -1692,7 +2009,7 @@ impl DiffApp {
 
         if let Some(delta) = self.help_menu_line_scroll_delta(key) {
             self.scroll_help_menu(delta);
-        } else {
+        } else if !self.apply_help_menu_input_key(key) {
             match key.code {
                 KeyCode::PageDown => {
                     let page = self.help_menu_page_scroll_rows();
@@ -1708,16 +2025,6 @@ impl DiffApp {
                 }
                 KeyCode::Home => self.set_help_menu_scroll(0),
                 KeyCode::End => self.set_help_menu_scroll(usize::MAX),
-                KeyCode::Backspace => self.pop_help_menu_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_help_menu_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_help_menu_input(character);
-                }
                 _ => {}
             }
         }
@@ -1739,22 +2046,12 @@ impl DiffApp {
             || self.keymap.matches_menu(MenuAction::Confirm, key)
         {
             self.activate_selected_option();
-        } else {
+        } else if !self.apply_options_menu_input_key(key) {
             match key.code {
                 KeyCode::Left => self.cycle_selected_option(-1),
                 KeyCode::Right => self.cycle_selected_option(1),
                 KeyCode::Home => self.set_options_menu_selection(0),
                 KeyCode::End => self.set_options_menu_selection(usize::MAX),
-                KeyCode::Backspace => self.pop_options_menu_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_options_menu_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_options_menu_input(character);
-                }
                 _ => {}
             }
         }
@@ -1776,20 +2073,10 @@ impl DiffApp {
             || self.keymap.matches_menu(MenuAction::Confirm, key)
         {
             self.select_highlighted_color_scheme();
-        } else {
+        } else if !self.apply_color_scheme_input_key(key) {
             match key.code {
                 KeyCode::Home => self.set_color_scheme_selection(0),
                 KeyCode::End => self.set_color_scheme_selection(usize::MAX),
-                KeyCode::Backspace => self.pop_color_scheme_input(),
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.clear_color_scheme_input();
-                }
-                KeyCode::Char(character)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.push_color_scheme_input(character);
-                }
                 _ => {}
             }
         }
@@ -1805,6 +2092,7 @@ impl DiffApp {
             && !self.options_menu_open
             && !self.leader_pending
             && !self.color_scheme_picker_open
+            && !self.commit_menu_open
     }
 
     pub(crate) fn event_poll(&self) -> Duration {
@@ -1866,6 +2154,7 @@ impl DiffApp {
     pub(crate) fn toggle_help_menu(&mut self) {
         self.help_menu_open = !self.help_menu_open;
         self.help_menu_input.clear();
+        self.help_menu_input_cursor = 0;
         self.help_menu_scroll = 0;
         self.leader_pending = false;
         if self.help_menu_open {
@@ -1878,6 +2167,7 @@ impl DiffApp {
         if self.help_menu_open || !self.help_menu_input.is_empty() || self.help_menu_scroll != 0 {
             self.help_menu_open = false;
             self.help_menu_input.clear();
+            self.help_menu_input_cursor = 0;
             self.help_menu_scroll = 0;
             self.leader_pending = false;
             self.dirty = true;
@@ -1987,27 +2277,59 @@ impl DiffApp {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_help_menu_input(&mut self, character: char) {
-        self.help_menu_input.push(character);
+        self.help_menu_input
+            .insert(self.help_menu_input_cursor, character);
+        self.help_menu_input_cursor += character.len_utf8();
         self.help_menu_scroll = 0;
         self.sync_help_menu_visible_rows();
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_help_menu_input(&mut self) {
-        if self.help_menu_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.help_menu_input,
+            &mut self.help_menu_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.help_menu_scroll = 0;
             self.sync_help_menu_visible_rows();
             self.dirty = true;
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_help_menu_input(&mut self) {
         if !self.help_menu_input.is_empty() || self.help_menu_scroll != 0 {
             self.help_menu_input.clear();
+            self.help_menu_input_cursor = 0;
             self.help_menu_scroll = 0;
             self.sync_help_menu_visible_rows();
             self.dirty = true;
+        }
+    }
+
+    fn apply_help_menu_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.help_menu_input,
+            &mut self.help_menu_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.help_menu_scroll = 0;
+                self.sync_help_menu_visible_rows();
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -2071,6 +2393,97 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn copy_marks_to_terminal_clipboard(&mut self) {
+        let mut stdout = io::stdout().lock();
+        self.copy_marks_to_writer(&mut stdout);
+    }
+
+    pub(crate) fn copy_marks_to_writer<W: Write>(&mut self, writer: &mut W) {
+        let Some(marks) = self.marks_clipboard_json() else {
+            self.set_notice("no marks to copy");
+            return;
+        };
+
+        match write_osc52_clipboard(writer, &marks) {
+            Ok(()) => self.set_notice("marks copied"),
+            Err(error) => self.set_error_log(format!("marks copy failed: {error}")),
+        }
+    }
+
+    pub(crate) fn marks_clipboard_json(&self) -> Option<String> {
+        let mut marks = self.export_marks();
+        if marks.is_empty() {
+            return None;
+        }
+        marks.sort_by_key(|mark| mark.model_row_index);
+
+        let mut out = String::from("{\n  \"version\": 1,\n  \"marks\": [\n");
+        for (index, mark) in marks.iter().enumerate() {
+            if index > 0 {
+                out.push_str(",\n");
+            }
+            out.push_str("    {\n");
+            out.push_str("      \"path\": ");
+            out.push_str(&json_string(&mark.path));
+            if let Some(old_line) = mark.old_line {
+                out.push_str(",\n      \"old_line\": ");
+                out.push_str(&old_line.to_string());
+            }
+            if let Some(new_line) = mark.new_line {
+                out.push_str(",\n      \"new_line\": ");
+                out.push_str(&new_line.to_string());
+            }
+            out.push_str(",\n      \"body\": ");
+            out.push_str(&json_string(&mark.body));
+            out.push_str("\n    }");
+        }
+        out.push_str("\n  ]\n}");
+        Some(out)
+    }
+
+    fn export_marks(&self) -> Vec<MarkExport> {
+        self.annotations
+            .iter()
+            .filter_map(|(key, body)| self.export_mark(key, body))
+            .collect()
+    }
+
+    fn export_mark(&self, key: &AnnotationKey, body: &str) -> Option<MarkExport> {
+        let file = self.changeset.files.get(key.file)?;
+        let (old_line, new_line) = self.annotation_key_lines(key)?;
+        Some(MarkExport {
+            model_row_index: key.model_row_index,
+            path: file.display_path().to_owned(),
+            old_line,
+            new_line,
+            body: body.to_owned(),
+        })
+    }
+
+    fn annotation_key_lines(&self, key: &AnnotationKey) -> Option<(Option<usize>, Option<usize>)> {
+        match key.kind {
+            AnnotationLineKind::Unified { hunk, line } => {
+                let line = self.changeset.files[key.file]
+                    .hunks
+                    .get(hunk)?
+                    .lines
+                    .get(line)?;
+                Some((line.old_line, line.new_line))
+            }
+            AnnotationLineKind::Split { hunk, left, right } => {
+                let lines = &self.changeset.files[key.file].hunks.get(hunk)?.lines;
+                let old_line =
+                    left.and_then(|index| lines.get(index).and_then(|line| line.old_line));
+                let new_line =
+                    right.and_then(|index| lines.get(index).and_then(|line| line.new_line));
+                Some((old_line, new_line))
+            }
+            AnnotationLineKind::Context { old_line, new_line } => {
+                Some((Some(old_line), Some(new_line)))
+            }
+        }
+    }
+
     pub(crate) fn resize_error_log(&mut self, delta: isize) -> bool {
         if self.error_log.is_none() || delta == 0 {
             return false;
@@ -2103,6 +2516,10 @@ impl DiffApp {
 
     pub(crate) fn set_rendered_error_log_separator_row(&mut self, row: Option<u16>) {
         self.rendered_error_log_separator_row = row.filter(|_| self.error_log.is_some());
+    }
+
+    pub(crate) fn set_rendered_diff_area(&mut self, area: Rect) {
+        self.rendered_diff_area = Some(area);
     }
 
     pub(crate) fn set_rendered_diff_menu_area(&mut self, area: Option<Rect>) {
@@ -2548,6 +2965,8 @@ impl DiffApp {
             }
         }
 
+        self.update_diff_mouse_hover(mouse.column, mouse.row);
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.start_error_log_resize(mouse.row) {
@@ -2565,6 +2984,7 @@ impl DiffApp {
                     return Ok(());
                 }
                 self.mouse_scroll_or_focus_hunk(MouseScrollDirection::Down);
+                self.update_diff_mouse_hover(mouse.column, mouse.row);
             }
             MouseEventKind::ScrollUp => {
                 if self.is_file_sidebar_position(mouse.column, mouse.row) {
@@ -2573,6 +2993,7 @@ impl DiffApp {
                     return Ok(());
                 }
                 self.mouse_scroll_or_focus_hunk(MouseScrollDirection::Up);
+                self.update_diff_mouse_hover(mouse.column, mouse.row);
             }
             MouseEventKind::ScrollLeft => {
                 if self.is_file_sidebar_position(mouse.column, mouse.row) {
@@ -2580,6 +3001,7 @@ impl DiffApp {
                     return Ok(());
                 }
                 self.scroll_horizontally_by(-(HORIZONTAL_SCROLL_STEP as isize));
+                self.update_diff_mouse_hover(mouse.column, mouse.row);
             }
             MouseEventKind::ScrollRight => {
                 if self.is_file_sidebar_position(mouse.column, mouse.row) {
@@ -2587,6 +3009,7 @@ impl DiffApp {
                     return Ok(());
                 }
                 self.scroll_horizontally_by(HORIZONTAL_SCROLL_STEP as isize);
+                self.update_diff_mouse_hover(mouse.column, mouse.row);
             }
             _ => {}
         }
@@ -2742,11 +3165,328 @@ impl DiffApp {
             return false;
         }
 
-        let visual_row = self.scroll.saturating_add(usize::from(row - 1));
-        let Some((row_index, _)) = self.model_row_at_scroll(visual_row) else {
+        let viewport_row = row.saturating_sub(1);
+        let width = self.viewport_width;
+        if annotation_submit_hit_at_column(column, width)
+            && self.handle_annotation_submit_click(viewport_row)
+        {
+            return true;
+        }
+        if annotation_edit_hit_at_column(column, width)
+            && self.handle_annotation_edit_click(viewport_row)
+        {
+            return true;
+        }
+        if annotation_close_hit_at_column(column, width)
+            && self.handle_annotation_close_click(viewport_row)
+        {
+            return true;
+        }
+        if annotation_hit_at_column(column, width)
+            && self
+                .mouse_hover
+                .is_some_and(|(_, hover_row)| hover_row == viewport_row)
+            && self.try_open_annotation_draft_at_viewport_row(viewport_row, column)
+        {
+            return true;
+        }
+
+        let Some(model_row) = model_row_for_viewport_row(self, viewport_row) else {
             return false;
         };
-        self.handle_context_at_row(row_index)
+        self.handle_context_at_row(model_row)
+    }
+
+    pub(crate) fn annotation_anchor_visual_scroll(&self, model_row_index: usize) -> usize {
+        if self.line_wrapping {
+            let start = self.wrapped_visual_scroll_for_model_row(model_row_index);
+            let height = self.wrapped_visual_height_for_model_row(model_row_index);
+            start.saturating_add(height.saturating_sub(1))
+        } else {
+            model_row_index
+        }
+    }
+
+    pub(crate) fn annotation_label(&self, key: &AnnotationKey) -> Option<String> {
+        let file = self.changeset.files.get(key.file)?;
+        let path = file.display_path();
+        let (side, line) = match key.kind {
+            AnnotationLineKind::Unified { hunk, line } => {
+                let diff_line = self.changeset.files[key.file]
+                    .hunks
+                    .get(hunk)?
+                    .lines
+                    .get(line)?;
+                diff_line
+                    .new_line
+                    .map(|line| ('R', line))
+                    .or_else(|| diff_line.old_line.map(|line| ('L', line)))?
+            }
+            AnnotationLineKind::Split { hunk, left, right } => {
+                let lines = &self.changeset.files[key.file].hunks.get(hunk)?.lines;
+                if let Some(index) = right {
+                    let line = lines.get(index)?.new_line?;
+                    ('R', line)
+                } else {
+                    let index = left?;
+                    let line = lines.get(index)?.old_line?;
+                    ('L', line)
+                }
+            }
+            AnnotationLineKind::Context { new_line, .. } => ('R', new_line),
+        };
+        Some(format!("{path} {side}{line}"))
+    }
+
+    fn handle_annotation_submit_click(&mut self, viewport_row: u16) -> bool {
+        let Some(draft) = self.annotation_draft.as_ref() else {
+            return false;
+        };
+        if compose_block_bottom_viewport_row(self, draft.key.model_row_index) != Some(viewport_row)
+        {
+            return false;
+        }
+        let draft = self.annotation_draft.take().expect("draft");
+        self.commit_annotation_draft(draft);
+        true
+    }
+
+    fn handle_annotation_edit_click(&mut self, viewport_row: u16) -> bool {
+        if self.annotation_draft.is_some() {
+            return false;
+        }
+        let Some(model_row) = model_row_for_viewport_row(self, viewport_row) else {
+            return false;
+        };
+        if saved_block_bottom_viewport_row(self, model_row) != Some(viewport_row) {
+            return false;
+        }
+        self.open_annotation_draft_for_model_row(model_row)
+    }
+
+    fn handle_annotation_close_click(&mut self, viewport_row: u16) -> bool {
+        if let Some(draft) = self.annotation_draft.as_ref() {
+            if compose_block_top_viewport_row(self, draft.key.model_row_index) == Some(viewport_row)
+            {
+                self.annotation_draft = None;
+                self.dirty = true;
+                return true;
+            }
+            return false;
+        }
+
+        let Some(model_row) = annotation_saved_model_at_top_border(self, viewport_row) else {
+            return false;
+        };
+        let Some(ui_row) = self.model.row(model_row) else {
+            return false;
+        };
+        let Some(key) = AnnotationKey::from_ui_row(ui_row, model_row) else {
+            return false;
+        };
+        if self.annotations.remove(&key).is_some() {
+            self.dirty = true;
+            return true;
+        }
+        false
+    }
+
+    fn try_open_annotation_draft_at_viewport_row(
+        &mut self,
+        viewport_row: u16,
+        column: u16,
+    ) -> bool {
+        if self.annotation_draft.is_some() {
+            return false;
+        }
+        if !annotation_hit_at_column(column, self.viewport_width) {
+            return false;
+        }
+        let Some(visual_row) = visual_scroll_for_viewport_row(self, viewport_row) else {
+            return false;
+        };
+        let row_index = if self.line_wrapping {
+            let Some((row_index, _)) = self.model_row_at_scroll(visual_row) else {
+                return false;
+            };
+            row_index
+        } else {
+            visual_row
+        };
+        let Some(row) = self.model.row(row_index) else {
+            return false;
+        };
+        if !crate::render::viewport_plan::row_has_diff_code_content(row) {
+            return false;
+        }
+        if self.annotation_anchor_visual_scroll(row_index) != visual_row {
+            return false;
+        }
+        let Some(key) = AnnotationKey::from_ui_row(row, row_index) else {
+            return false;
+        };
+        self.open_annotation_draft_for_key(key)
+    }
+
+    fn open_annotation_draft_for_model_row(&mut self, row_index: usize) -> bool {
+        let Some(row) = self.model.row(row_index) else {
+            return false;
+        };
+        let Some(key) = AnnotationKey::from_ui_row(row, row_index) else {
+            return false;
+        };
+        self.open_annotation_draft_for_key(key)
+    }
+
+    fn open_annotation_draft_for_key(&mut self, key: AnnotationKey) -> bool {
+        let existing = self.annotations.get(&key).cloned().unwrap_or_default();
+        let cursor = existing.len();
+        self.annotation_draft = Some(AnnotationDraft {
+            key,
+            input: existing,
+            cursor,
+        });
+        self.dirty = true;
+        true
+    }
+
+    pub(crate) fn handle_annotation_input_key(&mut self, key: KeyEvent) -> bool {
+        if self.annotation_draft.is_none() {
+            return false;
+        }
+        if self.keymap.matches_single(GlobalAction::CancelMark, key) {
+            self.annotation_draft = None;
+            self.dirty = true;
+            return true;
+        }
+        if self.keymap.matches_single(GlobalAction::SaveMark, key) {
+            let draft = self.annotation_draft.take().expect("draft");
+            self.commit_annotation_draft(draft);
+            return true;
+        }
+        let Some(draft) = self.annotation_draft.as_mut() else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Enter => {
+                draft.input.insert(draft.cursor, '\n');
+                draft.cursor += 1;
+                self.dirty = true;
+            }
+            _ => match handle_text_input_key(&mut draft.input, &mut draft.cursor, key) {
+                TextInputKeyResult::Edited | TextInputKeyResult::Moved => self.dirty = true,
+                TextInputKeyResult::Ignored | TextInputKeyResult::Handled => {}
+            },
+        }
+        true
+    }
+
+    fn commit_annotation_draft(&mut self, draft: AnnotationDraft) {
+        let text = draft.input.trim().to_owned();
+        if text.is_empty() {
+            self.annotations.remove(&draft.key);
+        } else {
+            self.annotations.insert(draft.key, text);
+        }
+        self.dirty = true;
+    }
+
+    pub(crate) fn open_annotation_draft_in_editor(&mut self) {
+        let Some(draft) = self.annotation_draft.take() else {
+            return;
+        };
+        let Some(editor) = configured_editor() else {
+            self.annotation_draft = Some(draft);
+            self.set_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit annotation");
+            return;
+        };
+        let path = match annotation_scratch_path(&draft.key) {
+            Ok(path) => path,
+            Err(error) => {
+                self.annotation_draft = Some(draft);
+                self.set_notice(format!("annotation editor failed: {error}"));
+                return;
+            }
+        };
+        if let Err(error) = fs::write(&path, &draft.input) {
+            self.annotation_draft = Some(draft);
+            self.set_notice(format!("annotation editor failed: {error}"));
+            return;
+        }
+        self.terminal_clear_requested = true;
+        let status_result = open_text_in_editor(&editor, &path);
+        self.post_editor_quit_key_ignore_until = Some(Instant::now() + POST_EDITOR_QUIT_KEY_IGNORE);
+        match status_result {
+            Ok(status) if status.success() => match fs::read_to_string(&path) {
+                Ok(contents) => {
+                    let mut updated = draft;
+                    updated.input = contents.trim_end_matches('\n').to_owned();
+                    updated.cursor = updated.input.len();
+                    self.commit_annotation_draft(updated);
+                    self.set_notice("annotation saved");
+                }
+                Err(error) => {
+                    self.annotation_draft = Some(draft);
+                    self.set_notice(format!("annotation read failed: {error}"));
+                }
+            },
+            Ok(_) => {
+                self.annotation_draft = Some(draft);
+                self.set_notice("annotation editor closed");
+            }
+            Err(error) => {
+                self.annotation_draft = Some(draft);
+                self.set_notice(format!("annotation editor failed: {error}"));
+            }
+        }
+        self.dirty = true;
+    }
+
+    pub(crate) fn update_diff_mouse_hover(&mut self, column: u16, row: u16) {
+        let next = self.diff_mouse_hover_in_diff_area(column, row);
+        if self.mouse_hover != next {
+            self.mouse_hover = next;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn clear_diff_mouse_hover(&mut self) {
+        if self.mouse_hover.take().is_some() {
+            self.dirty = true;
+        }
+    }
+
+    fn diff_mouse_hover_in_diff_area(&self, column: u16, row: u16) -> Option<(u16, u16)> {
+        if self.diff_modal_blocks_mouse_hover() {
+            return None;
+        }
+        let area = self.rendered_diff_area?;
+        if area.width == 0 || area.height == 0 {
+            return None;
+        }
+        if column < area.x
+            || row < area.y
+            || column >= area.x.saturating_add(area.width)
+            || row >= area.y.saturating_add(area.height)
+        {
+            return None;
+        }
+        Some((column.saturating_sub(area.x), row.saturating_sub(area.y)))
+    }
+
+    pub(crate) fn diff_modal_blocks_mouse_hover(&self) -> bool {
+        self.help_menu_open
+            || self.color_scheme_picker_open
+            || self.options_menu_open
+            || self.diff_menu_open
+            || self.commit_menu_open
+            || self.branch_menu_open.is_some()
+            || self.annotation_draft.is_some()
+    }
+
+    pub(crate) fn diff_mouse_highlight_visual_row(&self) -> Option<usize> {
+        let (_, viewport_row) = self.mouse_hover?;
+        visual_scroll_for_viewport_row(self, viewport_row)
     }
 
     pub(crate) fn handle_context_at_row(&mut self, row_index: usize) -> bool {
@@ -2967,6 +3707,7 @@ impl DiffApp {
             return;
         }
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.diff_menu_selected = 0;
         self.diff_menu_open = true;
         self.options_menu_open = false;
@@ -2984,6 +3725,7 @@ impl DiffApp {
         {
             self.diff_menu_open = false;
             self.diff_menu_input.clear();
+            self.diff_menu_input_cursor = 0;
             self.rendered_diff_menu_area = None;
             self.dirty = true;
         }
@@ -3002,11 +3744,13 @@ impl DiffApp {
             .options_menu_selected
             .min(self.options_menu_items().len().saturating_sub(1));
         self.options_menu_input.clear();
+        self.options_menu_input_cursor = 0;
         self.options_menu_scroll = 0;
         self.options_menu_open = true;
         self.close_color_scheme_picker();
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.branch_menu_open = None;
         self.rendered_branch_menu_area = None;
@@ -3021,6 +3765,7 @@ impl DiffApp {
         {
             self.options_menu_open = false;
             self.options_menu_input.clear();
+            self.options_menu_input_cursor = 0;
             self.options_menu_selected = 0;
             self.options_menu_scroll = 0;
             self.close_color_scheme_picker();
@@ -3167,30 +3912,62 @@ impl DiffApp {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_options_menu_input(&mut self, character: char) {
-        self.options_menu_input.push(character);
+        self.options_menu_input
+            .insert(self.options_menu_input_cursor, character);
+        self.options_menu_input_cursor += character.len_utf8();
         self.options_menu_selected = 0;
         self.options_menu_scroll = 0;
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_options_menu_input(&mut self) {
-        if self.options_menu_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.options_menu_input,
+            &mut self.options_menu_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.options_menu_selected = 0;
             self.options_menu_scroll = 0;
             self.dirty = true;
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_options_menu_input(&mut self) {
         if !self.options_menu_input.is_empty()
             || self.options_menu_selected != 0
             || self.options_menu_scroll != 0
         {
             self.options_menu_input.clear();
+            self.options_menu_input_cursor = 0;
             self.options_menu_selected = 0;
             self.options_menu_scroll = 0;
             self.dirty = true;
+        }
+    }
+
+    fn apply_options_menu_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.options_menu_input,
+            &mut self.options_menu_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.options_menu_selected = 0;
+                self.options_menu_scroll = 0;
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -3206,6 +3983,7 @@ impl DiffApp {
         self.color_scheme_picker_open = true;
         self.color_scheme_preview_original = Some((self.color_scheme, self.theme));
         self.color_scheme_input.clear();
+        self.color_scheme_input_cursor = 0;
         self.color_scheme_scroll = 0;
         self.color_scheme_selected = 0;
         self.ensure_color_scheme_selection_visible();
@@ -3220,6 +3998,7 @@ impl DiffApp {
             }
             self.color_scheme_picker_open = false;
             self.color_scheme_input.clear();
+            self.color_scheme_input_cursor = 0;
             self.color_scheme_scroll = 0;
             self.rendered_color_scheme_picker_area = None;
             self.dirty = true;
@@ -3298,16 +4077,25 @@ impl DiffApp {
         self.set_color_scheme_selection(selected as usize);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_color_scheme_input(&mut self, character: char) {
-        self.color_scheme_input.push(character);
+        self.color_scheme_input
+            .insert(self.color_scheme_input_cursor, character);
+        self.color_scheme_input_cursor += character.len_utf8();
         self.color_scheme_scroll = 0;
         self.color_scheme_selected = 0;
         self.preview_highlighted_color_scheme();
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_color_scheme_input(&mut self) {
-        if self.color_scheme_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.color_scheme_input,
+            &mut self.color_scheme_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.color_scheme_scroll = 0;
             self.color_scheme_selected = 0;
             self.preview_highlighted_color_scheme();
@@ -3315,16 +4103,40 @@ impl DiffApp {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_color_scheme_input(&mut self) {
         if !self.color_scheme_input.is_empty()
             || self.color_scheme_scroll != 0
             || self.color_scheme_selected != 0
         {
             self.color_scheme_input.clear();
+            self.color_scheme_input_cursor = 0;
             self.color_scheme_scroll = 0;
             self.color_scheme_selected = 0;
             self.preview_highlighted_color_scheme();
             self.dirty = true;
+        }
+    }
+
+    fn apply_color_scheme_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.color_scheme_input,
+            &mut self.color_scheme_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.color_scheme_scroll = 0;
+                self.color_scheme_selected = 0;
+                self.preview_highlighted_color_scheme();
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -3354,6 +4166,7 @@ impl DiffApp {
         self.color_scheme_picker_open = false;
         self.color_scheme_preview_original = None;
         self.color_scheme_input.clear();
+        self.color_scheme_input_cursor = 0;
         self.color_scheme_scroll = 0;
         self.rendered_color_scheme_picker_area = None;
         self.apply_options_menu_draft(OptionsMenuItem::ColorScheme);
@@ -3542,6 +4355,7 @@ impl DiffApp {
         {
             self.branch_menu_open = None;
             self.branch_menu_input.clear();
+            self.branch_menu_input_cursor = 0;
             self.branch_menu_scroll = 0;
             self.branch_menu_selected = 0;
             self.rendered_branch_menu_area = None;
@@ -3557,6 +4371,7 @@ impl DiffApp {
         {
             self.commit_menu_open = false;
             self.commit_menu_input.clear();
+            self.commit_menu_input_cursor = 0;
             self.commit_menu_scroll = 0;
             self.commit_menu_selected = 0;
             self.rendered_commit_menu_area = None;
@@ -3577,13 +4392,16 @@ impl DiffApp {
         self.commit_menu_open = true;
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.branch_menu_open = None;
         self.branch_menu_input.clear();
+        self.branch_menu_input_cursor = 0;
         self.rendered_branch_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
         self.commit_menu_input.clear();
+        self.commit_menu_input_cursor = 0;
         self.commit_menu_selected = self
             .selected_commit_menu_choice()
             .and_then(|commit| {
@@ -3609,11 +4427,13 @@ impl DiffApp {
         self.branch_menu_open = Some(menu);
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
         self.close_commit_menu();
         self.branch_menu_input.clear();
+        self.branch_menu_input_cursor = 0;
         self.branch_menu_selected = self
             .branch_ref(menu)
             .and_then(|branch| {
@@ -3862,30 +4682,62 @@ impl DiffApp {
         self.set_commit_selection(next);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_commit_input(&mut self, character: char) {
-        self.commit_menu_input.push(character);
+        self.commit_menu_input
+            .insert(self.commit_menu_input_cursor, character);
+        self.commit_menu_input_cursor += character.len_utf8();
         self.commit_menu_scroll = 0;
         self.commit_menu_selected = 0;
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_commit_input(&mut self) {
-        if self.commit_menu_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.commit_menu_input,
+            &mut self.commit_menu_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.commit_menu_scroll = 0;
             self.commit_menu_selected = 0;
             self.dirty = true;
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_commit_input(&mut self) {
         if !self.commit_menu_input.is_empty()
             || self.commit_menu_scroll != 0
             || self.commit_menu_selected != 0
         {
             self.commit_menu_input.clear();
+            self.commit_menu_input_cursor = 0;
             self.commit_menu_scroll = 0;
             self.commit_menu_selected = 0;
             self.dirty = true;
+        }
+    }
+
+    fn apply_commit_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.commit_menu_input,
+            &mut self.commit_menu_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.commit_menu_scroll = 0;
+                self.commit_menu_selected = 0;
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -4131,30 +4983,62 @@ impl DiffApp {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_branch_input(&mut self, character: char) {
-        self.branch_menu_input.push(character);
+        self.branch_menu_input
+            .insert(self.branch_menu_input_cursor, character);
+        self.branch_menu_input_cursor += character.len_utf8();
         self.branch_menu_scroll = 0;
         self.branch_menu_selected = 0;
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_branch_input(&mut self) {
-        if self.branch_menu_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.branch_menu_input,
+            &mut self.branch_menu_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.branch_menu_scroll = 0;
             self.branch_menu_selected = 0;
             self.dirty = true;
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_branch_input(&mut self) {
         if !self.branch_menu_input.is_empty()
             || self.branch_menu_scroll != 0
             || self.branch_menu_selected != 0
         {
             self.branch_menu_input.clear();
+            self.branch_menu_input_cursor = 0;
             self.branch_menu_scroll = 0;
             self.branch_menu_selected = 0;
             self.dirty = true;
+        }
+    }
+
+    fn apply_branch_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.branch_menu_input,
+            &mut self.branch_menu_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.branch_menu_scroll = 0;
+                self.branch_menu_selected = 0;
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -4421,24 +5305,55 @@ impl DiffApp {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_diff_menu_input(&mut self, character: char) {
-        self.diff_menu_input.push(character);
+        self.diff_menu_input
+            .insert(self.diff_menu_input_cursor, character);
+        self.diff_menu_input_cursor += character.len_utf8();
         self.diff_menu_selected = 0;
         self.dirty = true;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pop_diff_menu_input(&mut self) {
-        if self.diff_menu_input.pop().is_some() {
+        let result = handle_text_input_key(
+            &mut self.diff_menu_input,
+            &mut self.diff_menu_input_cursor,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        if matches!(result, TextInputKeyResult::Edited) {
             self.diff_menu_selected = 0;
             self.dirty = true;
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear_diff_menu_input(&mut self) {
         if !self.diff_menu_input.is_empty() || self.diff_menu_selected != 0 {
             self.diff_menu_input.clear();
+            self.diff_menu_input_cursor = 0;
             self.diff_menu_selected = 0;
             self.dirty = true;
+        }
+    }
+
+    fn apply_diff_menu_input_key(&mut self, key: KeyEvent) -> bool {
+        match handle_text_input_key(
+            &mut self.diff_menu_input,
+            &mut self.diff_menu_input_cursor,
+            key,
+        ) {
+            TextInputKeyResult::Edited => {
+                self.diff_menu_selected = 0;
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Moved => {
+                self.dirty = true;
+                true
+            }
+            TextInputKeyResult::Handled => true,
+            TextInputKeyResult::Ignored => false,
         }
     }
 
@@ -4614,6 +5529,7 @@ impl DiffApp {
         let previous_scroll = self.horizontal_scroll;
         self.horizontal_scroll = scroll.min(self.max_horizontal_scroll());
         if self.horizontal_scroll != previous_scroll {
+            self.clear_diff_mouse_hover();
             self.dirty = true;
         }
     }
@@ -4765,7 +5681,7 @@ impl DiffApp {
             .unwrap_or_default()
     }
 
-    fn wrapped_visual_height_for_model_row(&self, row_index: usize) -> usize {
+    pub(crate) fn wrapped_visual_height_for_model_row(&self, row_index: usize) -> usize {
         self.ensure_wrapped_visual_layout();
         self.wrapped_visual_layout
             .borrow()
@@ -4950,6 +5866,9 @@ impl DiffApp {
             self.sync_grep_match_selection_to_scroll();
         }
         if self.scroll != previous_scroll || self.selected_file != previous_file {
+            if self.scroll != previous_scroll {
+                self.clear_diff_mouse_hover();
+            }
             self.dirty = true;
         }
     }
@@ -5140,6 +6059,7 @@ impl DiffApp {
         let FocusedEditorLaunch { target, editor } = editor;
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -5564,6 +6484,7 @@ impl DiffApp {
         self.filter_input = Some(kind);
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -5573,6 +6494,7 @@ impl DiffApp {
             !self.filter_query(kind).is_empty() || !self.filter_input_query(kind).is_empty();
         self.filter_query_mut(kind).clear();
         self.filter_input_query_mut(kind).clear();
+        *self.filter_input_cursor_mut(kind) = 0;
         if had_filter {
             self.schedule_filter_change(kind, Duration::ZERO);
         } else {
@@ -5594,22 +6516,11 @@ impl DiffApp {
                 self.commit_filter_input(kind);
                 self.filter_input = None;
             }
-            KeyCode::Backspace if !self.filter_input_query(kind).is_empty() => {
-                self.filter_input_query_mut(kind).pop();
-                self.sync_filter_input(kind);
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.filter_input_query_mut(kind).clear();
-                self.sync_filter_input(kind);
-            }
-            KeyCode::Char(character)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.filter_input_query_mut(kind).push(character);
-                self.sync_filter_input(kind);
-            }
-            _ => {}
+            _ => match self.apply_filter_input_key(kind, key) {
+                TextInputKeyResult::Edited => self.sync_filter_input(kind),
+                TextInputKeyResult::Moved => self.dirty = true,
+                TextInputKeyResult::Ignored | TextInputKeyResult::Handled => {}
+            },
         }
 
         true
@@ -5640,6 +6551,39 @@ impl DiffApp {
         match kind {
             DiffFilterKind::File => &mut self.file_filter_input,
             DiffFilterKind::Grep => &mut self.grep_filter_input,
+        }
+    }
+
+    pub(crate) fn filter_input_cursor(&self, kind: DiffFilterKind) -> usize {
+        match kind {
+            DiffFilterKind::File => self.file_filter_input_cursor,
+            DiffFilterKind::Grep => self.grep_filter_input_cursor,
+        }
+    }
+
+    pub(crate) fn filter_input_cursor_mut(&mut self, kind: DiffFilterKind) -> &mut usize {
+        match kind {
+            DiffFilterKind::File => &mut self.file_filter_input_cursor,
+            DiffFilterKind::Grep => &mut self.grep_filter_input_cursor,
+        }
+    }
+
+    fn apply_filter_input_key(
+        &mut self,
+        kind: DiffFilterKind,
+        key: KeyEvent,
+    ) -> TextInputKeyResult {
+        match kind {
+            DiffFilterKind::File => handle_text_input_key(
+                &mut self.file_filter_input,
+                &mut self.file_filter_input_cursor,
+                key,
+            ),
+            DiffFilterKind::Grep => handle_text_input_key(
+                &mut self.grep_filter_input,
+                &mut self.grep_filter_input_cursor,
+                key,
+            ),
         }
     }
 
@@ -5675,15 +6619,19 @@ impl DiffApp {
 
         if self.file_filter.is_empty() && self.grep_filter.is_empty() {
             self.file_filter_input.clear();
+            self.file_filter_input_cursor = 0;
             self.grep_filter_input.clear();
+            self.grep_filter_input_cursor = 0;
             self.dirty = true;
             return;
         }
 
         self.file_filter.clear();
         self.file_filter_input.clear();
+        self.file_filter_input_cursor = 0;
         self.grep_filter.clear();
         self.grep_filter_input.clear();
+        self.grep_filter_input_cursor = 0;
         self.schedule_filter_apply(Duration::ZERO, false);
     }
 
@@ -6095,6 +7043,7 @@ impl DiffApp {
         self.file_sidebar_resizing = false;
         self.diff_menu_open = false;
         self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -6767,4 +7716,13 @@ fn for_wrapped_line_start_after_first(
         line_width = line_width.saturating_add(ch_width);
         consumed_width = consumed_width.saturating_add(ch_width);
     }
+}
+
+fn annotation_scratch_path(key: &AnnotationKey) -> MarkResult<PathBuf> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    let id = hasher.finish();
+    let dir = env::temp_dir().join("mark-annotations");
+    fs::create_dir_all(&dir)?;
+    Ok(dir.join(format!("{id}.md")))
 }

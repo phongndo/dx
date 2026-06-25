@@ -123,10 +123,15 @@ string = "green"
 Color values support hex colors, ANSI indexes such as `ansi-5`, and named
 terminal colors.
 
+`cursor` colors the filter-bar input caret. `cursor_line_bg` colors the mouse-hover
+highlight on diff code columns (Neovim-style cursorline). With `colorscheme = "system"`,
+`cursor` uses the terminal default foreground (`reset`) and `cursor_line_bg` uses ANSI
+palette index 237 so both follow the emulator theme unless overridden in `[colors]`.
+
 Common override keys include:
 
 ```text
-bg, fg, header, file, hunk, notice, cursor, muted, gutter_bg, empty_diff,
+bg, fg, header, file, hunk, notice, cursor, cursor_line_bg, muted, gutter_bg, empty_diff,
 search_match_fg, search_match_bg,
 statusline_fg, statusline_bg, statusline_accent_fg, statusline_accent_bg,
 statusline_info_fg, statusline_info_bg,
@@ -186,6 +191,7 @@ prefetch_viewports = 1
 Global multi-key bindings must start with the configured leader key. Menu
 bindings are single-key and apply to searchable menus. Printable menu bindings
 override text input, so prefer non-printing keys to keep type-to-filter behavior.
+`edit_hunk`, `save_mark`, and `cancel_mark` must be single-key bindings.
 
 Bindings can be a string or a list of strings:
 
@@ -195,6 +201,9 @@ leader = ","
 help = ["?", ", h"]
 file_filter = ", f"
 grep = ", /"
+copy_marks = ", y"
+save_mark = "ctrl-s"
+cancel_mark = "esc"
 quit = "q"
 
 [keymap.menu]

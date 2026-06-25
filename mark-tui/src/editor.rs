@@ -36,6 +36,16 @@ pub(crate) fn repo_file_path(repo: &Path, path: &str) -> PathBuf {
     }
 }
 
+pub(crate) fn open_text_in_editor(editor: &str, path: &Path) -> MarkResult<ExitStatus> {
+    open_editor(
+        editor,
+        &EditorTarget {
+            path: path.to_path_buf(),
+            line: 1,
+        },
+    )
+}
+
 pub(crate) fn open_editor(editor: &str, target: &EditorTarget) -> MarkResult<ExitStatus> {
     let mut terminal = SuspendedTerminal::suspend()?;
     let status_result = editor_status(editor, target);
