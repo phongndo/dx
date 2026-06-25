@@ -211,12 +211,15 @@ impl Keymap {
         }
 
         self.validate_global_conflicts()?;
+        self.validate_mark_draft_conflicts()?;
         self.validate_menu_conflicts()?;
 
         Ok(())
     }
 
     fn validate_global_conflicts(&self) -> Result<(), String> {
+        // Save/cancel are draft-only: they run before normal global actions only
+        // while composing an annotation, so they may share keys with globals.
         let bindings = [
             ("help", &self.help),
             ("reload", &self.reload),
@@ -228,12 +231,18 @@ impl Keymap {
             ("quit", &self.quit),
             ("layout", &self.layout),
             ("edit_hunk", &self.edit_hunk),
-            ("save_mark", &self.save_mark),
-            ("cancel_mark", &self.cancel_mark),
             ("copy_marks", &self.copy_marks),
             ("copy_error_log", &self.copy_error_log),
             ("next_diff_type", &self.next_diff_type),
             ("previous_diff_type", &self.previous_diff_type),
+        ];
+        validate_conflicts("keymap.global", &bindings)
+    }
+
+    fn validate_mark_draft_conflicts(&self) -> Result<(), String> {
+        let bindings = [
+            ("save_mark", &self.save_mark),
+            ("cancel_mark", &self.cancel_mark),
         ];
         validate_conflicts("keymap.global", &bindings)
     }
@@ -856,6 +865,49 @@ mod tests {
             keymap.global_action_label(GlobalAction::CopyMarks),
             "Space y"
         );
+    }
+
+    #[test]
+    fn keymap_allows_global_bindings_that_overlap_mark_draft_bindings() {
+        let keymap = Keymap::parse(
+            r#"
+            [keymap.global]
+            reload = "ctrl-s"
+            quit = "esc"
+            "#,
+        )
+        .expect("draft-only bindings should not reject existing global bindings");
+
+        assert!(keymap.matches_single(
+            GlobalAction::Reload,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::SaveMark,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::Quit,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::CancelMark,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        ));
+    }
+
+    #[test]
+    fn keymap_rejects_conflicting_mark_draft_bindings() {
+        let error = Keymap::parse(
+            r#"
+            [keymap.global]
+            save_mark = "esc"
+            cancel_mark = "esc"
+            "#,
+        )
+        .expect_err("mark draft bindings should not conflict with each other");
+
+        assert!(error.contains("keymap.global conflict"));
     }
 
     #[test]
