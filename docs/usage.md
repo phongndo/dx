@@ -149,6 +149,7 @@ Space o        settings menu
 b              file browser
 Space s        toggle split/unified layout
 Ctrl-G         open the focused hunk in `$VISUAL`, `$GIT_EDITOR`, or `$EDITOR`
+Space y        copy marks to the terminal clipboard
 Ctrl-Shift-C   copy the error log pane to the terminal clipboard
 Tab            next diff type
 Shift-Tab      previous diff type

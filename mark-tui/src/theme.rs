@@ -97,6 +97,7 @@ pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
         HelpMenuKey::Global(GlobalAction::CopyErrorLog),
         "copy error log",
     ),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::CopyMarks), "copy marks"),
     HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::FileBrowser),
         "toggle file sidebar",
@@ -108,6 +109,18 @@ pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
         HelpMenuKey::Global(GlobalAction::OptionsMenu),
         "settings menu",
     ),
+    HelpMenuRow::Section("Annotations"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("hover [+]"), "add / edit annotation"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::SaveMark), "save mark"),
+    HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::CancelMark), "cancel mark"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::EditHunk),
+        "edit active mark in editor",
+    ),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "new annotation line"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Cmd-←/→, Ctrl-A/E"), "line start / end"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Alt-←/→"), "word left / right"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Cmd-Delete"), "delete to line start"),
     HelpMenuRow::Section("Keybindings menu"),
     HelpMenuRow::Binding(HelpMenuKey::Static("type"), "filter keybindings"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Backspace"), "delete char"),
@@ -121,6 +134,8 @@ pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "keep filter"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Esc"), "clear active filters"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Backspace"), "delete char"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Cmd-←/→, Ctrl-A/E"), "line start / end"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("Alt-←/→"), "word left / right"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-U"), "clear input"),
     HelpMenuRow::Section("Branch filter"),
     HelpMenuRow::Binding(HelpMenuKey::Static("type"), "filter branches"),
@@ -229,6 +244,7 @@ pub(crate) struct DiffTheme {
     pub(crate) hunk: Color,
     pub(crate) notice: Color,
     pub(crate) cursor: Color,
+    pub(crate) cursor_line_bg: Color,
     pub(crate) muted: Color,
     pub(crate) gutter_bg: Color,
     pub(crate) empty_diff: Color,
@@ -271,7 +287,8 @@ impl DiffTheme {
             file: Color::Reset,
             hunk: Color::Indexed(13),
             notice: green.color(),
-            cursor: Color::White,
+            cursor: Color::Reset,
+            cursor_line_bg: Color::Indexed(237),
             muted: Color::Rgb(0x7d, 0x87, 0x94),
             gutter_bg: Color::Indexed(0),
             empty_diff: Color::Rgb(0x3d, 0x42, 0x49),
@@ -306,6 +323,7 @@ impl DiffTheme {
             hunk: Color::Indexed(13),
             notice: Color::Indexed(2),
             cursor: Color::Indexed(15),
+            cursor_line_bg: Color::Indexed(237),
             muted: Color::Indexed(8),
             gutter_bg: Color::Indexed(0),
             empty_diff: Color::Indexed(8),
@@ -356,6 +374,7 @@ impl DiffTheme {
             hunk: palette.mauve.color(),
             notice: palette.green.color(),
             cursor: palette.rosewater.color(),
+            cursor_line_bg: palette.base.blend(palette.rosewater, 0.12).color(),
             muted: palette.overlay0.color(),
             gutter_bg: palette.mantle.color(),
             empty_diff: palette.surface0.color(),
@@ -400,6 +419,7 @@ impl DiffTheme {
             hunk: palette.bright_purple.color(),
             notice: addition.color(),
             cursor: palette.fg0.color(),
+            cursor_line_bg: palette.bg0.blend(palette.fg0, 0.10).color(),
             muted: palette.gray.color(),
             gutter_bg: palette.bg0_h.color(),
             empty_diff: palette.bg1.color(),
@@ -450,6 +470,10 @@ impl DiffTheme {
             hunk: palette.done_fg.color(),
             notice: palette.success_fg.color(),
             cursor: palette.fg_default.color(),
+            cursor_line_bg: palette
+                .canvas_default
+                .blend(palette.accent_fg, 0.10)
+                .color(),
             muted: palette.fg_muted.color(),
             gutter_bg: palette.canvas_subtle.color(),
             empty_diff: palette.canvas_inset.color(),
@@ -505,6 +529,7 @@ impl DiffTheme {
             hunk: Color::Rgb(0xbb, 0x9a, 0xf7),
             notice: green.color(),
             cursor: Color::Rgb(0xc0, 0xca, 0xf5),
+            cursor_line_bg: base.blend(RgbColor::new(0xbb, 0x9a, 0xf7), 0.12).color(),
             muted: Color::Rgb(0x56, 0x5f, 0x89),
             gutter_bg: base.blend(RgbColor::new(0, 0, 0), 0.22).color(),
             empty_diff: Color::Rgb(0x24, 0x28, 0x3b),
@@ -539,6 +564,7 @@ impl DiffTheme {
             hunk: scheme.base0e.color(),
             notice: scheme.base0b.color(),
             cursor: scheme.base05.color(),
+            cursor_line_bg: scheme.base00.blend(scheme.base0d, 0.12).color(),
             muted: scheme.base03.color(),
             gutter_bg: scheme.base00.blend(RgbColor::new(0, 0, 0), 0.18).color(),
             empty_diff: scheme.base01.color(),
@@ -595,6 +621,9 @@ impl DiffTheme {
         }
         if let Some(color) = config_color(&colors.cursor, "cursor")? {
             self.cursor = color;
+        }
+        if let Some(color) = config_color(&colors.cursor_line_bg, "cursor_line_bg")? {
+            self.cursor_line_bg = color;
         }
         if let Some(color) = config_color(&colors.muted, "muted")? {
             self.muted = color;

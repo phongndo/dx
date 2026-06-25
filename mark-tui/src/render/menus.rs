@@ -33,6 +33,7 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
     let selected = app.diff_menu_selected.min(choices.len().saturating_sub(1));
     let mut lines = vec![selector_input_line(
         &app.diff_menu_input,
+        app.diff_menu_input_cursor,
         inner.width as usize,
         app.theme,
         choices.len(),
@@ -145,16 +146,13 @@ fn diff_menu_floating_width(app: &DiffApp, choices: &[DiffChoice]) -> u16 {
 
 fn selector_input_line(
     input: &str,
+    cursor: usize,
     width: usize,
     theme: DiffTheme,
     matched: usize,
     total: usize,
 ) -> Line<'static> {
-    let input = if input.is_empty() {
-        INPUT_CURSOR.to_owned()
-    } else {
-        format!("{input}{INPUT_CURSOR}")
-    };
+    let input = text_with_cursor(input, cursor);
     let left = format!("> {input}");
     let right = format!("{matched}/{total}");
     let bg = base_bg(theme);
@@ -178,6 +176,15 @@ fn selector_input_line(
             Style::default().fg(selector_count_color(theme)).bg(bg),
         ),
     ])
+}
+
+fn text_with_cursor(input: &str, cursor: usize) -> String {
+    let cursor = cursor.min(input.len());
+    if input.is_char_boundary(cursor) {
+        format!("{}{}{}", &input[..cursor], INPUT_CURSOR, &input[cursor..])
+    } else {
+        format!("{input}{INPUT_CURSOR}")
+    }
 }
 
 fn selector_separator_line(width: usize, theme: DiffTheme) -> Line<'static> {
@@ -309,6 +316,7 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
     let selected = app.options_menu_selected.min(items.len().saturating_sub(1));
     let mut lines = vec![selector_input_line(
         &app.options_menu_input,
+        app.options_menu_input_cursor,
         inner.width as usize,
         app.theme,
         items.len(),
@@ -423,6 +431,7 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
     let choices = app.filtered_color_schemes();
     let mut lines = vec![selector_input_line(
         &app.color_scheme_input,
+        app.color_scheme_input_cursor,
         inner.width as usize,
         app.theme,
         choices.len(),
@@ -540,6 +549,7 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let match_count = app.filtered_branches().len();
     let mut lines = vec![selector_input_line(
         &app.branch_menu_input,
+        app.branch_menu_input_cursor,
         inner.width as usize,
         app.theme,
         match_count,
@@ -727,6 +737,7 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let match_count = app.filtered_commits().len();
     let mut lines = vec![selector_input_line(
         &app.commit_menu_input,
+        app.commit_menu_input_cursor,
         inner.width as usize,
         app.theme,
         match_count,
@@ -842,6 +853,7 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
     let block = help_menu_block(app.theme);
     let mut lines = vec![selector_input_line(
         &app.help_menu_input,
+        app.help_menu_input_cursor,
         inner.width as usize,
         app.theme,
         rows.len(),
