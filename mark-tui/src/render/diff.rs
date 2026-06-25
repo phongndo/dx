@@ -9,13 +9,19 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
+    annotation::AnnotationKey,
     app::{DiffApp, split_cell_content_width, unified_content_width, wrapped_line_start_columns},
     controls::DiffLayoutMode,
     model::UiRow,
     render::{
+        annotations::{
+            append_annotation_add_button, render_annotation_compose_block,
+            render_annotation_saved_block,
+        },
         grep::{
             diff_line_grep_highlight_text, grep_highlight_target_for_columns,
-            grep_highlight_targets_for_row, highlighted_grep_text_line, scrolled_text_byte_start,
+            grep_highlight_targets_for_row, highlighted_grep_text_line,
+            highlighted_mouse_diff_content_line, scrolled_text_byte_start,
             split_diff_line_grep_highlight_target, unified_content_start_column,
         },
         headers::{
@@ -54,62 +60,191 @@ pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
 
     let visible_rows = area.height as usize;
     app.prepare_syntax_for_viewport(visible_rows);
-
-    if app.line_wrapping {
-        draw_wrapped_diff(frame, app, area, visible_rows);
-        return;
-    }
-
-    let mut lines = Vec::with_capacity(visible_rows);
-    let focused_hunk = app.focused_hunk_for_viewport(visible_rows);
-    for offset in 0..visible_rows {
-        let Some(row) = app.model.row(app.scroll + offset) else {
-            continue;
-        };
-        lines.push(render_row_with_focus(
-            app,
-            app.scroll + offset,
-            row,
-            area.width as usize,
-            focused_hunk,
-        ));
-    }
-
+    let width = area.width as usize;
+    let lines = build_diff_viewport_lines(app, width, visible_rows);
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.theme))),
         area,
     );
 }
 
-fn draw_wrapped_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect, visible_rows: usize) {
-    let lines = wrapped_diff_lines_for_viewport(app, area.width as usize, visible_rows);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.theme))),
-        area,
-    );
-}
-
-pub(crate) fn wrapped_diff_lines_for_viewport(
+pub(crate) fn build_diff_viewport_lines(
     app: &mut DiffApp,
     width: usize,
     visible_rows: usize,
 ) -> Vec<Line<'static>> {
-    let mut lines = Vec::with_capacity(visible_rows);
+    if app.line_wrapping {
+        return build_wrapped_viewport_lines(app, width, visible_rows);
+    }
+
+    let mouse_line_highlight = mouse_line_highlight_for_viewport(app);
+    let theme = app.theme;
+    let layout = app.layout;
+    let draft = app.annotation_draft.clone();
+    let annotations = app.annotations.clone();
     let focused_hunk = app.focused_hunk_for_viewport(visible_rows);
+    let mut lines = Vec::with_capacity(visible_rows);
+
+    for offset in 0..visible_rows {
+        if lines.len() >= visible_rows {
+            break;
+        }
+        let visual_row = app.scroll.saturating_add(offset);
+        let Some(row) = app.model.row(visual_row) else {
+            break;
+        };
+        let mut line = render_row_with_focus(app, visual_row, row, width, focused_hunk);
+        if mouse_line_highlight.is_some_and(|highlight_row| highlight_row == visual_row)
+            && row_has_diff_code_content(row)
+            && draft.is_none()
+        {
+            line = highlighted_mouse_diff_content_line(line, layout, width, theme);
+            if AnnotationKey::from_ui_row(&app.changeset, row).is_some() {
+                line = append_annotation_add_button(line, width, theme);
+            }
+        }
+        lines.push(line);
+
+        if draft
+            .as_ref()
+            .is_some_and(|d| d.model_row_index == visual_row)
+        {
+            let draft = draft.as_ref().expect("draft");
+            let label = app.annotation_label(&draft.key);
+            push_annotation_block(
+                &mut lines,
+                render_annotation_compose_block(draft, width, theme, label.as_deref()),
+                visible_rows,
+            );
+            continue;
+        }
+
+        for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+            if let Some(text) = annotations.get(&key)
+                && draft.as_ref().is_none_or(|d| d.key != key)
+            {
+                let label = app.annotation_label(&key);
+                push_annotation_block(
+                    &mut lines,
+                    render_annotation_saved_block(text, width, theme, label.as_deref()),
+                    visible_rows,
+                );
+            }
+        }
+    }
+
+    lines.truncate(visible_rows);
+    lines
+}
+
+fn build_wrapped_viewport_lines(
+    app: &mut DiffApp,
+    width: usize,
+    visible_rows: usize,
+) -> Vec<Line<'static>> {
+    let mouse_line_highlight = mouse_line_highlight_for_viewport(app);
+    let theme = app.theme;
+    let layout = app.layout;
+    let draft = app.annotation_draft.clone();
+    let annotations = app.annotations.clone();
+    let focused_hunk = app.focused_hunk_for_viewport(visible_rows);
+    let mut lines = Vec::with_capacity(visible_rows);
     let Some((mut row_index, mut row_offset)) = app.model_row_at_scroll(app.scroll) else {
         return lines;
     };
+    let mut visual_row = app.scroll;
     while lines.len() < visible_rows {
         let Some(row) = app.model.row(row_index) else {
             break;
         };
         let remaining = visible_rows.saturating_sub(lines.len());
         let rendered = render_row_wrapped_with_focus(app, row_index, row, width, focused_hunk);
-        lines.extend(rendered.into_iter().skip(row_offset).take(remaining));
+        let wrap_count = rendered.len().saturating_sub(row_offset);
+        for (wrap_index, line) in rendered
+            .into_iter()
+            .skip(row_offset)
+            .take(remaining)
+            .enumerate()
+        {
+            let mut line = line;
+            let is_last_wrap = wrap_index + 1 == wrap_count.min(remaining);
+            let anchor_visual = app.annotation_anchor_visual_scroll(row_index);
+            if mouse_line_highlight.is_some_and(|highlight_row| highlight_row == visual_row)
+                && row_has_diff_code_content(row)
+                && draft.is_none()
+            {
+                line = highlighted_mouse_diff_content_line(line, layout, width, theme);
+                if visual_row == anchor_visual
+                    && AnnotationKey::from_ui_row(&app.changeset, row).is_some()
+                {
+                    line = append_annotation_add_button(line, width, theme);
+                }
+            }
+            lines.push(line);
+            visual_row = visual_row.saturating_add(1);
+            if lines.len() >= visible_rows {
+                break;
+            }
+            if is_last_wrap {
+                if draft
+                    .as_ref()
+                    .is_some_and(|d| d.model_row_index == row_index)
+                {
+                    let draft = draft.as_ref().expect("draft");
+                    let label = app.annotation_label(&draft.key);
+                    push_annotation_block(
+                        &mut lines,
+                        render_annotation_compose_block(draft, width, theme, label.as_deref()),
+                        visible_rows,
+                    );
+                } else {
+                    for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+                        if let Some(text) = annotations.get(&key)
+                            && draft.as_ref().is_none_or(|d| d.key != key)
+                        {
+                            let label = app.annotation_label(&key);
+                            push_annotation_block(
+                                &mut lines,
+                                render_annotation_saved_block(text, width, theme, label.as_deref()),
+                                visible_rows,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         row_offset = 0;
         row_index = row_index.saturating_add(1);
     }
+    lines.truncate(visible_rows);
     lines
+}
+
+fn push_annotation_block(
+    lines: &mut Vec<Line<'static>>,
+    block: Vec<Line<'static>>,
+    visible_rows: usize,
+) {
+    for line in block {
+        if lines.len() >= visible_rows {
+            break;
+        }
+        lines.push(line);
+    }
+}
+
+fn mouse_line_highlight_for_viewport(app: &DiffApp) -> Option<usize> {
+    if app.diff_modal_blocks_mouse_hover() {
+        return None;
+    }
+    app.diff_mouse_highlight_visual_row()
+}
+
+fn row_has_diff_code_content(row: UiRow) -> bool {
+    matches!(
+        row,
+        UiRow::UnifiedLine { .. } | UiRow::SplitLine { .. } | UiRow::ContextLine { .. }
+    )
 }
 
 pub(crate) fn render_row(

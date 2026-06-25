@@ -248,14 +248,17 @@ pub(crate) fn push_file_filter_bar_spans(
             .add_modifier(Modifier::BOLD),
         remaining,
     );
-    push_filter_bar_span(
-        spans,
-        query,
-        Style::default().fg(app.theme.statusline_fg).bg(bg),
-        remaining,
-    );
     if active {
+        push_active_filter_query_spans(app, DiffFilterKind::File, spans, remaining);
         push_filter_bar_cursor_span(app, spans, remaining);
+        push_active_filter_query_suffix_spans(app, DiffFilterKind::File, spans, remaining);
+    } else {
+        push_filter_bar_span(
+            spans,
+            query,
+            Style::default().fg(app.theme.statusline_fg).bg(bg),
+            remaining,
+        );
     }
 }
 
@@ -276,14 +279,61 @@ pub(crate) fn push_grep_filter_bar_spans(
             .add_modifier(Modifier::BOLD),
         remaining,
     );
+    if active {
+        push_active_filter_query_spans(app, DiffFilterKind::Grep, spans, remaining);
+        push_filter_bar_cursor_span(app, spans, remaining);
+        push_active_filter_query_suffix_spans(app, DiffFilterKind::Grep, spans, remaining);
+    } else {
+        push_filter_bar_span(
+            spans,
+            query,
+            Style::default().fg(app.theme.statusline_fg).bg(bg),
+            remaining,
+        );
+    }
+}
+
+fn push_active_filter_query_spans(
+    app: &DiffApp,
+    kind: DiffFilterKind,
+    spans: &mut Vec<Span<'static>>,
+    remaining: &mut usize,
+) {
+    let (prefix, _) = active_filter_query_parts(app, kind);
     push_filter_bar_span(
         spans,
-        query,
-        Style::default().fg(app.theme.statusline_fg).bg(bg),
+        prefix,
+        Style::default()
+            .fg(app.theme.statusline_fg)
+            .bg(statusline_bg(app.theme)),
         remaining,
     );
-    if active {
-        push_filter_bar_cursor_span(app, spans, remaining);
+}
+
+fn push_active_filter_query_suffix_spans(
+    app: &DiffApp,
+    kind: DiffFilterKind,
+    spans: &mut Vec<Span<'static>>,
+    remaining: &mut usize,
+) {
+    let (_, suffix) = active_filter_query_parts(app, kind);
+    push_filter_bar_span(
+        spans,
+        suffix,
+        Style::default()
+            .fg(app.theme.statusline_fg)
+            .bg(statusline_bg(app.theme)),
+        remaining,
+    );
+}
+
+fn active_filter_query_parts(app: &DiffApp, kind: DiffFilterKind) -> (&str, &str) {
+    let query = app.filter_input_query(kind);
+    let cursor = app.filter_input_cursor(kind).min(query.len());
+    if query.is_char_boundary(cursor) {
+        (&query[..cursor], &query[cursor..])
+    } else {
+        (query, "")
     }
 }
 

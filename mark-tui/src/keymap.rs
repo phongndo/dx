@@ -16,6 +16,9 @@ pub(crate) enum GlobalAction {
     Quit,
     Layout,
     EditHunk,
+    SaveMark,
+    CancelMark,
+    CopyMarks,
     CopyErrorLog,
     NextDiffType,
     PreviousDiffType,
@@ -43,6 +46,9 @@ pub(crate) struct Keymap {
     quit: Vec<KeySequence>,
     layout: Vec<KeySequence>,
     edit_hunk: Vec<KeySequence>,
+    save_mark: Vec<KeySequence>,
+    cancel_mark: Vec<KeySequence>,
+    copy_marks: Vec<KeySequence>,
     copy_error_log: Vec<KeySequence>,
     next_diff_type: Vec<KeySequence>,
     previous_diff_type: Vec<KeySequence>,
@@ -68,6 +74,9 @@ impl Default for Keymap {
             quit: key_sequences(&["q"]),
             layout: key_sequences(&["space s"]),
             edit_hunk: key_sequences(&["ctrl-g"]),
+            save_mark: key_sequences(&["ctrl-s"]),
+            cancel_mark: key_sequences(&["esc"]),
+            copy_marks: key_sequences(&["space y"]),
             copy_error_log: key_sequences(&["ctrl-shift-c"]),
             next_diff_type: key_sequences(&["tab"]),
             previous_diff_type: key_sequences(&["shift-tab"]),
@@ -103,6 +112,7 @@ impl Keymap {
 
     fn from_stored(stored: StoredKeymap) -> Result<Self, String> {
         let mut keymap = Self::default();
+        let copy_marks_configured = stored.global.copy_marks.is_some();
 
         if let Some(leader) = stored.global.leader {
             let new_leader = parse_key_press(&leader)?;
@@ -120,12 +130,18 @@ impl Keymap {
         set_sequences(&mut keymap.quit, stored.global.quit)?;
         set_sequences(&mut keymap.layout, stored.global.layout)?;
         set_sequences(&mut keymap.edit_hunk, stored.global.edit_hunk)?;
+        set_sequences(&mut keymap.save_mark, stored.global.save_mark)?;
+        set_sequences(&mut keymap.cancel_mark, stored.global.cancel_mark)?;
+        set_sequences(&mut keymap.copy_marks, stored.global.copy_marks)?;
         set_sequences(&mut keymap.copy_error_log, stored.global.copy_error_log)?;
         set_sequences(&mut keymap.next_diff_type, stored.global.next_diff_type)?;
         set_sequences(
             &mut keymap.previous_diff_type,
             stored.global.previous_diff_type,
         )?;
+        if !copy_marks_configured {
+            keymap.clear_default_copy_marks_on_conflict();
+        }
 
         set_sequences(&mut keymap.menu_up, stored.menu.up)?;
         set_sequences(&mut keymap.menu_down, stored.menu.down)?;
@@ -149,6 +165,9 @@ impl Keymap {
             ("quit", &self.quit),
             ("layout", &self.layout),
             ("edit_hunk", &self.edit_hunk),
+            ("save_mark", &self.save_mark),
+            ("cancel_mark", &self.cancel_mark),
+            ("copy_marks", &self.copy_marks),
             ("copy_error_log", &self.copy_error_log),
             ("next_diff_type", &self.next_diff_type),
             ("previous_diff_type", &self.previous_diff_type),
@@ -169,8 +188,10 @@ impl Keymap {
                         "keymap.global.{name} single-key binding cannot use leader"
                     ));
                 }
-                if name == "edit_hunk" && sequence.0.len() != 1 {
-                    return Err("keymap.global.edit_hunk must be a single key".to_owned());
+                if matches!(name, "edit_hunk" | "save_mark" | "cancel_mark")
+                    && sequence.0.len() != 1
+                {
+                    return Err(format!("keymap.global.{name} must be a single key"));
                 }
             }
         }
@@ -190,12 +211,15 @@ impl Keymap {
         }
 
         self.validate_global_conflicts()?;
+        self.validate_mark_draft_conflicts()?;
         self.validate_menu_conflicts()?;
 
         Ok(())
     }
 
     fn validate_global_conflicts(&self) -> Result<(), String> {
+        // Save/cancel are draft-only: they run before normal global actions only
+        // while composing an annotation, so they may share keys with globals.
         let bindings = [
             ("help", &self.help),
             ("reload", &self.reload),
@@ -207,9 +231,18 @@ impl Keymap {
             ("quit", &self.quit),
             ("layout", &self.layout),
             ("edit_hunk", &self.edit_hunk),
+            ("copy_marks", &self.copy_marks),
             ("copy_error_log", &self.copy_error_log),
             ("next_diff_type", &self.next_diff_type),
             ("previous_diff_type", &self.previous_diff_type),
+        ];
+        validate_conflicts("keymap.global", &bindings)
+    }
+
+    fn validate_mark_draft_conflicts(&self) -> Result<(), String> {
+        let bindings = [
+            ("save_mark", &self.save_mark),
+            ("cancel_mark", &self.cancel_mark),
         ];
         validate_conflicts("keymap.global", &bindings)
     }
@@ -238,6 +271,9 @@ impl Keymap {
             &mut self.quit,
             &mut self.layout,
             &mut self.edit_hunk,
+            &mut self.save_mark,
+            &mut self.cancel_mark,
+            &mut self.copy_marks,
             &mut self.copy_error_log,
             &mut self.next_diff_type,
             &mut self.previous_diff_type,
@@ -247,6 +283,35 @@ impl Keymap {
                     sequence.0[0] = new_leader;
                 }
             }
+        }
+    }
+
+    fn clear_default_copy_marks_on_conflict(&mut self) {
+        let conflicts = [
+            &self.help,
+            &self.reload,
+            &self.file_filter,
+            &self.grep,
+            &self.diff_menu,
+            &self.options_menu,
+            &self.file_browser,
+            &self.quit,
+            &self.layout,
+            &self.edit_hunk,
+            &self.save_mark,
+            &self.cancel_mark,
+            &self.copy_error_log,
+            &self.next_diff_type,
+            &self.previous_diff_type,
+        ]
+        .into_iter()
+        .any(|bindings| {
+            bindings
+                .iter()
+                .any(|sequence| self.copy_marks.iter().any(|copy| copy == sequence))
+        });
+        if conflicts {
+            self.copy_marks.clear();
         }
     }
 
@@ -303,6 +368,9 @@ impl Keymap {
             GlobalAction::Quit => &self.quit,
             GlobalAction::Layout => &self.layout,
             GlobalAction::EditHunk => &self.edit_hunk,
+            GlobalAction::SaveMark => &self.save_mark,
+            GlobalAction::CancelMark => &self.cancel_mark,
+            GlobalAction::CopyMarks => &self.copy_marks,
             GlobalAction::CopyErrorLog => &self.copy_error_log,
             GlobalAction::NextDiffType => &self.next_diff_type,
             GlobalAction::PreviousDiffType => &self.previous_diff_type,
@@ -377,6 +445,9 @@ struct StoredGlobalKeymap {
     quit: Option<KeySpec>,
     layout: Option<KeySpec>,
     edit_hunk: Option<KeySpec>,
+    save_mark: Option<KeySpec>,
+    cancel_mark: Option<KeySpec>,
+    copy_marks: Option<KeySpec>,
     copy_error_log: Option<KeySpec>,
     next_diff_type: Option<KeySpec>,
     #[serde(alias = "prev_diff_type")]
@@ -669,6 +740,8 @@ mod tests {
             diff_menu = ", d"
             quit = ", x"
             file_filter = "ctrl-f"
+            save_mark = "ctrl-enter"
+            copy_marks = ", y"
             copy_error_log = "ctrl+shift+c"
             prev_diff_type = "shift-left"
 
@@ -693,6 +766,10 @@ mod tests {
                 KeyCode::Char('C'),
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT
             )
+        ));
+        assert!(keymap.matches_leader(
+            GlobalAction::CopyMarks,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)
         ));
         assert_eq!(
             keymap.global_action_label(GlobalAction::CopyErrorLog),
@@ -766,6 +843,71 @@ mod tests {
             keymap.global_action_label(GlobalAction::CopyErrorLog),
             "Ctrl-Shift-C"
         );
+    }
+
+    #[test]
+    fn default_mark_bindings_are_configurable_actions() {
+        let keymap = Keymap::default();
+
+        assert!(keymap.matches_single(
+            GlobalAction::SaveMark,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::CancelMark,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        ));
+        assert!(keymap.matches_leader(
+            GlobalAction::CopyMarks,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE)
+        ));
+        assert_eq!(
+            keymap.global_action_label(GlobalAction::CopyMarks),
+            "Space y"
+        );
+    }
+
+    #[test]
+    fn keymap_allows_global_bindings_that_overlap_mark_draft_bindings() {
+        let keymap = Keymap::parse(
+            r#"
+            [keymap.global]
+            reload = "ctrl-s"
+            quit = "esc"
+            "#,
+        )
+        .expect("draft-only bindings should not reject existing global bindings");
+
+        assert!(keymap.matches_single(
+            GlobalAction::Reload,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::SaveMark,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::Quit,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        ));
+        assert!(keymap.matches_single(
+            GlobalAction::CancelMark,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+        ));
+    }
+
+    #[test]
+    fn keymap_rejects_conflicting_mark_draft_bindings() {
+        let error = Keymap::parse(
+            r#"
+            [keymap.global]
+            save_mark = "esc"
+            cancel_mark = "esc"
+            "#,
+        )
+        .expect_err("mark draft bindings should not conflict with each other");
+
+        assert!(error.contains("keymap.global conflict"));
     }
 
     #[test]

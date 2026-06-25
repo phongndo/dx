@@ -1,3 +1,4 @@
+pub(crate) mod annotations;
 pub(crate) mod diff;
 pub(crate) mod grep;
 pub(crate) mod headers;
@@ -6,6 +7,7 @@ pub(crate) mod sidebar;
 pub(crate) mod statusline;
 pub(crate) mod style;
 pub(crate) mod text;
+pub(crate) mod viewport_plan;
 
 use crate::app::DiffApp;
 use ratatui::{Frame, layout::Rect};
@@ -91,6 +93,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut DiffApp) {
         (None, body_area)
     };
 
+    app.set_rendered_diff_area(diff_area);
     app.set_viewport_rows(diff_area.height as usize);
     app.set_viewport_width(diff_area.width as usize);
     draw_header(frame, app, header_area);

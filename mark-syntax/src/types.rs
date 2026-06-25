@@ -314,6 +314,8 @@ pub struct ColorOverrides {
     pub hunk: Option<String>,
     pub notice: Option<String>,
     pub cursor: Option<String>,
+    #[serde(alias = "cursor_line")]
+    pub cursor_line_bg: Option<String>,
     pub muted: Option<String>,
     pub gutter_bg: Option<String>,
     pub empty_diff: Option<String>,
@@ -361,6 +363,7 @@ impl ColorOverrides {
             hunk: overrides.hunk.or(self.hunk),
             notice: overrides.notice.or(self.notice),
             cursor: overrides.cursor.or(self.cursor),
+            cursor_line_bg: overrides.cursor_line_bg.or(self.cursor_line_bg),
             muted: overrides.muted.or(self.muted),
             gutter_bg: overrides.gutter_bg.or(self.gutter_bg),
             empty_diff: overrides.empty_diff.or(self.empty_diff),
