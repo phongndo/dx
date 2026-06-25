@@ -4823,6 +4823,43 @@ fn responsive_resize_clamps_wrapped_scroll_after_width_change() {
 }
 
 #[test]
+fn viewport_width_change_clamps_scroll_after_saved_annotation_rewraps() {
+    use crate::annotation::AnnotationKey;
+
+    let changeset = changeset_with_line_text("hello");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(6);
+    app.set_viewport_width(8);
+
+    let code_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    let key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(code_row).expect("annotated row"),
+    )
+    .expect("annotation key");
+    app.annotations.insert(
+        key,
+        "one two three four five six seven eight nine ten".to_owned(),
+    );
+
+    app.set_scroll(app.max_scroll());
+    let narrow_scroll = app.scroll;
+    assert!(narrow_scroll > 0);
+
+    app.set_viewport_width(80);
+
+    assert!(narrow_scroll > app.max_scroll());
+    assert_eq!(app.scroll, app.max_scroll());
+    let lines = build_diff_viewport_lines(&mut app, 80, 6);
+    assert!(lines.iter().any(|line| line_text(line).contains("hello")));
+}
+
+#[test]
 fn select_file_scrolls_to_visual_file_start_for_wrapped_no_hunk_file() {
     let mut changeset = changeset_with_wrapped_leading_file();
     changeset.files[1].hunks.clear();
@@ -7879,6 +7916,68 @@ fn annotation_save_binding_preempts_overlapping_edit_hunk_shortcut() {
     assert!(!handle_test_key_event(
         &mut app,
         KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL)
+    ));
+
+    assert!(app.annotation_draft.is_none());
+    assert_eq!(app.annotations.get(&key).map(String::as_str), Some("note"));
+}
+
+#[test]
+fn annotation_draft_bindings_preempt_hard_quit_key() {
+    use crate::annotation::{AnnotationDraft, AnnotationKey};
+
+    let changeset = changeset_with_line_text("hello");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        save_mark = "ctrl-c"
+        "#,
+    )
+    .expect("keymap should parse");
+    let code_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    let key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(code_row).expect("annotated row"),
+    )
+    .expect("annotation key");
+    app.annotation_draft = Some(AnnotationDraft {
+        key: key.clone(),
+        model_row_index: code_row,
+        input: "note".to_owned(),
+        cursor: "note".len(),
+    });
+
+    assert!(!handle_test_key_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    ));
+
+    assert!(app.annotation_draft.is_none());
+    assert_eq!(app.annotations.get(&key).map(String::as_str), Some("note"));
+
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        cancel_mark = "ctrl-c"
+        "#,
+    )
+    .expect("keymap should parse");
+    app.annotation_draft = Some(AnnotationDraft {
+        key: key.clone(),
+        model_row_index: code_row,
+        input: "discard".to_owned(),
+        cursor: "discard".len(),
+    });
+
+    assert!(!handle_test_key_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     ));
 
     assert!(app.annotation_draft.is_none());

@@ -428,8 +428,8 @@ pub(crate) fn handle_event(
 
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
-        Event::Key(key) if is_quit_key(key) => Ok(true),
         Event::Key(key) if app.handle_annotation_save_or_cancel_key(key) => Ok(false),
+        Event::Key(key) if is_quit_key(key) => Ok(true),
         Event::Key(key)
             if app.keymap.matches_single(GlobalAction::EditHunk, key)
                 && app.editor_shortcut_available() =>
@@ -1705,6 +1705,9 @@ impl DiffApp {
     }
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
+        if self.handle_annotation_save_or_cancel_key(key) {
+            return Ok(false);
+        }
         if is_quit_key(key) {
             return Ok(true);
         }
@@ -6488,6 +6491,8 @@ impl DiffApp {
             self.set_scroll(
                 row_scroll.saturating_add(row_offset.min(row_height.saturating_sub(1))),
             );
+        } else {
+            self.set_scroll(self.scroll);
         }
         self.ensure_annotation_draft_visible();
     }
