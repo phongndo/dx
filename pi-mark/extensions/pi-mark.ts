@@ -15,7 +15,7 @@ type MarkRunResult = {
   error?: string;
 };
 
-type MarkCommand = "diff" | "show" | "patch" | "help";
+type MarkCommand = "diff" | "show" | "review" | "patch" | "help";
 
 type MarkInvocation = {
   command: MarkCommand;
@@ -52,7 +52,7 @@ async function handleMarkCommand(args: string, ctx: ExtensionCommandContext): Pr
   if (stdinPatchRequested(invocation.command, invocation.argv)) {
     report(
       ctx,
-      `${stdinPatchSource(invocation)} cannot read a patch from stdin inside Pi. Write the patch to a file and run /mark patch <file>.`,
+      `${stdinPatchSource()} cannot read a patch from stdin inside Pi. Write the patch to a file and run /mark patch <file>.`,
       "error",
     );
     return;
@@ -102,7 +102,13 @@ async function handleMarkCommand(args: string, ctx: ExtensionCommandContext): Pr
 
 function markInvocation(argv: string[]): MarkInvocation {
   const first = argv[0];
-  if (first === "diff" || first === "show" || first === "patch" || first === "help") {
+  if (
+    first === "diff" ||
+    first === "show" ||
+    first === "review" ||
+    first === "patch" ||
+    first === "help"
+  ) {
     return {
       command: first,
       argv: argv.slice(1),
@@ -204,7 +210,7 @@ function checkGitRepository(
     const target = repoPath ? `repository path ${repoPath}` : cwd;
     return (
       `No Git repository found at ${target}.\n\n` +
-      "/mark, /mark diff, and /mark show use Git-backed mark sources unless you run /mark patch <file> or /mark show review <full GitHub PR URL>. " +
+      "/mark, /mark diff, /mark show, and numeric /mark review targets use Git-backed mark sources unless you run /mark patch <file> or /mark review <full GitHub PR URL>. " +
       "Agent turn diffs are not implemented yet."
     );
   }
@@ -396,50 +402,12 @@ export function markInvocationNeedsGit(command: MarkCommand, argv: string[]): bo
     return false;
   }
 
-  if (command === "diff") {
-    const patch = longOptionFromArgs(argv, "--patch");
-    if (patch.present) {
-      return false;
-    }
-
-    const pr = longOptionFromArgs(argv, "--pr");
-    if (pr.present) {
-      return pr.value ? !isGitHubPullRequestUrl(pr.value) : false;
-    }
-  }
-
-  if (command === "show") {
-    const reviewIndex = argv.indexOf("review");
-    if (reviewIndex !== -1) {
-      const target = reviewTargetFromArgs(argv, reviewIndex);
-      return target ? !isGitHubPullRequestUrl(target) : false;
-    }
+  if (command === "review") {
+    const target = targetFromArgs(argv, 0);
+    return target ? !isGitHubPullRequestUrl(target) : false;
   }
 
   return true;
-}
-
-type ParsedOption = { present: false } | { present: true; value: string | undefined };
-
-function longOptionFromArgs(argv: string[], option: string): ParsedOption {
-  const attachedPrefix = `${option}=`;
-  for (let index = 0; index < argv.length; index++) {
-    const arg = argv[index];
-    if (arg === "--") {
-      break;
-    }
-    if (arg === option) {
-      return { present: true, value: argv[index + 1] };
-    }
-    if (arg.startsWith(attachedPrefix)) {
-      return { present: true, value: arg.slice(attachedPrefix.length) };
-    }
-  }
-  return { present: false };
-}
-
-function reviewTargetFromArgs(argv: string[], reviewIndex: number): string | undefined {
-  return targetFromArgs(argv, reviewIndex + 1);
 }
 
 function patchTargetFromArgs(argv: string[]): string | undefined {
@@ -476,12 +444,8 @@ function markInvocationArgs(invocation: MarkInvocation): string[] {
   return invocation.cliArgs;
 }
 
-function stdinPatchSource(invocation: MarkInvocation): string {
-  if (invocation.command === "patch") {
-    return "/mark patch";
-  }
-
-  return invocation.cliArgs[0] === "diff" ? "/mark diff --patch" : "/mark --patch";
+function stdinPatchSource(): string {
+  return "/mark patch";
 }
 
 function isVersionFlag(arg: string): boolean {
@@ -512,10 +476,6 @@ function repoPathValue(value: string | undefined): string | null {
 function stdinPatchRequested(command: MarkCommand, argv: string[]): boolean {
   if (command === "patch") {
     return patchTargetFromArgs(argv) === "-";
-  }
-  if (command === "diff") {
-    const patch = longOptionFromArgs(argv, "--patch");
-    return patch.present && patch.value === "-";
   }
   return false;
 }

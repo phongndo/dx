@@ -25,8 +25,8 @@ examples:
   mark difftool -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\"
   mark show
   mark show HEAD~1
-  mark show review 123
-  mark show review https://github.com/owner/repo/pull/123
+  mark review 123
+  mark review https://github.com/owner/repo/pull/123
   mark patch changes.diff
   cat changes.diff | mark patch -
   git diff | mark pager
@@ -97,15 +97,21 @@ examples:
     )]
     Difftool(DifftoolArgs),
     #[command(
-        about = "Review a Git revision or hosted review",
+        about = "Review a Git revision",
         after_help = "\
 examples:
   mark show
-  mark show HEAD~1
-  mark show review 123
-  mark show review https://github.com/owner/repo/pull/123"
+  mark show HEAD~1"
     )]
     Show(ShowArgs),
+    #[command(
+        about = "Review a hosted code review",
+        after_help = "\
+examples:
+  mark review 123
+  mark review https://github.com/owner/repo/pull/123"
+    )]
+    Review(ReviewArgs),
     #[command(
         about = "Review an existing unified diff",
         after_help = "\
@@ -203,13 +209,6 @@ pub(crate) struct SyntaxAvailableArgs {
 pub(crate) struct DiffArgs {
     #[arg(value_name = "REV", num_args = 0..=2)]
     pub(crate) revs: Vec<String>,
-    /// Fetch and review a GitHub pull request by number or URL.
-    #[arg(
-        long,
-        value_name = "NUMBER|URL",
-        conflicts_with_all = ["base", "revs", "staged", "unstaged", "no_untracked", "patch"]
-    )]
-    pub(crate) pr: Option<String>,
     #[arg(short = 'r', long)]
     pub(crate) repo: Option<PathBuf>,
     #[arg(short = 'b', long)]
@@ -220,9 +219,6 @@ pub(crate) struct DiffArgs {
     pub(crate) unstaged: bool,
     #[arg(long = "no-untracked")]
     pub(crate) no_untracked: bool,
-    /// Read an existing unified diff from FILE, or stdin when FILE is `-`.
-    #[arg(long, value_name = "FILE")]
-    pub(crate) patch: Option<PathBuf>,
     /// Disable live reload in the interactive diff viewer.
     #[arg(long = "no-watch")]
     pub(crate) no_watch: bool,
@@ -277,9 +273,23 @@ pub(crate) struct DifftoolArgs {
 
 #[derive(Debug, Args, Default)]
 pub(crate) struct ShowArgs {
-    /// Revision to show, or `review TARGET` for a hosted review.
-    #[arg(value_name = "TARGET", num_args = 0..=2)]
-    pub(crate) targets: Vec<String>,
+    /// Revision to show. Defaults to HEAD.
+    #[arg(value_name = "REV")]
+    pub(crate) rev: Option<String>,
+    #[arg(short = 'r', long)]
+    pub(crate) repo: Option<PathBuf>,
+    /// Disable syntax highlighting in the interactive diff viewer.
+    #[arg(long = "no-syntax")]
+    pub(crate) no_syntax: bool,
+    #[arg(short = 's', long)]
+    pub(crate) stat: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ReviewArgs {
+    /// Hosted review target. Currently supports GitHub pull request numbers or URLs.
+    #[arg(value_name = "TARGET")]
+    pub(crate) target: String,
     #[arg(short = 'r', long)]
     pub(crate) repo: Option<PathBuf>,
     /// Disable syntax highlighting in the interactive diff viewer.
@@ -321,6 +331,10 @@ mod tests {
         Cli::try_parse_from(args).expect("args should parse")
     }
 
+    fn parse_err(args: &[&str]) -> clap::Error {
+        Cli::try_parse_from(args).expect_err("args should not parse")
+    }
+
     #[cfg(unix)]
     fn parse_os(args: Vec<std::ffi::OsString>) -> Cli {
         Cli::try_parse_from(args).expect("args should parse")
@@ -336,14 +350,6 @@ mod tests {
         let cli = parse(&["mark", "main", "feature"]);
         assert!(cli.command.is_none());
         assert_eq!(cli.diff.revs, ["main", "feature"]);
-
-        let cli = parse(&["mark", "--patch", "changes.diff"]);
-        assert!(cli.command.is_none());
-        assert_eq!(cli.diff.patch, Some(PathBuf::from("changes.diff")));
-
-        let cli = parse(&["mark", "--pr", "123"]);
-        assert!(cli.command.is_none());
-        assert_eq!(cli.diff.pr.as_deref(), Some("123"));
     }
 
     #[test]
@@ -354,16 +360,21 @@ mod tests {
             Some(Command::Diff(DiffArgs { unstaged: true, .. }))
         ));
 
+        let cli = parse(&["mark", "show", "--stat", "HEAD~1"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Show(ShowArgs { stat: true, .. }))
+        ));
+
         let cli = parse(&[
             "mark",
-            "show",
             "review",
             "--stat",
             "https://github.com/owner/repo/pull/123",
         ]);
         assert!(matches!(
             cli.command,
-            Some(Command::Show(ShowArgs { stat: true, .. }))
+            Some(Command::Review(ReviewArgs { stat: true, .. }))
         ));
 
         let cli = parse(&["mark", "patch", "changes.diff"]);
@@ -414,6 +425,15 @@ mod tests {
                     && right.as_path() == std::path::Path::new("--stat")
                     && path.as_path() == std::path::Path::new("--merged")
         ));
+    }
+
+    #[test]
+    fn rejects_removed_source_compatibility_args() {
+        parse_err(&["mark", "--patch", "changes.diff"]);
+        parse_err(&["mark", "diff", "--patch", "changes.diff"]);
+        parse_err(&["mark", "--pr", "123"]);
+        parse_err(&["mark", "diff", "--pr", "123"]);
+        parse_err(&["mark", "show", "review", "123"]);
     }
 
     #[cfg(unix)]

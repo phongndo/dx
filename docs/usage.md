@@ -59,10 +59,8 @@ mark show HEAD~1
 Hosted reviews currently support GitHub pull requests:
 
 ```sh
-mark show review 123
-mark show review https://github.com/owner/repo/pull/123
-mark diff --pr 123
-mark diff --pr https://github.com/owner/repo/pull/123
+mark review 123
+mark review https://github.com/owner/repo/pull/123
 ```
 
 Numeric pull request targets are resolved from the current repository's
@@ -77,12 +75,6 @@ Review an existing unified diff:
 ```sh
 mark patch changes.diff
 cat changes.diff | mark patch -
-```
-
-The older top-level form still works:
-
-```sh
-mark --patch changes.diff
 ```
 
 ## Pager mode

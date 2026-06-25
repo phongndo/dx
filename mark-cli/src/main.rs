@@ -18,7 +18,7 @@ use mark_core::{MarkError, MarkResult};
 use crate::{
     args::{Cli, Command},
     pager::pager,
-    syntax::{diff_options, difftool_options, patch_options, show_options, syntax},
+    syntax::{diff_options, difftool_options, patch_options, review_options, show_options, syntax},
     update::update,
 };
 
@@ -145,6 +145,7 @@ fn run_cli(cli: Cli) -> CliResult<()> {
         Some(Command::Difftool(args)) => run_difftool(args),
         Some(Command::Pager(args)) => pager(args),
         Some(Command::Show(args)) => run_show(args),
+        Some(Command::Review(args)) => run_hosted_review(args),
         Some(Command::Patch(args)) => run_patch(args),
         Some(Command::Syntax { command }) => syntax(command),
         Some(Command::Update(args)) => update(args),
@@ -163,13 +164,11 @@ fn reject_pre_subcommand_diff_args(cli: &Cli) -> MarkResult<()> {
 
 fn has_diff_args(args: &args::DiffArgs) -> bool {
     !args.revs.is_empty()
-        || args.pr.is_some()
         || args.repo.is_some()
         || args.base.is_some()
         || args.staged
         || args.unstaged
         || args.no_untracked
-        || args.patch.is_some()
         || args.no_watch
         || args.no_syntax
         || args.stat
@@ -184,12 +183,7 @@ fn run_diff(args: args::DiffArgs) -> CliResult<()> {
 }
 
 fn reject_likely_unknown_command(args: &args::DiffArgs) -> CliResult<()> {
-    if args.base.is_some()
-        || args.pr.is_some()
-        || args.patch.is_some()
-        || args.revs.is_empty()
-        || args.revs[0].starts_with('-')
-    {
+    if args.base.is_some() || args.revs.is_empty() || args.revs[0].starts_with('-') {
         return Ok(());
     }
 
@@ -350,6 +344,13 @@ fn run_show(args: args::ShowArgs) -> CliResult<()> {
     let stat = args.stat;
     let syntax_enabled = !args.no_syntax;
     let options = show_options(args)?;
+    run_review(options, false, syntax_enabled, stat)
+}
+
+fn run_hosted_review(args: args::ReviewArgs) -> CliResult<()> {
+    let stat = args.stat;
+    let syntax_enabled = !args.no_syntax;
+    let options = review_options(args)?;
     run_review(options, false, syntax_enabled, stat)
 }
 

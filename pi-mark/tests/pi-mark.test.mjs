@@ -55,49 +55,32 @@ test("parseCommandLine rejects unterminated quotes", () => {
 test("markInvocationNeedsGit allows patch files", () => {
   assert.equal(markInvocationNeedsGit("patch", ["changes.diff"]), false);
   assert.equal(markInvocationNeedsGit("patch", ["--stat", "changes.diff"]), false);
-  assert.equal(markInvocationNeedsGit("diff", ["--patch", "changes.diff"]), false);
-  assert.equal(markInvocationNeedsGit("diff", ["--patch=changes.diff"]), false);
 });
 
 test("markInvocationNeedsGit allows full GitHub pull request URLs", () => {
+  assert.equal(markInvocationNeedsGit("review", ["https://github.com/owner/repo/pull/123"]), false);
   assert.equal(
-    markInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123"]),
+    markInvocationNeedsGit("review", ["https://github.com/owner/repo/pull/123/"]),
     false,
   );
   assert.equal(
-    markInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123/"]),
+    markInvocationNeedsGit("review", ["https://github.com/owner/repo/pull/123/files"]),
     false,
   );
   assert.equal(
-    markInvocationNeedsGit("show", ["review", "https://github.com/owner/repo/pull/123/files"]),
+    markInvocationNeedsGit("review", ["https://github.com/owner/repo/pull/123/files?diff=split"]),
     false,
   );
   assert.equal(
-    markInvocationNeedsGit("show", [
-      "review",
-      "https://github.com/owner/repo/pull/123/files?diff=split",
-    ]),
+    markInvocationNeedsGit("review", ["--stat", "https://github.com/owner/repo/pull/123"]),
     false,
   );
   assert.equal(
-    markInvocationNeedsGit("show", ["review", "--stat", "https://github.com/owner/repo/pull/123"]),
-    false,
-  );
-  assert.equal(
-    markInvocationNeedsGit("show", [
-      "review",
+    markInvocationNeedsGit("review", [
       "--repo",
       "/tmp/not-a-repo",
       "https://github.com/owner/repo/pull/123",
     ]),
-    false,
-  );
-  assert.equal(
-    markInvocationNeedsGit("diff", ["--pr", "https://github.com/owner/repo/pull/123"]),
-    false,
-  );
-  assert.equal(
-    markInvocationNeedsGit("diff", ["--pr=https://github.com/owner/repo/pull/123"]),
     false,
   );
 });
@@ -105,10 +88,9 @@ test("markInvocationNeedsGit allows full GitHub pull request URLs", () => {
 test("markInvocationNeedsGit requires git for diffs, revisions, and review numbers", () => {
   assert.equal(markInvocationNeedsGit("diff", []), true);
   assert.equal(markInvocationNeedsGit("diff", ["--staged"]), true);
-  assert.equal(markInvocationNeedsGit("diff", ["--pr", "123"]), true);
   assert.equal(markInvocationNeedsGit("show", []), true);
   assert.equal(markInvocationNeedsGit("show", ["HEAD~1"]), true);
-  assert.equal(markInvocationNeedsGit("show", ["review", "123"]), true);
+  assert.equal(markInvocationNeedsGit("review", ["123"]), true);
 });
 
 test("mark command rejects stdin patch sources before preflight", async () => {
@@ -124,7 +106,7 @@ test("mark command rejects stdin patch sources before preflight", async () => {
   const notifications = [];
   let customCalled = false;
 
-  await handler("--patch -", {
+  await handler("patch -", {
     mode: "tui",
     cwd: packageRoot,
     hasUI: true,
@@ -145,7 +127,7 @@ test("mark command rejects stdin patch sources before preflight", async () => {
   assert.deepEqual(notifications, [
     {
       message:
-        "/mark --patch cannot read a patch from stdin inside Pi. Write the patch to a file and run /mark patch <file>.",
+        "/mark patch cannot read a patch from stdin inside Pi. Write the patch to a file and run /mark patch <file>.",
       level: "error",
     },
   ]);
@@ -186,6 +168,7 @@ process.exit(0);
       ["-V", ["-V"]],
       ["diff --version", ["--version"]],
       ["show -V", ["-V"]],
+      ["review --version", ["--version"]],
       ["patch --version", ["--version"]],
     ]) {
       const notifications = [];
@@ -280,6 +263,7 @@ process.exit(0);
       ["--staged", ["--staged"]],
       ["diff --staged", ["diff", "--staged"]],
       ["show HEAD~1", ["show", "HEAD~1"]],
+      ["review 123", ["review", "123"]],
       ["patch changes.diff", ["patch", "changes.diff"]],
     ]) {
       const notifications = [];

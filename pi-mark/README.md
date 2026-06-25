@@ -93,8 +93,8 @@ for this repository and workflow before the publish step can succeed.
 /mark diff main feature
 /mark show
 /mark show HEAD~1
-/mark show review 123
-/mark show review https://github.com/owner/repo/pull/123
+/mark review 123
+/mark review https://github.com/owner/repo/pull/123
 /mark patch changes.diff
 ```
 

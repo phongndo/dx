@@ -11,7 +11,9 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
     CliResult,
-    args::{DiffArgs, DifftoolArgs, PatchArgs, ShowArgs, SyntaxAvailableArgs, SyntaxCommand},
+    args::{
+        DiffArgs, DifftoolArgs, PatchArgs, ReviewArgs, ShowArgs, SyntaxAvailableArgs, SyntaxCommand,
+    },
     write_stdout,
 };
 
@@ -114,32 +116,7 @@ pub(crate) fn syntax_available_filter(
     }
 }
 
-pub(crate) fn diff_options(mut args: DiffArgs) -> MarkResult<mark_command::DiffOptions> {
-    if let Some(target) = args.pr.take() {
-        return pr_diff_options(args, &target);
-    }
-
-    if let Some(patch) = args.patch {
-        if args.base.is_some() || !args.revs.is_empty() {
-            return Err(MarkError::Usage(
-                "use --patch without revisions or --base".to_owned(),
-            ));
-        }
-        if args.staged || args.unstaged || args.no_untracked {
-            return Err(MarkError::Usage(
-                "--staged, --unstaged, and --no-untracked do not apply to --patch".to_owned(),
-            ));
-        }
-
-        return Ok(mark_command::DiffOptions {
-            repo: args.repo,
-            source: patch_source(patch)?,
-            scope: mark_command::DiffScope::All,
-            include_untracked: false,
-            stat: args.stat,
-        });
-    }
-
+pub(crate) fn diff_options(args: DiffArgs) -> MarkResult<mark_command::DiffOptions> {
     let source = match (args.base, args.revs.as_slice()) {
         (Some(base), []) => mark_command::DiffSource::Base(base),
         (Some(_), _) => {
@@ -177,38 +154,18 @@ pub(crate) fn diff_options(mut args: DiffArgs) -> MarkResult<mark_command::DiffO
     })
 }
 
-pub(crate) fn pr_diff_options(
-    args: DiffArgs,
-    target: &str,
-) -> MarkResult<mark_command::DiffOptions> {
-    if args.base.is_some() || !args.revs.is_empty() {
-        return Err(MarkError::Usage(
-            "use --pr without revisions or --base".to_owned(),
-        ));
-    }
-    if args.staged || args.unstaged || args.no_untracked {
-        return Err(MarkError::Usage(
-            "--staged, --unstaged, and --no-untracked do not apply to mark --pr".to_owned(),
-        ));
-    }
-    if args.patch.is_some() {
-        return Err(MarkError::Usage(
-            "--patch does not apply to mark --pr".to_owned(),
-        ));
-    }
-
-    mark_command::github_pr_diff_options(args.repo, target, args.stat)
-}
-
 pub(crate) fn show_options(args: ShowArgs) -> MarkResult<mark_command::DiffOptions> {
-    let source = show_source(&args)?;
     Ok(mark_command::DiffOptions {
         repo: args.repo,
-        source,
+        source: mark_command::DiffSource::Show(args.rev.unwrap_or_else(|| "HEAD".to_owned())),
         scope: mark_command::DiffScope::All,
         include_untracked: false,
         stat: args.stat,
     })
+}
+
+pub(crate) fn review_options(args: ReviewArgs) -> MarkResult<mark_command::DiffOptions> {
+    mark_command::github_pr_diff_options(args.repo, &args.target, args.stat)
 }
 
 pub(crate) fn difftool_options(args: DifftoolArgs) -> MarkResult<mark_command::DiffOptions> {
@@ -223,24 +180,6 @@ pub(crate) fn difftool_options(args: DifftoolArgs) -> MarkResult<mark_command::D
         include_untracked: false,
         stat: args.stat,
     })
-}
-
-pub(crate) fn show_source(args: &ShowArgs) -> MarkResult<mark_command::DiffSource> {
-    match args.targets.as_slice() {
-        [] => Ok(mark_command::DiffSource::Show("HEAD".to_owned())),
-        [rev] if rev != "review" => Ok(mark_command::DiffSource::Show(rev.clone())),
-        [target] if target == "review" => Err(MarkError::Usage(
-            "mark show review requires a target".to_owned(),
-        )),
-        [kind, target] if kind == "review" => {
-            let options =
-                mark_command::github_pr_diff_options(args.repo.clone(), target, args.stat)?;
-            Ok(options.source)
-        }
-        _ => Err(MarkError::Usage(
-            "mark show accepts one revision or `review TARGET`".to_owned(),
-        )),
-    }
 }
 
 pub(crate) fn patch_options(args: PatchArgs) -> MarkResult<mark_command::DiffOptions> {

@@ -53,7 +53,7 @@ mark diff --staged           # review staged changes
 mark diff --base main        # review current branch against main
 mark diff main feature       # review a revision range
 mark show HEAD~1             # review one commit
-mark show review 123         # review GitHub PR #123 from the current repo
+mark review 123              # review GitHub PR #123 from the current repo
 mark patch changes.diff      # review an existing patch file
 git diff | mark pager        # use mark as a diff pager
 ```
