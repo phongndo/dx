@@ -640,14 +640,130 @@ fn patch_header_lines(patch: &str) -> impl Iterator<Item = &str> {
 }
 
 fn normalized_patch_input(input: &[u8]) -> Vec<u8> {
+    let lines = input
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
+    let strip_uncolored_context_resets = strip_uncolored_context_reset_lines(&lines);
     let mut output = Vec::with_capacity(input.len());
-    for line in input.split_inclusive(|byte| *byte == b'\n') {
-        append_patch_line_without_color_wrappers(line, &mut output);
+    for (line, strip_uncolored_context_reset) in
+        lines.into_iter().zip(strip_uncolored_context_resets)
+    {
+        append_patch_line_without_color_wrappers(line, &mut output, strip_uncolored_context_reset);
     }
     output
 }
 
-fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
+fn strip_uncolored_context_reset_lines(lines: &[&[u8]]) -> Vec<bool> {
+    // Git emits normal-color context lines as ` context\x1b[m` when the hunk
+    // body is colored. Track that per hunk; colored headers alone do not prove
+    // trailing resets on hunk payload lines are Git color wrappers.
+    let mut strip_reset = vec![false; lines.len()];
+    let mut hunk_start = None;
+    let mut hunk_has_colored_body = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        if hunk_header_line(line) {
+            finish_hunk_color_scan(&mut strip_reset, hunk_start, index, hunk_has_colored_body);
+            hunk_start = Some(index + 1);
+            hunk_has_colored_body = false;
+            continue;
+        }
+
+        if patch_structural_line(line) {
+            finish_hunk_color_scan(&mut strip_reset, hunk_start, index, hunk_has_colored_body);
+            hunk_start = None;
+            hunk_has_colored_body = false;
+            continue;
+        }
+
+        if hunk_start.is_some() && hunk_body_line_has_git_color(line) {
+            hunk_has_colored_body = true;
+        }
+    }
+
+    finish_hunk_color_scan(
+        &mut strip_reset,
+        hunk_start,
+        lines.len(),
+        hunk_has_colored_body,
+    );
+    strip_reset
+}
+
+fn finish_hunk_color_scan(
+    strip_reset: &mut [bool],
+    hunk_start: Option<usize>,
+    hunk_end: usize,
+    hunk_has_colored_body: bool,
+) {
+    if !hunk_has_colored_body {
+        return;
+    }
+
+    let Some(hunk_start) = hunk_start else {
+        return;
+    };
+
+    for strip_reset in &mut strip_reset[hunk_start..hunk_end] {
+        *strip_reset = true;
+    }
+}
+
+fn hunk_header_line(line: &[u8]) -> bool {
+    let line = patch_line_without_leading_sgr(line);
+    line.starts_with(b"@@ ") || {
+        let mut stripped = Vec::with_capacity(line.len());
+        append_without_sgr_escapes(line, &mut stripped);
+        stripped.starts_with(b"@@ ")
+    }
+}
+
+fn patch_structural_line(line: &[u8]) -> bool {
+    diff_structural_line(patch_line_without_leading_sgr(line))
+}
+
+fn patch_line_without_leading_sgr(line: &[u8]) -> &[u8] {
+    let line_break_start = line.strip_suffix(b"\n").map_or(line.len(), <[u8]>::len);
+    let mut content_start = 0;
+    while content_start < line_break_start {
+        let Some(end) = sgr_escape_end(line, content_start) else {
+            break;
+        };
+        content_start = end;
+    }
+    &line[content_start..line_break_start]
+}
+
+fn hunk_body_line_has_git_color(line: &[u8]) -> bool {
+    let line_break_start = line.strip_suffix(b"\n").map_or(line.len(), <[u8]>::len);
+    let mut content_start = 0;
+    let mut has_leading_sgr = false;
+    while content_start < line_break_start {
+        let Some(end) = sgr_escape_end(line, content_start) else {
+            break;
+        };
+        has_leading_sgr = true;
+        content_start = end;
+    }
+
+    if !matches!(line.get(content_start), Some(b' ' | b'+' | b'-')) {
+        return false;
+    }
+
+    if has_leading_sgr {
+        return true;
+    }
+
+    content_start += 1;
+    sgr_escape_end(line, content_start)
+        .is_some_and(|end| sgr_escape_is_reset(&line[content_start..end]))
+}
+
+fn append_patch_line_without_color_wrappers(
+    line: &[u8],
+    output: &mut Vec<u8>,
+    strip_uncolored_context_reset: bool,
+) {
     let line_break_start = line.strip_suffix(b"\n").map_or(line.len(), <[u8]>::len);
     let mut content_start = 0;
     let mut stripped_git_color = false;
@@ -658,16 +774,20 @@ fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
         stripped_git_color = true;
         content_start = end;
     }
+    let leading_sgr_end = content_start;
 
-    if diff_structural_line(&line[content_start..line_break_start]) {
+    let structural_content = &line[content_start..line_break_start];
+    if diff_structural_line(structural_content) {
         append_without_sgr_escapes(&line[content_start..line_break_start], output);
         output.extend_from_slice(&line[line_break_start..]);
         return;
     }
 
-    if matches!(line.get(content_start), Some(b' ' | b'+' | b'-')) {
+    let diff_prefix = line.get(content_start).copied();
+    if matches!(diff_prefix, Some(b' ' | b'+' | b'-')) {
         output.push(line[content_start]);
         content_start += 1;
+        let mut stripped_prefix_reset = false;
         while content_start < line_break_start {
             let Some(end) = sgr_escape_end(line, content_start) else {
                 break;
@@ -676,11 +796,22 @@ fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
                 break;
             }
             stripped_git_color = true;
+            stripped_prefix_reset = true;
             content_start = end;
+        }
+        // Git can reset after the +/- marker and reapply the line color before
+        // the payload. Strip one copy only; an identical following SGR can be
+        // literal file content.
+        if stripped_prefix_reset
+            && strip_reapplied_git_line_color(line, leading_sgr_end, &mut content_start)
+        {
+            stripped_git_color = true;
         }
     }
 
-    let content_end = if stripped_git_color {
+    let strip_trailing_reset =
+        stripped_git_color || (strip_uncolored_context_reset && matches!(diff_prefix, Some(b' ')));
+    let content_end = if strip_trailing_reset {
         trailing_sgr_reset_start(line, content_start, line_break_start).unwrap_or(line_break_start)
     } else {
         line_break_start
@@ -688,6 +819,24 @@ fn append_patch_line_without_color_wrappers(line: &[u8], output: &mut Vec<u8>) {
 
     output.extend_from_slice(&line[content_start..content_end]);
     output.extend_from_slice(&line[line_break_start..]);
+}
+
+fn strip_reapplied_git_line_color(
+    line: &[u8],
+    leading_sgr_end: usize,
+    content_start: &mut usize,
+) -> bool {
+    if leading_sgr_end == 0 {
+        return false;
+    }
+
+    let leading_sgr = &line[..leading_sgr_end];
+    if !line[*content_start..].starts_with(leading_sgr) {
+        return false;
+    }
+
+    *content_start += leading_sgr.len();
+    true
 }
 
 fn diff_structural_line(line: &[u8]) -> bool {
@@ -1331,6 +1480,20 @@ mod tests {
     }
 
     #[test]
+    fn normalized_patch_input_preserves_literal_terminal_sequences_after_colored_headers() {
+        let patch = b"\x1b[1mdiff --git a/a.txt b/a.txt\x1b[m\n\x1b[1m--- a/a.txt\x1b[m\n\x1b[1m+++ b/a.txt\x1b[m\n\x1b[36m@@ -1,2 +1,2 @@\x1b[m\n \x1b[33mctx\x1b[0m\n-\x1b[31mold\x1b[0m\n+\x1b[32mnew\x1b[0m\n";
+
+        let normalized = normalized_patch_input(patch);
+        let text = String::from_utf8_lossy(&normalized);
+        let files = mark_diff::parse_patch(&text);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].hunks[0].lines[0].text, "\x1b[33mctx\x1b[0m");
+        assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mold\x1b[0m");
+        assert_eq!(files[0].hunks[0].lines[2].text, "\x1b[32mnew\x1b[0m");
+    }
+
+    #[test]
     fn normalized_patch_input_strips_only_git_color_wrappers() {
         let patch = b"\x1b[1mdiff --git a/a.txt b/a.txt\x1b[m\n\x1b[1m--- a/a.txt\x1b[m\n\x1b[1m+++ b/a.txt\x1b[m\n\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-old\x1b[m\n\x1b[32m+\x1b[31mred\x1b[0m\x1b[m\n";
 
@@ -1341,6 +1504,18 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].hunks[0].lines[0].text, "old");
         assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mred\x1b[0m");
+    }
+
+    #[test]
+    fn normalized_patch_input_preserves_literal_line_color_sequence() {
+        let patch = b"\x1b[1mdiff --git a/a.txt b/a.txt\x1b[m\n\x1b[1m--- a/a.txt\x1b[m\n\x1b[1m+++ b/a.txt\x1b[m\n\x1b[36m@@ -1 +1 @@\x1b[m\n\x1b[31m-old\x1b[m\n\x1b[32m+\x1b[m\x1b[32m\x1b[32mgreen\x1b[0m\x1b[m\n";
+
+        let normalized = normalized_patch_input(patch);
+        let text = String::from_utf8_lossy(&normalized);
+        let files = mark_diff::parse_patch(&text);
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[32mgreen\x1b[0m");
     }
 
     #[test]
@@ -1356,6 +1531,22 @@ mod tests {
         assert_eq!(files[0].hunks[0].header, "@@ -1,2 +1,2 @@ fn");
         assert_eq!(files[0].hunks[0].lines[0].text, "context");
         assert_eq!(files[0].hunks[0].lines[2].text, "new");
+    }
+
+    #[test]
+    fn normalized_patch_input_strips_standard_git_color_wrappers() {
+        let patch = b"\x1b[1mdiff --git a/a.txt b/a.txt\x1b[m\n\x1b[1m--- a/a.txt\x1b[m\n\x1b[1m+++ b/a.txt\x1b[m\n\x1b[36m@@ -1,3 +1,3 @@\x1b[m\n context before\x1b[m\n\x1b[31m-old\x1b[m\n\x1b[32m+\x1b[m\x1b[32mnew\x1b[m\n context after\x1b[m\n";
+
+        let normalized = normalized_patch_input(patch);
+        let text = String::from_utf8_lossy(&normalized);
+        let files = mark_diff::parse_patch(&text);
+
+        assert!(!text.contains('\x1b'));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].hunks[0].lines[0].text, "context before");
+        assert_eq!(files[0].hunks[0].lines[1].text, "old");
+        assert_eq!(files[0].hunks[0].lines[2].text, "new");
+        assert_eq!(files[0].hunks[0].lines[3].text, "context after");
     }
 
     #[test]
