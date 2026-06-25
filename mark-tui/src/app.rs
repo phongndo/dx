@@ -2463,18 +2463,30 @@ impl DiffApp {
     }
 
     fn export_marks(&self) -> Vec<MarkExport> {
+        let exportable_keys = self.exportable_annotation_keys();
         self.annotations
             .iter()
-            .filter_map(|(key, body)| self.export_mark(key, body))
+            .filter_map(|(key, body)| {
+                if !exportable_keys.contains(key) {
+                    return None;
+                }
+                self.export_mark(key, body)
+            })
+            .collect()
+    }
+
+    fn exportable_annotation_keys(&self) -> HashSet<AnnotationKey> {
+        // Copy marks for the current diff, not stale annotations whose path still
+        // exists after a reload. Build an unfiltered model so active file/grep
+        // filters do not hide otherwise-current marks from export.
+        UiModel::new(&self.changeset, self.layout, &self.context_expansions)
+            .rows
+            .into_iter()
+            .flat_map(|row| AnnotationKey::candidates_from_ui_row(&self.changeset, row))
             .collect()
     }
 
     fn export_mark(&self, key: &AnnotationKey, body: &str) -> Option<MarkExport> {
-        self.changeset
-            .files
-            .iter()
-            .any(|file| AnnotationKey::path_for_side(file, key.side) == Some(key.path.as_str()))
-            .then_some(())?;
         let (old_line, new_line) = self.annotation_key_lines(key)?;
         Some(MarkExport {
             path: key.path.clone(),

@@ -3250,6 +3250,69 @@ fn copy_marks_writes_structured_json_to_clipboard_sequence() {
 }
 
 #[test]
+fn copy_marks_omits_annotations_without_current_diff_line() {
+    use crate::annotation::{AnnotationKey, AnnotationSide};
+
+    let changeset = changeset_with_replacement_pair();
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let old_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
+        .expect("deletion line");
+    let new_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: 1, .. }))
+        .expect("addition line");
+    let old_key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(old_row).expect("old diff row"),
+    )
+    .expect("old-side key");
+    let new_key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(new_row).expect("new diff row"),
+    )
+    .expect("new-side key");
+    assert_eq!(old_key.side, AnnotationSide::Old);
+    assert_eq!(new_key.side, AnnotationSide::New);
+    app.annotations
+        .insert(old_key.clone(), "old note".to_owned());
+    app.annotations.insert(new_key, "new note".to_owned());
+
+    let mut replacement = changeset_with_line_text("new");
+    replacement.files[0].old_path = None;
+    replacement.files[0].status = FileStatus::Added;
+    replacement.files[0].additions = 1;
+    replacement.files[0].hunks[0].old_count = 0;
+    replacement.files[0].hunks[0].lines[0].kind = DiffLineKind::Addition;
+    replacement.files[0].hunks[0].lines[0].old_line = None;
+    app.replace_loaded_diff(DiffOptions::default(), replacement);
+
+    let expected = concat!(
+        "{\n",
+        "  \"version\": 1,\n",
+        "  \"marks\": [\n",
+        "    {\n",
+        "      \"path\": \"file.rs\",\n",
+        "      \"new_line\": 1,\n",
+        "      \"body\": \"new note\"\n",
+        "    }\n",
+        "  ]\n",
+        "}"
+    );
+
+    assert_eq!(app.marks_clipboard_json().as_deref(), Some(expected));
+    assert_eq!(
+        app.annotations.get(&old_key).map(String::as_str),
+        Some("old note")
+    );
+}
+
+#[test]
 fn copy_marks_without_marks_shows_notice_without_writing() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
