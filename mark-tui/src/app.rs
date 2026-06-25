@@ -2578,6 +2578,9 @@ impl DiffApp {
     }
 
     pub(crate) fn set_rendered_diff_area(&mut self, area: Rect) {
+        if self.rendered_diff_area != Some(area) {
+            self.clear_diff_mouse_hover();
+        }
         self.rendered_diff_area = Some(area);
     }
 
@@ -7741,11 +7744,6 @@ fn max_scroll_for_annotated_viewport(
     let annotation_rows = merged_blocks
         .iter()
         .fold(0usize, |total, (_, height)| total.saturating_add(*height));
-    let max_anchor = merged_blocks
-        .iter()
-        .map(|(anchor, _)| *anchor)
-        .max()
-        .unwrap_or(0);
     let target_rendered_scroll = row_count
         .saturating_add(annotation_rows)
         .saturating_sub(viewport_rows.max(1));
@@ -7757,15 +7755,15 @@ fn max_scroll_for_annotated_viewport(
     // rows after their anchors. Project the last rendered viewport start back to
     // the first diff visual row at or after that rendered position; if that
     // position lands inside an annotation, scrolling to the next diff row reveals
-    // rows hidden by the annotation block. Keep annotation anchors reachable too,
-    // so saving or resizing a mark does not clamp the view away from its line.
+    // rows hidden by the annotation block. If there is no next diff row, fall back
+    // to the final anchor so an oversized trailing annotation remains reachable.
     let mut annotation_rows_before = 0usize;
     let mut first_row_in_range = 0usize;
     for (anchor, height) in merged_blocks {
         let candidate = target_rendered_scroll.saturating_sub(annotation_rows_before);
         if candidate <= anchor {
             let projected_scroll = candidate.max(first_row_in_range).min(row_count - 1);
-            return projected_scroll.max(max_anchor);
+            return projected_scroll;
         }
 
         annotation_rows_before = annotation_rows_before.saturating_add(height);
@@ -7777,7 +7775,7 @@ fn max_scroll_for_annotated_viewport(
             .saturating_sub(annotation_rows_before)
             .max(first_row_in_range)
             .min(row_count - 1);
-        return projected_scroll.max(max_anchor);
+        return projected_scroll;
     }
 
     row_count - 1

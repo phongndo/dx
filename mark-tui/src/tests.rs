@@ -300,6 +300,41 @@ fn max_scroll_reaches_rows_hidden_by_saved_annotation() {
 }
 
 #[test]
+fn max_scroll_for_short_annotation_at_end_avoids_blank_viewport() {
+    use crate::annotation::AnnotationKey;
+    use crate::render::viewport_plan::{ViewportSlotKind, plan_diff_viewport_rows};
+
+    let lines: Vec<&str> = (0..100).map(|_| "line").collect();
+    let changeset = changeset_with_line_texts(&lines);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_width(40);
+    app.set_viewport_rows(app.model.len());
+
+    let annotated_row = app
+        .model
+        .rows
+        .iter()
+        .rposition(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("last unified line");
+    let key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(annotated_row).expect("annotated row"),
+    )
+    .expect("annotation key");
+    app.annotations.insert(key, "note".to_owned());
+
+    assert!(app.max_scroll() < annotated_row);
+    app.set_scroll(usize::MAX);
+    let plans = plan_diff_viewport_rows(&app, app.viewport_rows);
+
+    assert_eq!(plans.len(), app.viewport_rows);
+    assert!(plans.iter().any(|slot| matches!(
+        slot.kind,
+        ViewportSlotKind::DiffVisual { model_row, .. } if model_row == annotated_row
+    )));
+}
+
+#[test]
 fn max_scroll_stays_zero_when_annotated_diff_fits_viewport() {
     use crate::annotation::AnnotationKey;
 
@@ -7749,6 +7784,34 @@ fn diff_mouse_hover_tracks_position_inside_diff_area() {
 
     app.update_diff_mouse_hover(22, 5);
     app.update_diff_mouse_hover(0, 5);
+    assert_eq!(app.mouse_hover, None);
+}
+
+#[test]
+fn diff_mouse_hover_clears_when_diff_area_changes() {
+    let changeset = changeset_with_line_text("abcdef");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let area = Rect {
+        x: 0,
+        y: 1,
+        width: 40,
+        height: 5,
+    };
+    app.set_rendered_diff_area(area);
+
+    app.update_diff_mouse_hover(38, 1);
+    assert_eq!(app.mouse_hover, Some((38, 0)));
+
+    app.set_rendered_diff_area(area);
+    assert_eq!(app.mouse_hover, Some((38, 0)));
+
+    app.set_rendered_diff_area(Rect {
+        x: 10,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    });
+
     assert_eq!(app.mouse_hover, None);
 }
 
