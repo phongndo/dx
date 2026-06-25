@@ -3341,14 +3341,17 @@ impl DiffApp {
     }
 
     fn ensure_annotation_draft_visible(&mut self) {
-        let Some((model_row, desired_scroll)) = self.annotation_draft.as_ref().map(|draft| {
-            let anchor = self.annotation_anchor_visual_scroll(draft.model_row_index);
-            let height = annotation_compose_block_height(draft, self.viewport_width);
-            (
-                draft.model_row_index,
-                annotation_scroll_for_block(anchor, height, self.viewport_rows),
-            )
-        }) else {
+        let Some((model_row, anchor, desired_scroll)) =
+            self.annotation_draft.as_ref().map(|draft| {
+                let anchor = self.annotation_anchor_visual_scroll(draft.model_row_index);
+                let height = annotation_compose_block_height(draft, self.viewport_width);
+                (
+                    draft.model_row_index,
+                    anchor,
+                    annotation_scroll_for_block(anchor, height, self.viewport_rows),
+                )
+            })
+        else {
             return;
         };
 
@@ -3363,7 +3366,10 @@ impl DiffApp {
             );
         }
 
-        let max_scroll = self.max_scroll();
+        // The compose block is emitted only while the annotated row's anchor is still visible.
+        // If the draft is too tall for the viewport, the footer can never be shown; do not
+        // chase it past the anchor or the editor disappears entirely.
+        let max_scroll = self.max_scroll().min(anchor);
         while compose_block_bottom_viewport_row(self, model_row).is_none()
             && self.scroll < max_scroll
         {

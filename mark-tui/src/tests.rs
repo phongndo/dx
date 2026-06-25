@@ -6688,6 +6688,53 @@ fn annotation_input_scrolls_back_to_draft_above_viewport() {
 }
 
 #[test]
+fn long_annotation_draft_stays_visible_when_footer_cannot_fit() {
+    let lines: Vec<&str> = (0..20).map(|_| "line").collect();
+    let changeset = changeset_with_line_texts(&lines);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_rendered_diff_area(Rect {
+        x: 0,
+        y: 1,
+        width: 40,
+        height: 4,
+    });
+    app.set_viewport_width(40);
+    app.set_viewport_rows(4);
+    let code_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    app.scroll = code_row;
+    app.update_diff_mouse_hover(38, 1);
+    assert!(app.handle_diff_click(38, 1));
+    let draft_row = app
+        .annotation_draft
+        .as_ref()
+        .map(|draft| draft.model_row_index)
+        .expect("draft");
+
+    app.handle_annotation_input_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+    app.handle_annotation_input_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(app.scroll, draft_row);
+    assert_eq!(
+        crate::render::viewport_plan::compose_block_bottom_viewport_row(&app, draft_row),
+        None
+    );
+    assert!(
+        crate::render::viewport_plan::compose_block_top_viewport_row(&app, draft_row).is_some()
+    );
+    let rendered = crate::render::diff::build_diff_viewport_lines(&mut app, 40, 4);
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line_text(line).contains(INPUT_CURSOR))
+    );
+}
+
+#[test]
 fn filter_input_blocks_annotation_hover_drafts() {
     use crate::annotation::AnnotationKey;
 
