@@ -1718,7 +1718,7 @@ fn explicit_layout_preserves_split_choice_on_narrow_resize() {
 }
 
 #[test]
-fn b_key_does_not_toggle_file_sidebar() {
+fn b_key_toggles_file_sidebar() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
@@ -1728,11 +1728,15 @@ fn b_key_does_not_toggle_file_sidebar() {
         .handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
         .expect("b should be handled");
     assert!(!should_quit);
+    assert!(app.file_sidebar_open);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
+        .expect("b should be handled");
     assert!(!app.file_sidebar_open);
 }
 
 #[test]
-fn leader_b_clears_file_sidebar_resize_state() {
+fn b_clears_file_sidebar_resize_state() {
     let changeset = changeset_with_files(&["a.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.file_sidebar_open = true;
@@ -1750,10 +1754,8 @@ fn leader_b_clears_file_sidebar_resize_state() {
     assert!(app.file_sidebar_resizing);
     assert_eq!(app.file_sidebar_width, Some(30));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
-        .expect("leader b should be handled");
+        .expect("b should be handled");
 
     assert!(!app.file_sidebar_open);
     assert!(!app.file_sidebar_resizing);
@@ -2402,24 +2404,6 @@ fn flat_action_keys_are_unmapped_under_leader() {
 }
 
 #[test]
-fn leader_b_toggles_file_sidebar() {
-    let changeset = changeset_with_context_lines(1);
-    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
-    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
-        .expect("leader b should be handled");
-    assert!(app.file_sidebar_open);
-
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
-    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
-        .expect("leader b should be handled");
-    assert!(!app.file_sidebar_open);
-}
-
-#[test]
 fn leader_m_opens_diff_source_menu() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -3064,7 +3048,8 @@ fn help_menu_lines_list_keybindings() {
     assert!(text.iter().any(|line| line.contains("]/[")));
     assert!(text.iter().any(|line| line.contains("Ctrl-G")));
     assert!(text.iter().any(|line| line.contains("Ctrl-Shift-C")));
-    assert!(text.iter().any(|line| line.contains("Space b")));
+    assert_eq!(keymap.global_action_label(GlobalAction::FileBrowser), "b");
+    assert!(text.iter().any(|line| line.contains("toggle file sidebar")));
     assert!(text.iter().any(|line| line.contains("Space s")));
     assert!(!text.iter().any(|line| line.contains("b, Space b")));
     assert!(!text.iter().any(|line| line.contains("s, Space s")));

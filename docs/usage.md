@@ -146,7 +146,7 @@ n / p          next / previous grep match
 r              reload
 Space m        diff type selector
 Space o        settings menu
-Space b        file browser
+b              file browser
 Space s        toggle split/unified layout
 Ctrl-G         open the focused hunk in `$VISUAL`, `$GIT_EDITOR`, or `$EDITOR`
 Ctrl-Shift-C   copy the error log pane to the terminal clipboard
