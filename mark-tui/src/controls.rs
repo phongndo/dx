@@ -10,7 +10,7 @@ use crate::theme::MIN_SPLIT_WIDTH;
 
 pub(crate) type CrosstermTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
-pub(crate) const INPUT_CURSOR: &str = "│";
+pub(crate) const INPUT_CURSOR: &str = "█";
 
 pub(crate) fn default_layout_for_width(width: u16) -> DiffLayoutMode {
     if width >= MIN_SPLIT_WIDTH {

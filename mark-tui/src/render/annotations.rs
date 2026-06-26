@@ -9,7 +9,7 @@ use crate::{
         ANNOTATION_SUBMIT_BUTTON_WIDTH, AnnotationDraft,
     },
     controls::INPUT_CURSOR,
-    render::style::base_bg,
+    render::style::{base_bg, input_cursor_style, spans_with_input_cursor},
     render::text::{fit, fit_padded, fit_with_width, spaces},
     theme::DiffTheme,
 };
@@ -179,10 +179,17 @@ fn annotation_body_width(width: usize) -> usize {
 
 fn annotation_body_line(text: &str, width: usize, theme: DiffTheme, fg: Color) -> Line<'static> {
     let body_width = annotation_body_width(width);
-    Line::from(Span::styled(
-        fit_padded(text, body_width),
-        Style::default().fg(fg).bg(base_bg(theme)),
-    ))
+    let bg = base_bg(theme);
+    let display = fit_padded(text, body_width);
+    if display.contains(INPUT_CURSOR) {
+        let text_style = Style::default().fg(fg).bg(bg);
+        return Line::from(spans_with_input_cursor(
+            &display,
+            text_style,
+            input_cursor_style(theme, bg),
+        ));
+    }
+    Line::from(Span::styled(display, Style::default().fg(fg).bg(bg)))
 }
 
 fn annotation_display_lines(text: &str, width: usize) -> Vec<String> {

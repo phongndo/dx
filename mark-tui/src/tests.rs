@@ -6168,7 +6168,10 @@ fn options_menu_draws_centered_floating_menu() {
 
     assert!(title.0 >= 3 && title.0 < 12, "title row was {}", title.0);
     assert!(title.1 > 30 && title.1 < 48, "title column was {}", title.1);
-    assert!(rows.iter().any(|row| row.contains("> │")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains(&format!("> {INPUT_CURSOR}")))
+    );
     assert!(rows.iter().any(|row| row.contains("Layout")));
     assert!(rows.iter().any(|row| row.contains("Live reload")));
     assert!(rows.iter().any(|row| row.contains("Syntax highlighting")));
@@ -6302,7 +6305,10 @@ fn selector_menus_do_not_render_footers() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("diff menu draw should succeed");
     let rows = buffer_rows(terminal.backend().buffer());
-    assert!(rows.iter().any(|row| row.contains("> │")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains(&format!("> {INPUT_CURSOR}")))
+    );
     assert!(
         rows.iter()
             .any(|row| row.contains("1") && row.contains("All changes"))
@@ -6338,7 +6344,10 @@ fn colorscheme_picker_draws_input_dropdown() {
         .collect();
 
     assert!(rows.iter().any(|row| row.contains("Colorscheme")));
-    assert!(rows.iter().any(|row| row.contains("> g│")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains(&format!("> g{INPUT_CURSOR}")))
+    );
     assert!(rows.iter().any(|row| row.contains("system")));
     assert!(rows.iter().any(|row| row.contains("gruvbox-dark")));
     assert!(!rows.iter().any(|row| row.contains("current")));
@@ -6996,7 +7005,10 @@ fn branch_menu_draws_centered_floating_filter() {
         .expect("floating branch menu should render title");
 
     assert!(title.0 > 4 && title.0 < 12, "title row was {}", title.0);
-    assert!(rows.iter().any(|row| row.contains("> m│")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains(&format!("> m{INPUT_CURSOR}")))
+    );
     assert!(rows.iter().any(|row| row.contains("main")));
     assert!(
         !rows

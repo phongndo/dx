@@ -17,7 +17,7 @@ use crate::{
     },
     keymap::Keymap,
     render::{
-        style::{base_bg, header_bg},
+        style::{base_bg, header_bg, input_cursor_style, spans_with_input_cursor},
         text::{fit_padded, fit_with_ellipsis},
     },
     theme::{
@@ -330,10 +330,12 @@ pub(crate) fn draw_review_input(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
     let input = text_with_cursor(&app.review_input, app.review_input_cursor);
     let prompt = fit_padded(&format!("> {input}"), inner.width as usize);
     let hint = fit_padded("Review ID for this repo", inner.width as usize);
+    let prompt_style = Style::default().fg(selector_prompt_color(app.theme)).bg(bg);
     let lines = vec![
-        Line::from(Span::styled(
-            prompt,
-            Style::default().fg(selector_prompt_color(app.theme)).bg(bg),
+        Line::from(spans_with_input_cursor(
+            &prompt,
+            prompt_style,
+            input_cursor_style(app.theme, bg),
         )),
         Line::from(Span::styled(
             hint,
@@ -420,17 +422,15 @@ fn selector_input_line(
     }
     let left_width = width.saturating_sub(right_width).saturating_sub(1);
     let left = fit_padded(&left, left_width);
-    Line::from(vec![
-        Span::styled(
-            left,
-            Style::default().fg(selector_prompt_color(theme)).bg(bg),
-        ),
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            fit_padded(&right, right_width.min(width)),
-            Style::default().fg(selector_count_color(theme)).bg(bg),
-        ),
-    ])
+    let text_style = Style::default().fg(selector_prompt_color(theme)).bg(bg);
+    let cursor_style = input_cursor_style(theme, bg);
+    let mut spans = spans_with_input_cursor(&left, text_style, cursor_style);
+    spans.push(Span::styled(" ", Style::default().bg(bg)));
+    spans.push(Span::styled(
+        fit_padded(&right, right_width.min(width)),
+        Style::default().fg(selector_count_color(theme)).bg(bg),
+    ));
+    Line::from(spans)
 }
 
 fn text_with_cursor(input: &str, cursor: usize) -> String {

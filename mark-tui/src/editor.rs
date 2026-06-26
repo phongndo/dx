@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::{
-    cursor::Show,
+    cursor::{SetCursorStyle, Show},
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -109,7 +109,13 @@ impl SuspendedTerminal {
         let terminal = Self { active: true };
         disable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show)?;
+        execute!(
+            stdout,
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            SetCursorStyle::DefaultUserShape,
+            Show
+        )?;
         stdout.flush()?;
         Ok(terminal)
     }
@@ -121,7 +127,12 @@ impl SuspendedTerminal {
 
         let _ = flush_terminal_input_queue();
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            SetCursorStyle::BlinkingBlock
+        )?;
         stdout.flush()?;
         enable_raw_mode()?;
         drain_pending_editor_events()?;

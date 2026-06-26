@@ -4,7 +4,7 @@ use std::{
 };
 
 use crossterm::{
-    cursor::Show,
+    cursor::{SetCursorStyle, Show},
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -304,7 +304,12 @@ impl TerminalCleanup {
         enable_raw_mode()?;
         let mut cleanup = Self { active: true };
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+        if let Err(error) = execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            SetCursorStyle::BlinkingBlock
+        ) {
             let _ = cleanup.cleanup();
             return Err(error.into());
         }
@@ -319,7 +324,13 @@ impl TerminalCleanup {
         self.active = false;
 
         let mut stdout = io::stdout();
-        let screen_result = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
+        let screen_result = execute!(
+            stdout,
+            DisableMouseCapture,
+            LeaveAlternateScreen,
+            SetCursorStyle::DefaultUserShape,
+            Show
+        );
         let flush_input_result = flush_terminal_input_queue();
         let raw_mode_result = disable_raw_mode();
 
