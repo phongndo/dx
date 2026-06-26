@@ -42,12 +42,9 @@ use crate::{
     },
     editor::{EditorTarget, configured_editor, open_editor, open_text_in_editor, repo_file_path},
     event_reader::TerminalEventReader,
-    keymap::{GlobalAction, Keymap, MenuAction},
+    keymap::{GlobalAction, KeyPress, Keymap, MenuAction},
     live_diff::{LiveDiff, LiveDiffReload, live_diff_supported},
-    model::{
-        ContextExpansionDirection, ContextKey, ContextSourceEntry, ContextSourceKey, UiModel,
-        UiRow, context_expansion_direction,
-    },
+    model::{ContextKey, ContextSourceEntry, ContextSourceKey, UiModel, UiRow, context_expands_up},
     render::{
         annotations::{
             annotation_close_hit_at_column, annotation_compose_block_height,
@@ -101,6 +98,35 @@ pub(crate) const ERROR_LOG_DEFAULT_HEIGHT: u16 = 6;
 pub(crate) const ERROR_LOG_MIN_HEIGHT: u16 = 3;
 pub(crate) const ERROR_LOG_MAX_HEIGHT: u16 = 40;
 const POST_EDITOR_QUIT_KEY_IGNORE: Duration = Duration::from_millis(250);
+const NORMAL_GLOBAL_ACTIONS: &[GlobalAction] = &[
+    GlobalAction::Quit,
+    GlobalAction::Help,
+    GlobalAction::Reload,
+    GlobalAction::FileFilter,
+    GlobalAction::Grep,
+    GlobalAction::DiffMenu,
+    GlobalAction::HeadBranch,
+    GlobalAction::BaseBranch,
+    GlobalAction::CommitPicker,
+    GlobalAction::OptionsMenu,
+    GlobalAction::FileBrowser,
+    GlobalAction::PreviousFile,
+    GlobalAction::NextFile,
+    GlobalAction::PreviousHunk,
+    GlobalAction::NextHunk,
+    GlobalAction::ExpandContextUp,
+    GlobalAction::ExpandContextDown,
+    GlobalAction::CollapseContextAll,
+    GlobalAction::Layout,
+    GlobalAction::EditHunk,
+    GlobalAction::CopyMarks,
+    GlobalAction::CopyErrorLog,
+    GlobalAction::ClearFilters,
+    GlobalAction::NextDiffType,
+    GlobalAction::PreviousDiffType,
+    GlobalAction::NextAnnotation,
+    GlobalAction::PreviousAnnotation,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HunkFocusScrollBehavior {
@@ -1209,6 +1235,7 @@ struct AnnotationScratchFile {
 pub(crate) enum OptionsMenuItem {
     Layout,
     LiveReload,
+    #[allow(dead_code)] // Legacy settings persistence path; hidden from the options menu.
     ContextExpansion,
     SyntaxHighlighting,
     LineWrapping,
@@ -1222,7 +1249,6 @@ pub(crate) enum OptionsMenuItem {
 pub(crate) const COMMON_OPTIONS_MENU_ITEMS: &[OptionsMenuItem] = &[
     OptionsMenuItem::Layout,
     OptionsMenuItem::LiveReload,
-    OptionsMenuItem::ContextExpansion,
     OptionsMenuItem::SyntaxHighlighting,
     OptionsMenuItem::LineWrapping,
     OptionsMenuItem::ColorScheme,
@@ -1500,7 +1526,7 @@ pub(crate) struct DiffApp {
     pub(crate) mouse_hover: Option<(u16, u16)>,
     pub(crate) annotations: AnnotationStore,
     pub(crate) annotation_draft: Option<AnnotationDraft>,
-    pub(crate) leader_pending: bool,
+    pub(crate) key_prefix_pending: Option<KeyPress>,
     pub(crate) help_menu_open: bool,
     pub(crate) help_menu_input: String,
     pub(crate) help_menu_input_cursor: usize,
@@ -1806,7 +1832,7 @@ impl DiffApp {
             mouse_hover: None,
             annotations: AnnotationStore::default(),
             annotation_draft: None,
-            leader_pending: false,
+            key_prefix_pending: None,
             help_menu_open: false,
             help_menu_input: String::new(),
             help_menu_input_cursor: 0,
@@ -1964,71 +1990,16 @@ impl DiffApp {
             return Ok(false);
         }
 
-        if self.leader_pending {
-            return self.handle_leader_key(key);
+        if let Some(prefix) = self.key_prefix_pending.take() {
+            return self.handle_prefix_key(prefix, key);
         }
 
-        if self.keymap.matches_single(GlobalAction::Quit, key) {
-            return Ok(true);
-        }
-        if self.keymap.matches_single(GlobalAction::Help, key) {
-            self.toggle_help_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::Reload, key) {
-            self.reload()?;
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::FileFilter, key) {
-            self.open_filter_input(DiffFilterKind::File);
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::Grep, key) {
-            self.open_filter_input(DiffFilterKind::Grep);
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::DiffMenu, key) {
-            self.open_diff_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::OptionsMenu, key) {
-            self.open_options_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::FileBrowser, key) {
-            self.toggle_file_sidebar();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::Layout, key) {
-            self.toggle_layout();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::EditHunk, key) {
-            self.open_focused_hunk_in_editor();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::CopyMarks, key) {
-            self.copy_marks_to_terminal_clipboard();
-            return Ok(false);
-        }
-        if self.error_log.is_some() && self.keymap.matches_single(GlobalAction::CopyErrorLog, key) {
-            self.copy_error_log_to_terminal_clipboard();
-            return Ok(false);
-        }
-        if self.keymap.matches_single(GlobalAction::NextDiffType, key) {
-            self.cycle_diff_choice(1);
-            return Ok(false);
-        }
-        if self
-            .keymap
-            .matches_single(GlobalAction::PreviousDiffType, key)
-        {
-            self.cycle_diff_choice(-1);
-            return Ok(false);
+        if let Some(should_quit) = self.handle_single_global_key(key)? {
+            return Ok(should_quit);
         }
 
-        if self.keymap.is_leader(key) {
-            self.leader_pending = true;
+        if self.keymap.is_prefix(key) {
+            self.key_prefix_pending = Some(KeyPress::from(key));
             self.dirty = true;
             return Ok(false);
         }
@@ -2057,7 +2028,11 @@ impl DiffApp {
             KeyCode::Right | KeyCode::Char('l') => {
                 self.scroll_horizontally_by(HORIZONTAL_SCROLL_STEP as isize);
             }
-            KeyCode::PageDown | KeyCode::Char('d') => self.scroll_or_focus_hunk(20),
+            KeyCode::PageDown => self.scroll_or_focus_hunk(20),
+            KeyCode::Char('d') if is_plain_char_key(key, 'd') => self.scroll_or_focus_hunk(20),
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.scroll_or_focus_hunk(20);
+            }
             KeyCode::PageUp | KeyCode::Char('u') => self.scroll_or_focus_hunk(-20),
             KeyCode::Home => self.set_scroll(0),
             KeyCode::Char('g') if is_plain_char_key(key, 'g') => self.set_scroll(0),
@@ -2067,81 +2042,157 @@ impl DiffApp {
                 self.move_grep_match(-1);
             }
             KeyCode::Char('n') | KeyCode::Char('p') | KeyCode::Char('N') => {}
-            KeyCode::Char('J') => self.move_file(1),
-            KeyCode::Char('K') => self.move_file(-1),
-            KeyCode::Char(']') => self.next_hunk(),
-            KeyCode::Char('[') => self.previous_hunk(),
             _ => {}
         }
 
         Ok(false)
     }
 
-    pub(crate) fn handle_leader_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
-        self.leader_pending = false;
+    pub(crate) fn handle_single_global_key(&mut self, key: KeyEvent) -> MarkResult<Option<bool>> {
+        for action in NORMAL_GLOBAL_ACTIONS.iter().copied() {
+            if self.keymap.matches_single(action, key) {
+                return self.perform_global_action(action);
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(crate) fn handle_prefix_key(
+        &mut self,
+        prefix: KeyPress,
+        key: KeyEvent,
+    ) -> MarkResult<bool> {
+        self.key_prefix_pending = None;
 
         if key.code == KeyCode::Esc {
             self.dirty = true;
             return Ok(false);
         }
 
-        if self.keymap.matches_leader(GlobalAction::Quit, key) {
-            return Ok(true);
-        }
-        if self.keymap.matches_leader(GlobalAction::Help, key) {
-            self.toggle_help_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::Reload, key) {
-            self.reload()?;
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::FileFilter, key) {
-            self.open_filter_input(DiffFilterKind::File);
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::Grep, key) {
-            self.open_filter_input(DiffFilterKind::Grep);
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::DiffMenu, key) {
-            self.open_diff_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::OptionsMenu, key) {
-            self.open_options_menu();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::Layout, key) {
-            self.toggle_layout();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::FileBrowser, key) {
-            self.toggle_file_sidebar();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::CopyMarks, key) {
-            self.copy_marks_to_terminal_clipboard();
-            return Ok(false);
-        }
-        if self.error_log.is_some() && self.keymap.matches_leader(GlobalAction::CopyErrorLog, key) {
-            self.copy_error_log_to_terminal_clipboard();
-            return Ok(false);
-        }
-        if self.keymap.matches_leader(GlobalAction::NextDiffType, key) {
-            self.cycle_diff_choice(1);
-            return Ok(false);
-        }
-        if self
-            .keymap
-            .matches_leader(GlobalAction::PreviousDiffType, key)
-        {
-            self.cycle_diff_choice(-1);
-            return Ok(false);
+        for action in NORMAL_GLOBAL_ACTIONS.iter().copied() {
+            if self.keymap.matches_prefix(action, prefix, key) {
+                return Ok(self.perform_global_action(action)?.unwrap_or(false));
+            }
         }
 
         self.dirty = true;
         Ok(false)
+    }
+
+    fn perform_global_action(&mut self, action: GlobalAction) -> MarkResult<Option<bool>> {
+        match action {
+            GlobalAction::Quit => Ok(Some(true)),
+            GlobalAction::Help => {
+                self.toggle_help_menu();
+                Ok(Some(false))
+            }
+            GlobalAction::Reload => {
+                self.reload()?;
+                Ok(Some(false))
+            }
+            GlobalAction::FileFilter => {
+                self.open_filter_input(DiffFilterKind::File);
+                Ok(Some(false))
+            }
+            GlobalAction::Grep => {
+                self.open_filter_input(DiffFilterKind::Grep);
+                Ok(Some(false))
+            }
+            GlobalAction::DiffMenu => {
+                self.open_diff_menu();
+                Ok(Some(false))
+            }
+            GlobalAction::HeadBranch => {
+                self.toggle_branch_menu(BranchMenu::Head);
+                Ok(Some(false))
+            }
+            GlobalAction::BaseBranch => {
+                self.toggle_branch_menu(BranchMenu::Base);
+                Ok(Some(false))
+            }
+            GlobalAction::CommitPicker => {
+                self.toggle_commit_menu();
+                Ok(Some(false))
+            }
+            GlobalAction::OptionsMenu => {
+                self.open_options_menu();
+                Ok(Some(false))
+            }
+            GlobalAction::FileBrowser => {
+                self.toggle_file_sidebar();
+                Ok(Some(false))
+            }
+            GlobalAction::PreviousFile => {
+                self.move_file(-1);
+                Ok(Some(false))
+            }
+            GlobalAction::NextFile => {
+                self.move_file(1);
+                Ok(Some(false))
+            }
+            GlobalAction::PreviousHunk => {
+                self.previous_hunk();
+                Ok(Some(false))
+            }
+            GlobalAction::NextHunk => {
+                self.next_hunk();
+                Ok(Some(false))
+            }
+            GlobalAction::ExpandContextUp => {
+                self.expand_context_around_focused_hunk(-1);
+                Ok(Some(false))
+            }
+            GlobalAction::ExpandContextDown => {
+                self.expand_context_around_focused_hunk(1);
+                Ok(Some(false))
+            }
+            GlobalAction::CollapseContextAll => {
+                self.collapse_all_context();
+                Ok(Some(false))
+            }
+            GlobalAction::Layout => {
+                self.toggle_layout();
+                Ok(Some(false))
+            }
+            GlobalAction::EditHunk => {
+                self.open_focused_hunk_in_editor();
+                Ok(Some(false))
+            }
+            GlobalAction::CopyMarks => {
+                self.copy_marks_to_terminal_clipboard();
+                Ok(Some(false))
+            }
+            GlobalAction::CopyErrorLog => {
+                if self.error_log.is_none() {
+                    return Ok(None);
+                }
+                self.copy_error_log_to_terminal_clipboard();
+                Ok(Some(false))
+            }
+            GlobalAction::ClearFilters => {
+                self.clear_all_filters();
+                self.filter_input = None;
+                Ok(Some(false))
+            }
+            GlobalAction::NextDiffType => {
+                self.cycle_diff_choice(1);
+                Ok(Some(false))
+            }
+            GlobalAction::PreviousDiffType => {
+                self.cycle_diff_choice(-1);
+                Ok(Some(false))
+            }
+            GlobalAction::NextAnnotation => {
+                self.move_annotation(1);
+                Ok(Some(false))
+            }
+            GlobalAction::PreviousAnnotation => {
+                self.move_annotation(-1);
+                Ok(Some(false))
+            }
+            GlobalAction::SaveMark | GlobalAction::CancelMark => Ok(None),
+        }
     }
 
     pub(crate) fn handle_diff_menu_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
@@ -2344,7 +2395,7 @@ impl DiffApp {
             && !self.diff_menu_open
             && !self.review_input_open
             && !self.options_menu_open
-            && !self.leader_pending
+            && self.key_prefix_pending.is_none()
             && !self.color_scheme_picker_open
             && !self.commit_menu_open
     }
@@ -2410,7 +2461,7 @@ impl DiffApp {
         self.help_menu_input.clear();
         self.help_menu_input_cursor = 0;
         self.help_menu_scroll = 0;
-        self.leader_pending = false;
+        self.key_prefix_pending = None;
         if self.help_menu_open {
             self.sync_help_menu_visible_rows();
         }
@@ -2423,7 +2474,7 @@ impl DiffApp {
             self.help_menu_input.clear();
             self.help_menu_input_cursor = 0;
             self.help_menu_scroll = 0;
-            self.leader_pending = false;
+            self.key_prefix_pending = None;
             self.dirty = true;
         }
     }
@@ -2483,7 +2534,6 @@ impl DiffApp {
     fn help_menu_key_label(&self, key: HelpMenuKey) -> String {
         match key {
             HelpMenuKey::Static(label) => label.to_owned(),
-            HelpMenuKey::Leader => self.keymap.leader_label(),
             HelpMenuKey::Global(action) => self.keymap.global_action_label(action),
             HelpMenuKey::GlobalPair(first, second) => format!(
                 "{}/{}",
@@ -2646,7 +2696,7 @@ impl DiffApp {
 
     pub(crate) fn close_error_log(&mut self) -> bool {
         if self.error_log.take().is_some() {
-            self.leader_pending = false;
+            self.key_prefix_pending = None;
             self.error_log_resizing = false;
             self.rendered_error_log_separator_row = None;
             self.dirty = true;
@@ -2767,10 +2817,8 @@ impl DiffApp {
         model.rows.iter().any(|row| {
             let UiRow::Collapsed {
                 file,
-                hunk,
                 new_start,
                 lines,
-                expanded,
                 ..
             } = *row
             else {
@@ -2783,12 +2831,61 @@ impl DiffApp {
                 return false;
             }
 
-            let hidden_start = match context_expansion_direction(hunk) {
-                ContextExpansionDirection::Up => new_start,
-                ContextExpansionDirection::Down => new_start.saturating_add(expanded),
-            };
-            key.line >= hidden_start && key.line.saturating_sub(hidden_start) < lines
-        })
+            key.line >= new_start && key.line.saturating_sub(new_start) < lines
+        }) || self.trailing_context_contains_annotation_key(key)
+    }
+
+    fn trailing_context_contains_annotation_key(&self, key: &AnnotationKey) -> bool {
+        // Collapsed trailing context has no UiRow::Collapsed sentinel; derive
+        // the hidden range from the final hunk and the available source lines.
+        self.changeset
+            .files
+            .iter()
+            .enumerate()
+            .any(|(file_index, file)| {
+                if AnnotationKey::path_for_side(file, AnnotationSide::New)
+                    != Some(key.path.as_str())
+                {
+                    return false;
+                }
+                let Some(last_hunk) = file.hunks.last() else {
+                    return false;
+                };
+                let old_start = last_hunk.old_start.saturating_add(last_hunk.old_count);
+                let new_start = last_hunk.new_start.saturating_add(last_hunk.new_count);
+                if key.line < new_start {
+                    return false;
+                }
+
+                let Some((side, source_line_count)) = self.context_source_line_count(file_index)
+                else {
+                    return false;
+                };
+                let source_start = match side {
+                    DiffSide::Old => old_start,
+                    DiffSide::New => new_start,
+                };
+                let available =
+                    available_context_lines(source_start, usize::MAX, source_line_count);
+
+                key.line.saturating_sub(new_start) < available
+            })
+    }
+
+    fn context_source_line_count(&self, file: usize) -> Option<(DiffSide, usize)> {
+        for side in [DiffSide::New, DiffSide::Old] {
+            let key = ContextSourceKey { file, side };
+            match self.context_cache.get(&key) {
+                Some(ContextSourceEntry::Lines(lines)) => return Some((side, lines.len())),
+                Some(ContextSourceEntry::Unavailable) => continue,
+                None => {
+                    if let Some(lines) = self.load_context_lines(file, side) {
+                        return Some((side, lines.len()));
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn export_mark(&self, key: &AnnotationKey, body: &str) -> Option<MarkExport> {
@@ -3824,6 +3921,75 @@ impl DiffApp {
         })
     }
 
+    pub(crate) fn move_annotation(&mut self, delta: isize) {
+        if self.annotations.is_empty() {
+            self.set_notice("no annotations");
+            return;
+        }
+
+        let mut targets = self
+            .annotations
+            .keys()
+            .filter_map(|key| self.annotation_model_row(key))
+            .map(|row| (self.annotation_anchor_visual_scroll(row), row))
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+
+        if targets.is_empty() {
+            self.set_notice("annotations are hidden");
+            return;
+        }
+
+        let focus_scroll = self.annotation_navigation_focus_scroll();
+        let target = if delta < 0 {
+            targets
+                .iter()
+                .rev()
+                .copied()
+                .find(|(anchor, _)| *anchor < focus_scroll)
+                .unwrap_or_else(|| {
+                    *targets
+                        .last()
+                        .expect("annotation targets should not be empty")
+                })
+        } else {
+            targets
+                .iter()
+                .copied()
+                .find(|(anchor, _)| *anchor > focus_scroll)
+                .unwrap_or_else(|| targets[0])
+        };
+        let (target_anchor, target_model_row) = target;
+        let target_scroll =
+            target_anchor.saturating_sub(viewport_center_offset(self.viewport_rows));
+        let target_scroll = self.scroll_with_model_row_rendered(target_scroll, target_model_row);
+
+        self.set_scroll_with_grep_sync(
+            target_scroll.min(self.max_scroll()),
+            false,
+            HunkFocusScrollBehavior::Preserve,
+        );
+    }
+
+    fn annotation_navigation_focus_scroll(&self) -> usize {
+        let focus_viewport_row = self.rendered_viewport_focus_row(self.viewport_rows);
+        let plans = plan_diff_viewport_rows_at_scroll(self, self.scroll, self.viewport_rows.max(1));
+
+        let Some(slot) = plans.get(focus_viewport_row).or_else(|| plans.last()) else {
+            return self.scroll.saturating_add(focus_viewport_row);
+        };
+        // When the viewport focus lands inside an annotation block, navigate from
+        // that block's owner row instead of a raw scroll position hidden by notes.
+        match &slot.kind {
+            ViewportSlotKind::DiffVisual { visual_scroll, .. } => *visual_scroll,
+            ViewportSlotKind::AnnotationCompose { model_row, .. }
+            | ViewportSlotKind::AnnotationSaved { model_row, .. } => {
+                self.annotation_anchor_visual_scroll(*model_row)
+            }
+        }
+    }
+
     fn reanchor_annotation_draft(&mut self) {
         let Some(key) = self
             .annotation_draft
@@ -4009,6 +4175,102 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn expand_context_around_focused_hunk(&mut self, direction: isize) -> bool {
+        let Some((file, hunk)) = self.focused_hunk_for_viewport(self.viewport_rows) else {
+            return false;
+        };
+
+        let target_hunk = if direction < 0 {
+            hunk
+        } else {
+            let Some(next_hunk) = hunk.checked_add(1) else {
+                return false;
+            };
+            let Some(hunk_count) = self
+                .changeset
+                .files
+                .get(file)
+                .map(|file_diff| file_diff.hunks.len())
+            else {
+                return false;
+            };
+            if next_hunk == hunk_count {
+                return self.expand_trailing_context_for_key(file, next_hunk);
+            }
+            if next_hunk > hunk_count {
+                return false;
+            }
+            next_hunk
+        };
+
+        self.expand_context_for_key(file, target_hunk)
+    }
+
+    pub(crate) fn expand_trailing_context_for_key(&mut self, file: usize, hunk: usize) -> bool {
+        let Some(file_diff) = self.changeset.files.get(file) else {
+            return false;
+        };
+        if hunk != file_diff.hunks.len() {
+            return false;
+        }
+        let Some(last_hunk) = hunk
+            .checked_sub(1)
+            .and_then(|hunk| file_diff.hunks.get(hunk))
+        else {
+            return false;
+        };
+        let old_start = last_hunk.old_start.saturating_add(last_hunk.old_count);
+        let new_start = last_hunk.new_start.saturating_add(last_hunk.new_count);
+
+        let Some((side, source_lines)) = self.ensure_context_lines(file) else {
+            self.set_notice("context unavailable for this diff");
+            return true;
+        };
+
+        let source_start = match side {
+            DiffSide::Old => old_start,
+            DiffSide::New => new_start,
+        };
+        let available = available_context_lines(source_start, usize::MAX, source_lines.len());
+        let current = self
+            .context_expansions
+            .get(&ContextKey { file, hunk })
+            .copied()
+            .unwrap_or_default()
+            .min(available);
+        if current == available {
+            self.set_notice("no more context");
+            return true;
+        }
+
+        self.update_max_line_width_for_expanded_context(
+            &source_lines,
+            source_start,
+            current..available,
+        );
+        self.context_expansions
+            .insert(ContextKey { file, hunk }, available);
+        self.rebuild_model_after_context_visibility_change();
+        true
+    }
+
+    pub(crate) fn expand_context_for_key(&mut self, file: usize, hunk: usize) -> bool {
+        let Some(row_index) = self.model.rows.iter().position(|row| {
+            matches!(
+                row,
+                UiRow::Collapsed {
+                    file: row_file,
+                    hunk: row_hunk,
+                    ..
+                } if *row_file == file && *row_hunk == hunk
+            )
+        }) else {
+            return false;
+        };
+
+        self.expand_context_at_row(row_index)
+    }
+
     pub(crate) fn expand_context_at_row(&mut self, row_index: usize) -> bool {
         let Some(UiRow::Collapsed {
             file,
@@ -4028,9 +4290,12 @@ impl DiffApp {
         };
 
         let total = lines.saturating_add(expanded);
-        let source_start = match side {
-            DiffSide::Old => old_start,
-            DiffSide::New => new_start,
+        let expands_up = context_expands_up(hunk);
+        let source_start = match (side, expands_up) {
+            (DiffSide::Old, true) => old_start,
+            (DiffSide::Old, false) => old_start.saturating_sub(expanded),
+            (DiffSide::New, true) => new_start,
+            (DiffSide::New, false) => new_start.saturating_sub(expanded),
         };
         let available = available_context_lines(source_start, total, source_lines.len());
         let current = expanded.min(available);
@@ -4040,15 +4305,13 @@ impl DiffApp {
             return true;
         }
 
-        let next = current.saturating_add(self.context_expand_count(remaining));
-        self.update_max_line_width_for_expanded_context(
-            &source_lines,
-            source_start,
-            total,
-            current,
-            next,
-            context_expansion_direction(hunk),
-        );
+        let next = available;
+        let newly_visible = if expands_up {
+            total.saturating_sub(next)..total.saturating_sub(current)
+        } else {
+            current..next
+        };
+        self.update_max_line_width_for_expanded_context(&source_lines, source_start, newly_visible);
         self.context_expansions
             .insert(ContextKey { file, hunk }, next);
         self.rebuild_model_after_context_visibility_change();
@@ -4064,6 +4327,16 @@ impl DiffApp {
             return false;
         }
 
+        self.rebuild_model_after_context_visibility_change();
+        true
+    }
+
+    pub(crate) fn collapse_all_context(&mut self) -> bool {
+        if self.context_expansions.is_empty() {
+            return false;
+        }
+
+        self.context_expansions.clear();
         self.rebuild_model_after_context_visibility_change();
         true
     }
@@ -4085,10 +4358,6 @@ impl DiffApp {
         self.sync_grep_match_selection_to_scroll();
         self.set_horizontal_scroll(self.horizontal_scroll);
         self.dirty = true;
-    }
-
-    pub(crate) fn context_expand_count(&self, available: usize) -> usize {
-        self.theme.diff.context_expansion.expand_count(available)
     }
 
     pub(crate) fn ensure_context_lines(
@@ -4183,21 +4452,12 @@ impl DiffApp {
         &mut self,
         source_lines: &[String],
         source_start: usize,
-        total: usize,
-        current: usize,
-        next: usize,
-        direction: ContextExpansionDirection,
+        offsets: std::ops::Range<usize>,
     ) {
         let Some(source_index_start) = source_start.checked_sub(1) else {
             return;
         };
-        let (newly_visible_start, newly_visible_end) = match direction {
-            ContextExpansionDirection::Up => {
-                (total.saturating_sub(next), total.saturating_sub(current))
-            }
-            ContextExpansionDirection::Down => (current, next),
-        };
-        for offset in newly_visible_start..newly_visible_end {
+        for offset in offsets {
             let Some(text) = source_lines.get(source_index_start + offset) else {
                 continue;
             };
@@ -6643,10 +6903,11 @@ impl DiffApp {
         }
 
         if let Some((file, hunk)) = self.manual_hunk_focus
-            && let Some(row) = self.model.hunk_start_row(file, hunk)
-            && rendered_rows
-                .iter()
-                .any(|rendered_row| rendered_row.model_row == row)
+            && rendered_rows.iter().any(|rendered_row| {
+                self.model
+                    .row(rendered_row.model_row)
+                    .is_some_and(|row| row.is_hunk_row(file, hunk))
+            })
         {
             return Some((file, hunk));
         }

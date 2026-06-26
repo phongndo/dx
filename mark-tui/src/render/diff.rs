@@ -357,14 +357,25 @@ pub(crate) fn render_row_with_focus(
             ))
         }
         UiRow::Collapsed {
-            lines, expanded, ..
-        } => context_show_line(app.context_expand_count(lines), expanded > 0, width, theme),
+            hunk,
+            lines,
+            expanded,
+            ..
+        } => context_show_line(
+            lines,
+            expanded > 0,
+            context_expand_marker(hunk),
+            width,
+            theme,
+        ),
         UiRow::ContextLine {
             file,
             old_line,
             new_line,
         } => render_context_line(app, file, old_line, new_line, row_index, width),
-        UiRow::ContextHide { lines, .. } => context_hide_line(lines, width, theme),
+        UiRow::ContextHide { hunk, lines, .. } => {
+            context_hide_line(lines, context_hide_marker(hunk), width, theme)
+        }
         UiRow::HunkHeader { file, hunk } => {
             let hunk = &app.changeset.files[file].hunks[hunk];
             if hunk_focused {
@@ -430,6 +441,7 @@ pub(crate) fn render_row_with_focus(
 pub(crate) fn context_show_line(
     lines: usize,
     more: bool,
+    marker: &str,
     width: usize,
     theme: DiffTheme,
 ) -> Line<'static> {
@@ -439,21 +451,37 @@ pub(crate) fn context_show_line(
 
     let suffix = if lines == 1 { "line" } else { "lines" };
     let label = if more {
-        format!(" ▾ show {} more {suffix}", format_count(lines))
+        format!(
+            " {marker} show {} more unchanged {suffix}",
+            format_count(lines)
+        )
     } else {
-        format!(" ▾ show {} {suffix}", format_count(lines))
+        format!(" {marker} show {} unchanged {suffix}", format_count(lines))
     };
     context_action_line(&label, width, theme, theme.muted)
 }
 
-pub(crate) fn context_hide_line(lines: usize, width: usize, theme: DiffTheme) -> Line<'static> {
+pub(crate) fn context_hide_line(
+    lines: usize,
+    marker: &str,
+    width: usize,
+    theme: DiffTheme,
+) -> Line<'static> {
     let suffix = if lines == 1 { "line" } else { "lines" };
     context_action_line(
-        &format!(" ▴ hide {} {suffix}", format_count(lines)),
+        &format!(" {marker} hide {} unchanged {suffix}", format_count(lines)),
         width,
         theme,
         theme.muted,
     )
+}
+
+pub(crate) fn context_expand_marker(hunk: usize) -> &'static str {
+    if hunk == 0 { "▴" } else { "▾" }
+}
+
+pub(crate) fn context_hide_marker(hunk: usize) -> &'static str {
+    if hunk == 0 { "▾" } else { "▴" }
 }
 
 pub(crate) fn context_action_line(
