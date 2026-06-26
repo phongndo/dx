@@ -1,10 +1,11 @@
 use crate::render::{
     diff::{
         SplitCellRender, SplitLineRender, SplitSide, build_diff_viewport_lines,
-        content_spans_at_scroll, context_hide_line, context_show_line, empty_diff_fill_from,
-        inline_bg, render_row, render_row_with_focus, render_row_wrapped_with_focus,
-        render_split_context_line_wrapped, render_split_line_with_focus,
-        render_unified_line_at_scroll, row_bg, split_cell_spans_at_scroll, syntax_fg,
+        content_spans_at_scroll, context_expand_marker, context_hide_line, context_hide_marker,
+        context_show_line, empty_diff_fill_from, inline_bg, render_row, render_row_with_focus,
+        render_row_wrapped_with_focus, render_split_context_line_wrapped,
+        render_split_line_with_focus, render_unified_line_at_scroll, row_bg,
+        split_cell_spans_at_scroll, syntax_fg,
     },
     grep::{
         grep_highlight_target_for_columns, highlighted_grep_text_line,
@@ -38,9 +39,8 @@ use mark_diff::{
     Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileStatus, PatchSource,
 };
 use mark_syntax::{
-    ColorOverrides, DiffContextExpansion, DiffSettings, HighlightedLine, LayoutSetting,
-    SyntaxClass, SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig,
-    SyntaxThemeSource,
+    ColorOverrides, DiffContextExpansion, HighlightedLine, LayoutSetting, SyntaxClass,
+    SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
 };
 use ratatui::layout::Rect;
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
@@ -364,6 +364,48 @@ fn max_scroll_stays_zero_when_annotated_diff_fits_viewport() {
 }
 
 #[test]
+fn annotation_navigation_centers_and_advances_from_centered_annotation() {
+    use crate::annotation::AnnotationKey;
+
+    let lines = vec!["line"; 100];
+    let changeset = changeset_with_line_texts(&lines);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(11);
+
+    let unified_rows = app
+        .model
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| matches!(row, UiRow::UnifiedLine { .. }).then_some(index))
+        .collect::<Vec<_>>();
+    let first_row = unified_rows[19];
+    let second_row = unified_rows[59];
+    for row in [first_row, second_row] {
+        let key =
+            AnnotationKey::from_ui_row(&app.changeset, app.model.row(row).expect("annotated row"))
+                .expect("annotation key");
+        app.annotations.insert(key, "note".to_owned());
+    }
+
+    let first_anchor = app.annotation_anchor_visual_scroll(first_row);
+    let second_anchor = app.annotation_anchor_visual_scroll(second_row);
+    let center = viewport_center_offset(app.viewport_rows);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('}'), KeyModifiers::NONE))
+        .expect("next annotation should be handled");
+    assert_eq!(app.scroll + center, first_anchor);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('}'), KeyModifiers::NONE))
+        .expect("next annotation should advance from centered annotation");
+    assert_eq!(app.scroll + center, second_anchor);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('{'), KeyModifiers::NONE))
+        .expect("previous annotation should advance from centered annotation");
+    assert_eq!(app.scroll + center, first_anchor);
+}
+
+#[test]
 fn hunk_focus_moves_between_hunks_when_diff_fits_viewport() {
     let changeset = changeset_with_hunks_at(PathBuf::from("/repo"), &[1, 2, 3]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -521,10 +563,6 @@ fn arrow_keys_move_hunk_focus_when_diff_fits_viewport() {
 #[test]
 fn page_keys_move_hunk_focus_when_diff_fits_viewport() {
     assert_key_pair_moves_hunk_focus_when_diff_fits_viewport(KeyCode::PageDown, KeyCode::PageUp);
-    assert_key_pair_moves_hunk_focus_when_diff_fits_viewport(
-        KeyCode::Char('d'),
-        KeyCode::Char('u'),
-    );
 }
 
 #[test]
@@ -535,11 +573,21 @@ fn arrow_keys_scroll_then_move_hunk_focus_at_edges_in_scrollable_diff() {
 #[test]
 fn page_keys_scroll_then_move_hunk_focus_at_edges_in_scrollable_diff() {
     assert_key_pair_scrolls_then_moves_hunk_focus_at_edges(KeyCode::PageDown, KeyCode::PageUp, 20);
-    assert_key_pair_scrolls_then_moves_hunk_focus_at_edges(
-        KeyCode::Char('d'),
-        KeyCode::Char('u'),
-        20,
-    );
+}
+
+#[test]
+fn d_key_pages_down() {
+    let changeset = changeset_with_files(&[
+        "a.rs", "b.rs", "c.rs", "d.rs", "e.rs", "f.rs", "g.rs", "h.rs",
+    ]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(6);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
+        .expect("d should page down");
+
+    assert_eq!(app.scroll, 20);
+    assert!(app.key_prefix_pending.is_none());
 }
 
 #[test]
@@ -692,6 +740,21 @@ fn bracket_hunk_navigation_uses_focused_hunk_in_scrollable_diff() {
 
     app.previous_hunk();
     assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+}
+
+#[test]
+fn bracket_key_hunk_navigation_uses_focused_hunk_in_scrollable_diff() {
+    let changeset = changeset_with_hunks_at(PathBuf::from("/repo"), &[1, 2, 3]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(5);
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE))
+        .expect("] should move to next hunk");
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE))
+        .expect("[ should move to previous hunk");
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 0)));
 }
 
 #[test]
@@ -920,24 +983,24 @@ fn selecting_file_centers_and_focuses_its_first_hunk() {
 }
 
 #[test]
-fn j_and_k_file_navigation_focuses_first_hunk_and_updates_selected_file() {
+fn paren_file_navigation_focuses_first_hunk_and_updates_selected_file() {
     let changeset = changeset_with_files(&["a.rs", "b.rs", "c.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(7);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE))
-        .expect("J should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE))
+        .expect(") should be handled");
 
     assert_eq!(app.selected_file, 1);
     assert_eq!(app.focused_hunk_for_viewport(7), Some((1, 0)));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('J'), KeyModifiers::NONE))
-        .expect("J should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE))
+        .expect(") should be handled");
     assert_eq!(app.selected_file, 2);
     assert_eq!(app.focused_hunk_for_viewport(7), Some((2, 0)));
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::NONE))
-        .expect("K should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('('), KeyModifiers::NONE))
+        .expect("( should be handled");
     assert_eq!(app.selected_file, 1);
     assert_eq!(app.focused_hunk_for_viewport(7), Some((1, 0)));
 }
@@ -1201,7 +1264,7 @@ fn editor_command_helpers_choose_line_arguments() {
 }
 
 #[test]
-fn ctrl_g_without_editable_target_does_not_scroll_to_top() {
+fn edit_key_without_editable_target_does_not_scroll_to_top() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].new_path = None;
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -1210,7 +1273,7 @@ fn ctrl_g_without_editable_target_does_not_scroll_to_top() {
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
-        .expect("Ctrl-G should be handled");
+        .expect("edit key should be handled");
 
     assert!(!should_quit);
     assert_eq!(app.scroll, 1);
@@ -1221,7 +1284,7 @@ fn ctrl_g_without_editable_target_does_not_scroll_to_top() {
 }
 
 #[test]
-fn ctrl_g_without_editor_launch_preserves_queued_events() {
+fn edit_key_without_editor_launch_preserves_queued_events() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].new_path = None;
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -1237,7 +1300,7 @@ fn ctrl_g_without_editor_launch_preserves_queued_events() {
         &mut live_diff,
         &mut events,
     )
-    .expect("Ctrl-G should be handled");
+    .expect("edit key should be handled");
 
     assert!(!should_quit);
     assert_eq!(events.try_read().unwrap(), Some(queued_quit));
@@ -1273,10 +1336,12 @@ fn post_editor_quit_key_guard_ignores_only_transient_quit_keys() {
         app.ignore_post_editor_quit_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), now)
     );
     assert!(!app.ignore_post_editor_quit_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), now));
-    assert!(!app.ignore_post_editor_quit_key(
-        KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
-        now
-    ));
+    assert!(
+        !app.ignore_post_editor_quit_key(
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE),
+            now
+        )
+    );
     assert!(!app.ignore_post_editor_quit_key(
         KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
         now + Duration::from_millis(251)
@@ -1582,8 +1647,8 @@ fn ui_model_expands_context_after_previous_hunk_downward() {
         Some(UiRow::Collapsed {
             file: 0,
             hunk: 1,
-            old_start: 51,
-            new_start: 51,
+            old_start: 71,
+            new_start: 71,
             lines: 29,
             expanded: step,
         })
@@ -1604,7 +1669,6 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.theme.diff.context_expansion = DiffContextExpansion::Full;
 
-    assert_eq!(app.context_expand_count(49), 49);
     assert!(app.expand_context_at_row(1));
     assert_eq!(
         app.context_expansions.get(&ContextKey { file: 0, hunk: 0 }),
@@ -1619,6 +1683,62 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
         })
     );
     assert_eq!(
+        app.model.row(49),
+        Some(UiRow::ContextLine {
+            file: 0,
+            old_line: 49,
+            new_line: 49,
+        })
+    );
+    assert_eq!(
+        app.model.row(50),
+        Some(UiRow::ContextHide {
+            file: 0,
+            hunk: 0,
+            lines: 49,
+        })
+    );
+    assert_eq!(
+        app.model.row(51),
+        Some(UiRow::HunkHeader { file: 0, hunk: 0 })
+    );
+}
+
+#[test]
+fn bounded_context_expansion_config_does_not_limit_mouse_expansion() {
+    let repo = temp_test_dir("bounded-context-expansion");
+    fs::create_dir_all(&repo).expect("repo directory should be created");
+    let text = (1..=80)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(repo.join("file.rs"), text).expect("context file should be written");
+    let changeset = changeset_with_hunk_at(repo, 50);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.theme.diff.context_expansion = DiffContextExpansion::Lines(20);
+
+    assert!(app.expand_context_at_row(1));
+    assert_eq!(
+        app.context_expansions.get(&ContextKey { file: 0, hunk: 0 }),
+        Some(&49)
+    );
+    assert_eq!(
+        app.model.row(1),
+        Some(UiRow::ContextLine {
+            file: 0,
+            old_line: 1,
+            new_line: 1,
+        })
+    );
+    assert_eq!(
+        app.model.row(49),
+        Some(UiRow::ContextLine {
+            file: 0,
+            old_line: 49,
+            new_line: 49,
+        })
+    );
+    assert_eq!(
         app.model.row(50),
         Some(UiRow::ContextHide {
             file: 0,
@@ -1629,8 +1749,7 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
 }
 
 #[test]
-fn clicking_collapsed_context_expands_more_on_each_click() {
-    let step = default_context_expand_step();
+fn clicking_collapsed_context_expands_full_gap_and_hide_collapses() {
     let repo = temp_test_dir("expand-context");
     fs::create_dir_all(&repo).expect("repo directory should be created");
     let text = (1..=80)
@@ -1641,49 +1760,45 @@ fn clicking_collapsed_context_expands_more_on_each_click() {
     let changeset = changeset_with_hunk_at(repo, 50);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
+    let collapsed = app
+        .model
+        .row(1)
+        .expect("collapsed context row should exist");
+    let rendered = render_row(&mut app, 1, collapsed, 80);
+    assert!(line_text(&rendered).contains("▴ show 49 unchanged lines"));
+
     assert!(app.expand_context_at_row(1));
     assert_eq!(
         app.context_expansions.get(&ContextKey { file: 0, hunk: 0 }),
-        Some(&step)
+        Some(&49)
     );
     assert_eq!(
         app.model.row(1),
-        Some(UiRow::Collapsed {
+        Some(UiRow::ContextLine {
             file: 0,
-            hunk: 0,
-            old_start: 1,
-            new_start: 1,
-            lines: 29,
-            expanded: step,
+            old_line: 1,
+            new_line: 1,
         })
     );
-    let row = app.model.row(2).expect("expanded context row should exist");
+    let hide = app.model.row(50).expect("hide context row should exist");
+    let rendered = render_row(&mut app, 50, hide, 80);
+    assert!(line_text(&rendered).contains("▾ hide 49 unchanged lines"));
+    let row = app
+        .model
+        .row(49)
+        .expect("expanded context row should exist");
     assert_eq!(
         row,
         UiRow::ContextLine {
             file: 0,
-            old_line: 30,
-            new_line: 30,
+            old_line: 49,
+            new_line: 49,
         }
     );
-    let rendered = render_row(&mut app, 2, row, 80);
-    assert!(line_text(&rendered).contains("line 30"));
+    let rendered = render_row(&mut app, 49, row, 80);
+    assert!(line_text(&rendered).contains("line 49"));
 
-    assert!(app.expand_context_at_row(1));
-    assert_eq!(
-        app.context_expansions.get(&ContextKey { file: 0, hunk: 0 }),
-        Some(&(step * 2))
-    );
-    assert_eq!(
-        app.model.row(2),
-        Some(UiRow::ContextLine {
-            file: 0,
-            old_line: 10,
-            new_line: 10,
-        })
-    );
-
-    assert!(app.hide_context(0, 0));
+    assert!(app.handle_context_at_row(50));
     assert!(
         !app.context_expansions
             .contains_key(&ContextKey { file: 0, hunk: 0 })
@@ -1702,8 +1817,7 @@ fn clicking_collapsed_context_expands_more_on_each_click() {
 }
 
 #[test]
-fn clicking_collapsed_context_between_hunks_expands_downward() {
-    let step = default_context_expand_step();
+fn clicking_collapsed_context_between_hunks_expands_full_gap() {
     let repo = temp_test_dir("expand-context-downward");
     fs::create_dir_all(&repo).expect("repo directory should be created");
     let text = (1..=120)
@@ -1714,19 +1828,29 @@ fn clicking_collapsed_context_between_hunks_expands_downward() {
     let changeset = changeset_with_hunks_at(repo, &[50, 100]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
+    let collapsed = app
+        .model
+        .row(4)
+        .expect("collapsed context row should exist");
+    let rendered = render_row(&mut app, 4, collapsed, 80);
+    assert!(line_text(&rendered).contains("▾ show 49 unchanged lines"));
+
     assert!(app.expand_context_at_row(4));
     assert_eq!(
         app.context_expansions.get(&ContextKey { file: 0, hunk: 1 }),
-        Some(&step)
+        Some(&49)
     );
     assert_eq!(
         app.model.row(4),
         Some(UiRow::ContextHide {
             file: 0,
             hunk: 1,
-            lines: step,
+            lines: 49,
         })
     );
+    let hide = app.model.row(4).expect("hide context row should exist");
+    let rendered = render_row(&mut app, 4, hide, 80);
+    assert!(line_text(&rendered).contains("▴ hide 49 unchanged lines"));
     let row = app.model.row(5).expect("expanded context row should exist");
     assert_eq!(
         row,
@@ -1738,22 +1862,20 @@ fn clicking_collapsed_context_between_hunks_expands_downward() {
     );
     let rendered = render_row(&mut app, 5, row, 80);
     assert!(line_text(&rendered).contains("line 51"));
-
-    assert!(app.expand_context_at_row(25));
     assert_eq!(
-        app.context_expansions.get(&ContextKey { file: 0, hunk: 1 }),
-        Some(&(step * 2))
-    );
-    assert_eq!(
-        app.model.row(25),
+        app.model.row(53),
         Some(UiRow::ContextLine {
             file: 0,
-            old_line: 71,
-            new_line: 71,
+            old_line: 99,
+            new_line: 99,
         })
     );
+    assert_eq!(
+        app.model.row(54),
+        Some(UiRow::HunkHeader { file: 0, hunk: 1 })
+    );
 
-    assert!(app.hide_context(0, 1));
+    assert!(app.handle_context_at_row(4));
     assert!(
         !app.context_expansions
             .contains_key(&ContextKey { file: 0, hunk: 1 })
@@ -1768,6 +1890,40 @@ fn clicking_collapsed_context_between_hunks_expands_downward() {
             lines: 49,
             expanded: 0,
         })
+    );
+}
+
+#[test]
+fn context_keyboard_shortcuts_expand_and_collapse_by_default() {
+    let repo = temp_test_dir("context-keyboard");
+    fs::create_dir_all(&repo).expect("repo directory should be created");
+    let text = (1..=120)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(repo.join("file.rs"), text).expect("context file should be written");
+    let changeset = changeset_with_hunks_at(repo, &[50, 100]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_viewport_rows(8);
+
+    assert!(app.context_expansions.is_empty());
+
+    app.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE))
+        .expect(", should expand context above focused hunk");
+    assert_eq!(
+        app.context_expansions.get(&ContextKey { file: 0, hunk: 0 }),
+        Some(&49)
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+        .expect("c should collapse expanded context");
+    assert!(app.context_expansions.is_empty());
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE))
+        .expect(". should expand context below focused hunk");
+    assert_eq!(
+        app.context_expansions.get(&ContextKey { file: 0, hunk: 1 }),
+        Some(&49)
     );
 }
 
@@ -1804,22 +1960,30 @@ fn context_source_side_uses_loaded_fallback_side() {
 #[test]
 fn collapsed_context_control_is_minimal_and_readable() {
     let theme = DiffTheme::default();
-    let line = context_show_line(20, false, 72, theme);
+    let line = context_show_line(20, false, "▴", 72, theme);
     let text = line_text(&line);
 
     assert_eq!(text.width(), 72);
     assert!(text.starts_with(DIFF_INDICATOR));
-    assert!(text.contains("▾ show 20 lines"));
+    assert!(text.contains("▴ show 20 unchanged lines"));
     assert_eq!(line.spans[1].style.fg, Some(theme.muted));
     assert_eq!(
         line.spans[0].style.bg,
         Some(line_gutter_bg(DiffLineKind::Meta, theme))
     );
 
-    let hide = context_hide_line(20, 24, theme);
+    let hide = context_hide_line(20, "▾", 24, theme);
     let hide_text = line_text(&hide);
-    assert!(hide_text.contains("▴ hide 20 lines"));
+    assert!(hide_text.contains("▾ hide 20 unchanged"));
     assert_eq!(hide.spans[1].style.fg, Some(theme.muted));
+
+    assert_eq!(context_expand_marker(0), "▴");
+    assert_eq!(context_expand_marker(1), "▾");
+    assert_eq!(context_hide_marker(0), "▾");
+    assert_eq!(context_hide_marker(1), "▴");
+
+    let more = context_show_line(20, true, "▾", 72, theme);
+    assert!(line_text(&more).contains("▾ show 20 more unchanged lines"));
 }
 
 #[test]
@@ -2625,12 +2789,12 @@ fn configured_leader_help_key_filters_help_menu_when_open() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("space should filter while help is open");
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("h should filter while help is open");
     assert!(app.help_menu_open);
     assert_eq!(app.help_menu_input, " h");
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 }
 
 #[test]
@@ -2646,41 +2810,49 @@ fn q_key_quits_without_leader() {
 }
 
 #[test]
-fn leader_q_does_not_quit() {
+fn space_is_unmapped_by_default() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
+        .expect("space should be handled");
     assert!(!should_quit);
-    assert!(app.leader_pending);
-
-    let should_quit = app
-        .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
-        .expect("leader q should be handled");
-
-    assert!(!should_quit);
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 }
 
 #[test]
-fn leader_escape_cancels() {
+fn configured_leader_escape_cancels() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        diff_menu = "space m"
+        "#,
+    )
+    .expect("keymap should parse");
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("leader should be handled");
+    assert!(app.key_prefix_pending.is_some());
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         .expect("escape should cancel leader");
 
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 }
 
 #[test]
 fn flat_action_keys_are_unmapped_under_leader() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        diff_menu = "space m"
+        "#,
+    )
+    .expect("keymap should parse");
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("leader should be handled");
@@ -2702,31 +2874,80 @@ fn flat_action_keys_are_unmapped_under_leader() {
 }
 
 #[test]
-fn leader_m_opens_diff_source_menu() {
+fn m_m_opens_diff_source_menu() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("leader m should be handled");
+        .expect("m prefix should be handled");
+    assert!(app.key_prefix_pending.is_some());
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .expect("m m should be handled");
 
     assert!(app.diff_menu_open);
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 }
 
 #[test]
-fn leader_o_opens_options_menu() {
+fn o_key_opens_options_menu() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
-        .expect("leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
-        .expect("leader o should be handled");
+        .expect("o should be handled");
 
     assert!(app.options_menu_open);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::Layout));
+}
+
+#[test]
+fn default_mode_prefix_keys_open_diff_pickers() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.comparison_commits = vec![GitCommit {
+        sha: "abcdef0".to_owned(),
+        subject: "commit".to_owned(),
+    }];
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .expect("m prefix should be handled");
+    assert!(app.key_prefix_pending.is_some());
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+        .expect("m h should open head picker");
+    assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
+
+    app.close_branch_menu();
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .expect("m prefix should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
+        .expect("m b should open base picker");
+    assert_eq!(app.branch_menu_open, Some(BranchMenu::Base));
+
+    app.close_branch_menu();
+    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
+        .expect("m prefix should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+        .expect("m c should open commit picker");
+    assert!(app.commit_menu_open);
+}
+
+#[test]
+fn ctrl_u_clears_active_filters() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.file_filter = "src".to_owned();
+    app.file_filter_input = "src".to_owned();
+    app.grep_filter = "needle".to_owned();
+    app.grep_filter_input = "needle".to_owned();
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL))
+        .expect("ctrl-u should clear filters");
+
+    assert!(app.file_filter.is_empty());
+    assert!(app.file_filter_input.is_empty());
+    assert!(app.grep_filter.is_empty());
+    assert!(app.grep_filter_input.is_empty());
 }
 
 #[test]
@@ -2740,6 +2961,7 @@ fn configured_keymap_changes_leader_actions_and_flat_keys() {
         diff_menu = ", d"
         options_menu = ", o"
         file_filter = "ctrl-f"
+        expand_context_up = []
         "#,
     )
     .expect("keymap should parse");
@@ -2768,10 +2990,17 @@ fn configured_keymap_changes_leader_actions_and_flat_keys() {
 }
 
 #[test]
-fn leader_e_is_unmapped() {
+fn configured_leader_e_is_unmapped() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].new_path = None;
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        diff_menu = "space m"
+        "#,
+    )
+    .expect("keymap should parse");
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("leader should be handled");
@@ -2780,7 +3009,7 @@ fn leader_e_is_unmapped() {
         .expect("leader e should be ignored");
 
     assert!(!should_quit);
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
     assert!(app.error_log.is_none());
 }
 
@@ -2807,7 +3036,7 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .expect("leader n should queue diff load");
     assert_eq!(load.options.source, DiffSource::Show("HEAD".to_owned()));
     assert_eq!(load.options.scope, DiffScope::All);
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 
     app.pending_diff_load = None;
     app.options = DiffOptions {
@@ -2824,31 +3053,24 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .expect("leader p should queue diff load");
     assert_eq!(load.options.source, DiffSource::Worktree);
     assert_eq!(load.options.scope, DiffScope::All);
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 }
 
 #[test]
-fn edit_hunk_remap_disables_default_ctrl_g() {
+fn default_edit_hunk_key_is_ctrl_g() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     changeset.files[0].new_path = None;
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.keymap = Keymap::parse(
-        r#"
-        [keymap.global]
-        edit_hunk = "e"
-        "#,
-    )
-    .expect("keymap should parse");
     app.set_viewport_rows(1);
     app.set_scroll(1);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
-        .expect("unmapped Ctrl-G should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
+        .expect("unmapped e should be handled");
     assert_eq!(app.scroll, 1);
     assert!(app.error_log.is_none());
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
-        .expect("configured edit key should be handled");
+    app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL))
+        .expect("default edit key should be handled");
     assert!(app.error_log.is_none());
 }
 
@@ -3025,11 +3247,18 @@ fn esc_closes_error_log_without_quitting() {
 fn esc_closes_error_log_and_clears_pending_leader() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        diff_menu = "space m"
+        "#,
+    )
+    .expect("keymap should parse");
     app.set_error_log("reload failed");
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("leader should be handled");
-    assert!(app.leader_pending);
+    assert!(app.key_prefix_pending.is_some());
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
@@ -3037,7 +3266,7 @@ fn esc_closes_error_log_and_clears_pending_leader() {
 
     assert!(!should_quit);
     assert!(app.error_log.is_none());
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
@@ -3197,13 +3426,13 @@ fn copy_error_log_key_ignores_absent_error_log() {
     app.keymap = Keymap::parse(
         r#"
         [keymap.global]
-        copy_error_log = "e"
+        copy_error_log = "z"
         "#,
     )
     .expect("keymap should parse");
 
     let should_quit = app
-        .handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
+        .handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE))
         .expect("copy key without error log should be handled");
 
     assert!(!should_quit);
@@ -3218,7 +3447,7 @@ fn copy_error_log_key_does_not_preempt_filter_input() {
     app.keymap = Keymap::parse(
         r#"
         [keymap.global]
-        copy_error_log = "e"
+        copy_error_log = "z"
         "#,
     )
     .expect("keymap should parse");
@@ -3226,12 +3455,12 @@ fn copy_error_log_key_does_not_preempt_filter_input() {
     app.open_filter_input(DiffFilterKind::File);
 
     let should_quit = app
-        .handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
+        .handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE))
         .expect("copy key should be handled as filter input");
 
     assert!(!should_quit);
-    assert_eq!(app.file_filter_input, "e");
-    assert_eq!(app.file_filter, "e");
+    assert_eq!(app.file_filter_input, "z");
+    assert_eq!(app.file_filter, "z");
     assert!(app.notice.is_none());
 }
 
@@ -3242,7 +3471,7 @@ fn copy_error_log_key_does_not_preempt_branch_menu_input() {
     app.keymap = Keymap::parse(
         r#"
         [keymap.global]
-        copy_error_log = "e"
+        copy_error_log = "z"
         "#,
     )
     .expect("keymap should parse");
@@ -3250,11 +3479,11 @@ fn copy_error_log_key_does_not_preempt_branch_menu_input() {
     app.branch_menu_open = Some(BranchMenu::Head);
 
     let should_quit = app
-        .handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
+        .handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE))
         .expect("copy key should be handled as branch input");
 
     assert!(!should_quit);
-    assert_eq!(app.branch_menu_input, "e");
+    assert_eq!(app.branch_menu_input, "z");
     assert!(app.notice.is_none());
 }
 
@@ -3517,12 +3746,24 @@ fn help_menu_lines_list_keybindings() {
     assert!(text.iter().any(|line| line.contains("Ctrl-C")));
     assert!(text.iter().any(|line| line.contains("j/k")));
     assert!(text.iter().any(|line| line.contains("n/p")));
-    assert!(text.iter().any(|line| line.contains("]/[")));
-    assert!(text.iter().any(|line| line.contains("Ctrl-G")));
+    assert!(text.iter().any(|line| line.contains("[/]")));
+    assert!(text.iter().any(|line| line.contains("(/)")));
+    assert!(text.iter().any(|line| line.contains(",/.")));
+    assert!(text.iter().any(|line| line.contains(" c")));
+    assert!(
+        text.iter()
+            .any(|line| line.contains("Ctrl-G") && line.contains("edit focused hunk"))
+    );
+    assert!(text.iter().any(|line| line.contains("m m")));
     assert!(text.iter().any(|line| line.contains("Ctrl-Shift-C")));
     assert_eq!(keymap.global_action_label(GlobalAction::FileBrowser), "b");
     assert!(text.iter().any(|line| line.contains("toggle file sidebar")));
-    assert!(text.iter().any(|line| line.contains("Space s")));
+    assert_eq!(keymap.global_action_label(GlobalAction::Layout), "s");
+    assert!(
+        text.iter()
+            .any(|line| line.contains(" s") && line.contains("split / unified"))
+    );
+    assert!(!text.iter().any(|line| line.contains("leader")));
     assert!(!text.iter().any(|line| line.contains("b, Space b")));
     assert!(!text.iter().any(|line| line.contains("s, Space s")));
     assert!(text.iter().any(|line| line.contains("Backspace")));
@@ -3540,6 +3781,7 @@ fn help_menu_lines_use_configured_keymap_labels() {
         quit = "q"
         file_browser = ", v"
         layout = ", l"
+        expand_context_up = []
         "#,
     )
     .expect("keymap should parse");
@@ -3552,10 +3794,6 @@ fn help_menu_lines_use_configured_keymap_labels() {
     let text: Vec<_> = lines.iter().map(line_text).collect();
 
     assert!(text.iter().any(|line| line.contains("Ctrl-H")));
-    assert!(
-        text.iter()
-            .any(|line| line.contains(",") && line.contains("leader"))
-    );
     assert!(
         text.iter()
             .any(|line| line.contains("  q") && line.contains("quit"))
@@ -3635,7 +3873,7 @@ fn help_menu_rendered_rows_are_wide_enough_for_default_descriptions() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.toggle_help_menu();
 
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 60))
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 80))
         .expect("test terminal should be created");
     terminal
         .draw(|frame| crate::render::draw(frame, &mut app))
@@ -3648,9 +3886,14 @@ fn help_menu_rendered_rows_are_wide_enough_for_default_descriptions() {
         "rendered rows cut off grep description:\n{}",
         rows.join("\n")
     );
+
+    app.set_help_menu_scroll(usize::MAX);
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("help menu draw should succeed");
+    let rows = buffer_rows(terminal.backend().buffer());
     assert!(
-        rows.iter()
-            .any(|row| row.contains("edit active mark in editor")),
+        rows.iter().any(|row| row.contains("line start / end")),
         "rendered rows cut off annotation description:\n{}",
         rows.join("\n")
     );
@@ -4423,7 +4666,7 @@ fn diff_menu_space_filters_without_entering_leader() {
         .expect("space should filter menu input");
 
     assert!(app.diff_menu_open);
-    assert!(!app.leader_pending);
+    assert!(app.key_prefix_pending.is_none());
     assert_eq!(app.diff_menu_input, " ");
     assert!(app.pending_diff_load.is_none());
 }
@@ -4780,7 +5023,7 @@ fn options_menu_toggles_syntax_highlighting() {
     )));
 
     app.open_options_menu();
-    app.move_options_menu_selection(3);
+    app.move_options_menu_selection(2);
     assert_eq!(
         app.highlighted_option(),
         Some(OptionsMenuItem::SyntaxHighlighting)
@@ -4805,7 +5048,7 @@ fn options_menu_persists_post_apply_syntax_state_when_enable_fails() {
     );
 
     app.open_options_menu();
-    app.move_options_menu_selection(3);
+    app.move_options_menu_selection(2);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should try to enable syntax highlighting");
 
@@ -4832,7 +5075,7 @@ fn options_menu_toggles_line_wrapping_and_clamps_horizontal_scroll() {
     assert_eq!(app.horizontal_scroll, HORIZONTAL_SCROLL_STEP);
 
     app.open_options_menu();
-    app.move_options_menu_selection(4);
+    app.move_options_menu_selection(3);
     assert_eq!(
         app.highlighted_option(),
         Some(OptionsMenuItem::LineWrapping)
@@ -5153,7 +5396,7 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
     app.theme = DiffTheme::system();
 
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(4);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::ColorScheme));
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
@@ -5193,7 +5436,7 @@ fn colorscheme_picker_mouse_dismiss_keeps_options_menu_open() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(4);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme picker");
     assert!(app.color_scheme_picker_open);
@@ -5234,7 +5477,6 @@ fn options_menu_omits_branch_options_for_branch_diff() {
         [
             OptionsMenuItem::Layout,
             OptionsMenuItem::LiveReload,
-            OptionsMenuItem::ContextExpansion,
             OptionsMenuItem::SyntaxHighlighting,
             OptionsMenuItem::LineWrapping,
             OptionsMenuItem::ColorScheme,
@@ -5499,7 +5741,7 @@ fn colorscheme_picker_draws_input_dropdown() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(4);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme picker");
     app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
@@ -5564,7 +5806,7 @@ fn colorscheme_picker_previews_hovered_theme_and_reverts_on_close() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(4);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme picker");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20))
@@ -5615,7 +5857,7 @@ fn colorscheme_picker_previews_first_hovered_theme() {
     app.color_scheme = ColorSchemeChoice::System;
     app.theme = DiffTheme::system();
     app.open_options_menu();
-    app.move_options_menu_selection(5);
+    app.move_options_menu_selection(4);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme picker");
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20))
@@ -7439,6 +7681,13 @@ fn annotation_save_preserves_body_whitespace_but_deletes_blank_drafts() {
 
     let changeset = changeset_with_line_text("hello");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.keymap = Keymap::parse(
+        r#"
+        [keymap.global]
+        edit_hunk = "e"
+        "#,
+    )
+    .expect("keymap should parse");
     let code_row = app
         .model
         .rows
@@ -8246,6 +8495,43 @@ fn annotation_cancel_binding_preempts_overlapping_edit_hunk_shortcut() {
 
     assert!(app.annotation_draft.is_none());
     assert!(app.annotations.is_empty());
+}
+
+#[test]
+fn annotation_typing_e_does_not_open_editor_shortcut() {
+    use crate::annotation::{AnnotationDraft, AnnotationKey};
+
+    let changeset = changeset_with_line_text("hello");
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let code_row = app
+        .model
+        .rows
+        .iter()
+        .position(|row| matches!(row, UiRow::UnifiedLine { .. }))
+        .expect("unified line");
+    let key = AnnotationKey::from_ui_row(
+        &app.changeset,
+        app.model.row(code_row).expect("annotated row"),
+    )
+    .expect("annotation key");
+    app.annotation_draft = Some(AnnotationDraft {
+        key,
+        model_row_index: code_row,
+        input: String::new(),
+        cursor: 0,
+    });
+
+    assert!(!handle_test_key_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE)
+    ));
+
+    let draft = app
+        .annotation_draft
+        .as_ref()
+        .expect("draft should remain open");
+    assert_eq!(draft.input, "e");
+    assert_eq!(draft.cursor, 1);
 }
 
 #[test]
@@ -10104,10 +10390,7 @@ fn mouse_scroll(app: &mut DiffApp, kind: MouseEventKind) {
 }
 
 fn default_context_expand_step() -> usize {
-    match DiffSettings::default().context_expansion {
-        DiffContextExpansion::Lines(lines) => lines,
-        DiffContextExpansion::Full => panic!("default context expansion should be bounded"),
-    }
+    20
 }
 
 fn temp_test_dir(name: &str) -> PathBuf {

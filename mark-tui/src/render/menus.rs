@@ -1320,7 +1320,6 @@ fn help_menu_key_text(key_label: &str, width: usize) -> String {
 pub(crate) fn help_menu_key_label(key: HelpMenuKey, keymap: &Keymap) -> String {
     match key {
         HelpMenuKey::Static(label) => label.to_owned(),
-        HelpMenuKey::Leader => keymap.leader_label(),
         HelpMenuKey::Global(action) => keymap.global_action_label(action),
         HelpMenuKey::GlobalPair(first, second) => format!(
             "{}/{}",

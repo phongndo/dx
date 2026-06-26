@@ -54,7 +54,6 @@ pub(crate) const HELP_KEY_COLUMN_WIDTH: usize = 17;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HelpMenuKey {
     Static(&'static str),
-    Leader,
     Global(GlobalAction),
     GlobalPair(GlobalAction, GlobalAction),
 }
@@ -68,17 +67,33 @@ pub(crate) enum HelpMenuRow {
 pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Section("Global"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Help), "open keybindings"),
-    HelpMenuRow::Binding(HelpMenuKey::Leader, "leader"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Quit), "quit"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Ctrl-C"), "force quit"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Esc"), "close"),
     HelpMenuRow::Section("Navigate"),
     HelpMenuRow::Binding(HelpMenuKey::Static("j/k, ↑/↓"), "scroll"),
-    HelpMenuRow::Binding(HelpMenuKey::Static("d/u, PgDn/PgUp"), "page"),
+    HelpMenuRow::Binding(HelpMenuKey::Static("d/Ctrl-D/PgDn, u/PgUp"), "page"),
     HelpMenuRow::Binding(HelpMenuKey::Static("g/G, Home/End"), "top / bottom"),
     HelpMenuRow::Binding(HelpMenuKey::Static("h/l, ←/→"), "horizontal"),
-    HelpMenuRow::Binding(HelpMenuKey::Static("J/K"), "file"),
-    HelpMenuRow::Binding(HelpMenuKey::Static("]/["), "hunk"),
+    HelpMenuRow::Binding(
+        HelpMenuKey::GlobalPair(GlobalAction::PreviousFile, GlobalAction::NextFile),
+        "file",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::GlobalPair(GlobalAction::PreviousHunk, GlobalAction::NextHunk),
+        "hunk",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::GlobalPair(
+            GlobalAction::ExpandContextUp,
+            GlobalAction::ExpandContextDown,
+        ),
+        "expand context",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::CollapseContextAll),
+        "collapse context",
+    ),
     HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::EditHunk),
         "edit focused hunk",
@@ -107,17 +122,36 @@ pub(crate) const HELP_MENU_ROWS: &[HelpMenuRow] = &[
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::Reload), "reload diff"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::DiffMenu), "diff selector"),
     HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::HeadBranch),
+        "select head branch",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::BaseBranch),
+        "select base branch",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::CommitPicker),
+        "select commit",
+    ),
+    HelpMenuRow::Binding(
         HelpMenuKey::Global(GlobalAction::OptionsMenu),
         "settings menu",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::Global(GlobalAction::ClearFilters),
+        "clear filters",
+    ),
+    HelpMenuRow::Binding(
+        HelpMenuKey::GlobalPair(
+            GlobalAction::PreviousAnnotation,
+            GlobalAction::NextAnnotation,
+        ),
+        "previous / next annotation",
     ),
     HelpMenuRow::Section("Annotations"),
     HelpMenuRow::Binding(HelpMenuKey::Static("hover [+]"), "add / edit annotation"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::SaveMark), "save mark"),
     HelpMenuRow::Binding(HelpMenuKey::Global(GlobalAction::CancelMark), "cancel mark"),
-    HelpMenuRow::Binding(
-        HelpMenuKey::Global(GlobalAction::EditHunk),
-        "edit active mark in editor",
-    ),
     HelpMenuRow::Binding(HelpMenuKey::Static("Enter"), "new annotation line"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Cmd-←/→, Ctrl-A/E"), "line start / end"),
     HelpMenuRow::Binding(HelpMenuKey::Static("Alt-←/→"), "word left / right"),

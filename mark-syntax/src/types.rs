@@ -419,7 +419,7 @@ impl Default for DiffSettings {
             gutter_background: DiffGutterBackground::Delta,
             inline_background: DiffBackground::Strong,
             sign_style: DiffSignStyle::Bold,
-            context_expansion: DiffContextExpansion::Lines(20),
+            context_expansion: DiffContextExpansion::Full,
         }
     }
 }

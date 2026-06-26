@@ -76,18 +76,8 @@ pub(crate) struct ContextKey {
     pub(crate) hunk: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextExpansionDirection {
-    Up,
-    Down,
-}
-
-pub(crate) fn context_expansion_direction(hunk: usize) -> ContextExpansionDirection {
-    if hunk == 0 {
-        ContextExpansionDirection::Up
-    } else {
-        ContextExpansionDirection::Down
-    }
+pub(crate) fn context_expands_up(hunk: usize) -> bool {
+    hunk == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -200,64 +190,60 @@ impl UiModel {
                         .unwrap_or_default()
                         .min(collapsed_lines);
                     let remaining = collapsed_lines.saturating_sub(expanded);
-                    let direction = context_expansion_direction(hunk_index);
 
-                    match direction {
-                        ContextExpansionDirection::Up => {
-                            if remaining > 0 {
-                                rows.push(UiRow::Collapsed {
+                    if context_expands_up(hunk_index) {
+                        if remaining > 0 {
+                            rows.push(UiRow::Collapsed {
+                                file: file_index,
+                                hunk: hunk_index,
+                                old_start: next_old_line,
+                                new_start: next_new_line,
+                                lines: remaining,
+                                expanded,
+                            });
+                        }
+
+                        if expanded > 0 {
+                            let old_start = next_old_line.saturating_add(remaining);
+                            let new_start = next_new_line.saturating_add(remaining);
+                            for offset in 0..expanded {
+                                rows.push(UiRow::ContextLine {
                                     file: file_index,
-                                    hunk: hunk_index,
-                                    old_start: next_old_line,
-                                    new_start: next_new_line,
-                                    lines: remaining,
-                                    expanded,
+                                    old_line: old_start + offset,
+                                    new_line: new_start + offset,
                                 });
                             }
-
-                            if expanded > 0 {
-                                let old_start = hunk.old_start.saturating_sub(expanded);
-                                let new_start = hunk.new_start.saturating_sub(expanded);
-                                for offset in 0..expanded {
-                                    rows.push(UiRow::ContextLine {
-                                        file: file_index,
-                                        old_line: old_start + offset,
-                                        new_line: new_start + offset,
-                                    });
-                                }
-                                rows.push(UiRow::ContextHide {
+                            rows.push(UiRow::ContextHide {
+                                file: file_index,
+                                hunk: hunk_index,
+                                lines: expanded,
+                            });
+                        }
+                    } else {
+                        if expanded > 0 {
+                            rows.push(UiRow::ContextHide {
+                                file: file_index,
+                                hunk: hunk_index,
+                                lines: expanded,
+                            });
+                            for offset in 0..expanded {
+                                rows.push(UiRow::ContextLine {
                                     file: file_index,
-                                    hunk: hunk_index,
-                                    lines: expanded,
+                                    old_line: next_old_line + offset,
+                                    new_line: next_new_line + offset,
                                 });
                             }
                         }
-                        ContextExpansionDirection::Down => {
-                            if expanded > 0 {
-                                rows.push(UiRow::ContextHide {
-                                    file: file_index,
-                                    hunk: hunk_index,
-                                    lines: expanded,
-                                });
-                                for offset in 0..expanded {
-                                    rows.push(UiRow::ContextLine {
-                                        file: file_index,
-                                        old_line: next_old_line + offset,
-                                        new_line: next_new_line + offset,
-                                    });
-                                }
-                            }
 
-                            if remaining > 0 {
-                                rows.push(UiRow::Collapsed {
-                                    file: file_index,
-                                    hunk: hunk_index,
-                                    old_start: next_old_line,
-                                    new_start: next_new_line,
-                                    lines: remaining,
-                                    expanded,
-                                });
-                            }
+                        if remaining > 0 {
+                            rows.push(UiRow::Collapsed {
+                                file: file_index,
+                                hunk: hunk_index,
+                                old_start: next_old_line.saturating_add(expanded),
+                                new_start: next_new_line.saturating_add(expanded),
+                                lines: remaining,
+                                expanded,
+                            });
                         }
                     }
                 }

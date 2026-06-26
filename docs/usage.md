@@ -126,22 +126,30 @@ q / Ctrl-C     quit
 ?              help
 j / Down       scroll down or move focus
 k / Up         scroll up or move focus
-d / PageDown   page down
+d / Ctrl-D / PgDn page down
 u / PageUp     page up
 g              top
 G              bottom
 ]              next hunk
 [              previous hunk
+( / )          previous / next file
+, / .          expand context up / down
+c              collapse expanded context
 f              file filter
 /              grep filter
 n / p          next / previous grep match
 r              reload
-Space m        diff type selector
-Space o        settings menu
+m m            diff type selector
+m h            head branch picker
+m b            base branch picker
+m c            commit picker
+o              settings menu
 b              file browser
-Space s        toggle split/unified layout
+s              toggle split/unified layout
 Ctrl-G         open the focused hunk in `$VISUAL`, `$GIT_EDITOR`, or `$EDITOR`
-Space y        copy marks to the terminal clipboard
+y              copy marks to the terminal clipboard
+Ctrl-U         clear filters
+{ / }          previous / next annotation
 Ctrl-Shift-C   copy the error log pane to the terminal clipboard
 Tab            next diff type
 Shift-Tab      previous diff type

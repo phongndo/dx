@@ -59,7 +59,8 @@ Example error-log cases:
   Ctrl-Shift-C           copy the full error pane text to the terminal clipboard
   Esc                    close the error pane; Esc should NOT quit mark
   Ctrl-G                 open editor for focused hunk; EDITOR is intentionally invalid, so an error pane should open
-  Space o, j j j, Space  toggle disabled Live reload; --no-watch should open an error pane
+  o, Down Down Down, Enter
+                         toggle disabled Live reload; --no-watch should open an error pane
   rm -rf "$fixture_repo/.git", then press r
                          reload failure should open an error pane
 

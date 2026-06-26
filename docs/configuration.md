@@ -37,7 +37,6 @@ line_background = "subtle"
 gutter_background = "delta"
 inline_background = "strong"
 sign_style = "bold"
-context_expand = 20
 
 [limits]
 max_source_kib = 1024
@@ -47,20 +46,35 @@ queue_entries = 512
 prefetch_viewports = 1
 
 [keymap.global]
-leader = "space"
 help = "?"
 reload = "r"
 file_filter = "f"
 grep = "/"
-diff_menu = "space m"
-options_menu = "space o"
+diff_menu = "m m"
+head_branch = "m h"
+base_branch = "m b"
+commit_picker = "m c"
+options_menu = "o"
 file_browser = "b"
+previous_file = "("
+next_file = ")"
+previous_hunk = "["
+next_hunk = "]"
+expand_context_up = ","
+expand_context_down = "."
+collapse_context_all = "c"
 quit = "q"
-layout = "space s"
+layout = "s"
 edit_hunk = "ctrl-g"
+save_mark = "ctrl-s"
+cancel_mark = "esc"
+copy_marks = "y"
 copy_error_log = "ctrl-shift-c"
+clear_filters = "ctrl-u"
 next_diff_type = "tab"
 previous_diff_type = "shift-tab"
+next_annotation = "}"
+previous_annotation = "{"
 
 [keymap.menu]
 up = ["up", "shift-tab", "ctrl-p"]
@@ -166,12 +180,12 @@ line_background = "subtle"   # none, subtle, strong
 gutter_background = "delta"  # base, delta
 inline_background = "strong" # none, subtle, strong
 sign_style = "bold"          # normal, bold
-context_expand = 20          # number of lines, or "full"
 ```
 
 `word_background` and `word_diff_background` are accepted aliases for
-`inline_background`. `context_lines`, `context_expand`, and `expand_context` are
-accepted aliases for `context_expand`.
+`inline_background`. Collapsed unchanged context expands fully when clicked.
+Legacy `context_lines`, `context_expand`, and `expand_context` settings are
+accepted for compatibility but no longer limit interactive context expansion.
 
 ## Highlight limits
 
@@ -188,20 +202,23 @@ prefetch_viewports = 1
 
 ## Keybindings
 
-Global multi-key bindings must start with the configured leader key. Menu
-bindings are single-key and apply to searchable menus. Printable menu bindings
-override text input, so prefer non-printing keys to keep type-to-filter behavior.
-`edit_hunk`, `save_mark`, and `cancel_mark` must be single-key bindings.
+Global bindings can be one-key or two-key bindings. A one-key global binding
+cannot also be used as a two-key prefix. Menu bindings are single-key and apply
+to searchable menus. Printable menu bindings override text input, so prefer
+non-printing keys to keep type-to-filter behavior. `edit_hunk`, `save_mark`, and
+`cancel_mark` must be single-key bindings.
 
 Bindings can be a string or a list of strings:
 
 ```toml
 [keymap.global]
-leader = ","
-help = ["?", ", h"]
-file_filter = ", f"
-grep = ", /"
-copy_marks = ", y"
+help = ["?", "h ?"]
+file_filter = "ctrl-f"
+diff_menu = "m m"
+head_branch = "m h"
+base_branch = "m b"
+commit_picker = "m c"
+copy_marks = "y"
 save_mark = "ctrl-s"
 cancel_mark = "esc"
 quit = "q"
@@ -214,9 +231,11 @@ confirm = "enter"
 close = "esc"
 ```
 
+Use an empty list, such as `copy_marks = []`, to unbind an action.
+
 Key names include printable characters plus names such as `space`, `enter`,
 `esc`, `tab`, `shift-tab`, `up`, `down`, `left`, `right`, and modified keys such
-as `ctrl-g`.
+as `ctrl-s`.
 
 If the keymap cannot be parsed, `mark` ignores it for that run and shows a notice
 inside the TUI instead of failing the diff review.
