@@ -1,4 +1,4 @@
-- [ ] Add a toast notification system that is customizable with corner locations. 
+- [x] Add a toast notification system that is customizable with corner locations.
 - [ ] Lua configuration
 - [ ] improve the fzf of the selection menus
 - [ ] have all actions have a keyboard mapping.

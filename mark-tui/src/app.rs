@@ -19,8 +19,9 @@ use crossterm::event::{
 use mark_core::{MarkError, MarkResult};
 use mark_diff::{Changeset, DiffOptions, DiffScope, DiffSource, DiffStats};
 use mark_syntax::{
-    ColorOverrides, DiffContextExpansion, HighlightedLine, LayoutSetting, SyntaxLimits,
-    SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
+    ColorOverrides, DiffContextExpansion, HighlightedLine, LayoutSetting, NotificationMode,
+    NotificationSettings, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
+    ToastCorner,
 };
 use ratatui::layout::Rect;
 use tempfile::TempDir;
@@ -82,9 +83,10 @@ use crate::{
         MAX_READY_EVENTS_PER_FRAME, MAX_SYNTAX_RESULTS_PER_FRAME, MOUSE_SCROLL_ACCEL_A,
         MOUSE_SCROLL_ACCEL_TAU, MOUSE_SCROLL_HISTORY_SIZE, MOUSE_SCROLL_MAX_MULTIPLIER,
         MOUSE_SCROLL_MIN_TICK_INTERVAL, MOUSE_SCROLL_REFERENCE_INTERVAL_MS,
-        MOUSE_SCROLL_STREAK_TIMEOUT, NOTICE_TTL, STATUSLINE_SELECTOR_GAP, SyntaxBenchmarkReport,
+        MOUSE_SCROLL_STREAK_TIMEOUT, STATUSLINE_SELECTOR_GAP, SyntaxBenchmarkReport,
         UNIFIED_GUTTER_WIDTH, diff_theme_from_config,
     },
+    toast::{ToastLevel, Toasts},
 };
 
 const MOUSE_HUNK_FOCUS_SCROLL_TICKS: isize = 3;
@@ -165,12 +167,6 @@ impl std::fmt::Debug for FilterWorker {
             .field("jump_to_grep", &self.jump_to_grep)
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Debug)]
-pub(crate) struct Notice {
-    pub(crate) text: String,
-    pub(crate) expires_at: Instant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,7 +288,7 @@ pub(crate) async fn run_loop(
     let mut events = TerminalEventReader::start("mark-diff-events")?;
 
     loop {
-        app.expire_notice(Instant::now());
+        app.expire_toasts(Instant::now());
         drain_live_diff_invalidation(app, live_diff.as_ref());
         sync_live_diff(live_diff, app, live_updates);
         drain_live_reloads(
@@ -434,6 +430,9 @@ pub(crate) fn handle_event(
     events: &mut TerminalEventReader,
 ) -> MarkResult<bool> {
     drain_live_diff_invalidation(app, live_diff.as_ref());
+    if app.debug_notifications_enabled() {
+        app.set_debug_notice(format!("event: {}", event_label(&event)));
+    }
 
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
@@ -475,6 +474,17 @@ pub(crate) fn handle_event(
             Ok(false)
         }
         _ => Ok(false),
+    }
+}
+
+fn event_label(event: &Event) -> String {
+    match event {
+        Event::Key(key) => format!("key {:?}", key.code),
+        Event::Mouse(mouse) => format!("mouse {:?}", mouse.kind),
+        Event::Resize(width, height) => format!("resize {width}x{height}"),
+        Event::FocusGained => "focus gained".to_owned(),
+        Event::FocusLost => "focus lost".to_owned(),
+        Event::Paste(text) => format!("paste {} bytes", text.len()),
     }
 }
 
@@ -818,6 +828,68 @@ pub(crate) fn previous_context_expansion(expansion: DiffContextExpansion) -> Dif
     }
 }
 
+fn cycle_choice<T: Copy + PartialEq>(choices: &[T], current: T, delta: isize) -> T {
+    let current = choices
+        .iter()
+        .position(|candidate| *candidate == current)
+        .unwrap_or_default();
+    let next = choice_index_with_delta(current, choices.len(), delta);
+    choices[next]
+}
+
+fn choice_index_with_delta(current: usize, len: usize, delta: isize) -> usize {
+    let len = len as isize;
+    (current as isize + delta.rem_euclid(len)).rem_euclid(len) as usize
+}
+
+fn cycle_ordered_choice<T: Copy + Ord>(choices: &[T], current: T, delta: isize) -> T {
+    if choices.is_empty() || delta == 0 {
+        return current;
+    }
+
+    if let Some(current) = choices.iter().position(|candidate| *candidate == current) {
+        let next = choice_index_with_delta(current, choices.len(), delta);
+        return choices[next];
+    }
+
+    // Numeric settings can have valid custom values that are not listed in the
+    // menu. Snap those to the next choice in the requested direction, or to the
+    // nearest boundary when the custom value is outside the choice range.
+    let first_step = if delta > 0 {
+        choices
+            .iter()
+            .position(|candidate| *candidate > current)
+            .unwrap_or(choices.len() - 1)
+    } else {
+        choices
+            .iter()
+            .rposition(|candidate| *candidate < current)
+            .unwrap_or_default()
+    };
+    let remaining_delta = delta - delta.signum();
+    let next = choice_index_with_delta(first_step, choices.len(), remaining_delta);
+    choices[next]
+}
+
+fn next_notification_mode(mode: NotificationMode) -> NotificationMode {
+    match mode {
+        NotificationMode::Default => NotificationMode::Debug,
+        NotificationMode::Debug => NotificationMode::Default,
+    }
+}
+
+fn next_toast_corner(corner: ToastCorner, delta: isize) -> ToastCorner {
+    cycle_choice(TOAST_CORNER_CHOICES, corner, delta)
+}
+
+fn next_toast_timeout_ms(timeout_ms: u64, delta: isize) -> u64 {
+    cycle_ordered_choice(TOAST_TIMEOUT_CHOICES_MS, timeout_ms, delta)
+}
+
+fn next_toast_max_visible(max_visible: usize, delta: isize) -> usize {
+    cycle_ordered_choice(TOAST_MAX_VISIBLE_CHOICES, max_visible, delta)
+}
+
 pub(crate) fn context_expansion_label(expansion: DiffContextExpansion) -> String {
     match expansion {
         DiffContextExpansion::Lines(lines) => lines.to_string(),
@@ -1141,6 +1213,10 @@ pub(crate) enum OptionsMenuItem {
     SyntaxHighlighting,
     LineWrapping,
     ColorScheme,
+    NotificationMode,
+    ToastCorner,
+    ToastTimeout,
+    ToastMaxVisible,
 }
 
 pub(crate) const COMMON_OPTIONS_MENU_ITEMS: &[OptionsMenuItem] = &[
@@ -1150,6 +1226,10 @@ pub(crate) const COMMON_OPTIONS_MENU_ITEMS: &[OptionsMenuItem] = &[
     OptionsMenuItem::SyntaxHighlighting,
     OptionsMenuItem::LineWrapping,
     OptionsMenuItem::ColorScheme,
+    OptionsMenuItem::NotificationMode,
+    OptionsMenuItem::ToastCorner,
+    OptionsMenuItem::ToastTimeout,
+    OptionsMenuItem::ToastMaxVisible,
 ];
 
 pub(crate) fn option_label(item: OptionsMenuItem) -> &'static str {
@@ -1160,6 +1240,10 @@ pub(crate) fn option_label(item: OptionsMenuItem) -> &'static str {
         OptionsMenuItem::SyntaxHighlighting => "Syntax highlighting",
         OptionsMenuItem::LineWrapping => "Line wrapping",
         OptionsMenuItem::ColorScheme => "Colorscheme",
+        OptionsMenuItem::NotificationMode => "Notification mode",
+        OptionsMenuItem::ToastCorner => "Toast corner",
+        OptionsMenuItem::ToastTimeout => "Toast timeout",
+        OptionsMenuItem::ToastMaxVisible => "Toast max visible",
     }
 }
 
@@ -1171,6 +1255,38 @@ fn on_off_search(enabled: bool) -> String {
     if enabled { "on" } else { "off" }.to_owned()
 }
 
+pub(crate) fn notification_mode_label(mode: NotificationMode) -> &'static str {
+    match mode {
+        NotificationMode::Default => "default",
+        NotificationMode::Debug => "debug",
+    }
+}
+
+fn notification_mode_config_value(mode: NotificationMode) -> toml::Value {
+    toml::Value::String(notification_mode_label(mode).to_owned())
+}
+
+pub(crate) fn toast_corner_label(corner: ToastCorner) -> &'static str {
+    match corner {
+        ToastCorner::TopLeft => "top-left",
+        ToastCorner::TopRight => "top-right",
+        ToastCorner::BottomLeft => "bottom-left",
+        ToastCorner::BottomRight => "bottom-right",
+    }
+}
+
+fn toast_corner_config_value(corner: ToastCorner) -> toml::Value {
+    toml::Value::String(toast_corner_label(corner).to_owned())
+}
+
+fn toast_timeout_label(timeout_ms: u64) -> String {
+    if timeout_ms % 1_000 == 0 {
+        format!("{}s", timeout_ms / 1_000)
+    } else {
+        format!("{timeout_ms}ms")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OptionsDraft {
     pub(crate) layout: LayoutSetting,
@@ -1179,7 +1295,20 @@ pub(crate) struct OptionsDraft {
     pub(crate) syntax_enabled: bool,
     pub(crate) line_wrapping: bool,
     pub(crate) color_scheme: ColorSchemeChoice,
+    pub(crate) notification_mode: NotificationMode,
+    pub(crate) toast_corner: ToastCorner,
+    pub(crate) toast_timeout_ms: u64,
+    pub(crate) toast_max_visible: usize,
 }
+
+const TOAST_TIMEOUT_CHOICES_MS: &[u64] = &[500, 1_000, 1_500, 2_500, 5_000, 10_000];
+const TOAST_MAX_VISIBLE_CHOICES: &[usize] = &[1, 2, 3, 4, 5];
+const TOAST_CORNER_CHOICES: &[ToastCorner] = &[
+    ToastCorner::TopRight,
+    ToastCorner::BottomRight,
+    ToastCorner::BottomLeft,
+    ToastCorner::TopLeft,
+];
 
 pub(crate) fn persist_options_menu_draft_to_path(
     path: &Path,
@@ -1253,6 +1382,52 @@ pub(crate) fn persist_options_menu_draft_to_path(
             {
                 table.insert("colorscheme".to_owned(), toml::Value::String(name));
             }
+        }
+        OptionsMenuItem::NotificationMode
+        | OptionsMenuItem::ToastCorner
+        | OptionsMenuItem::ToastTimeout
+        | OptionsMenuItem::ToastMaxVisible => {
+            let mut notifications = match table.remove("notifications") {
+                Some(toml::Value::Table(notifications)) => notifications,
+                Some(_) => {
+                    return Err(MarkError::Usage(format!(
+                        "failed to update {}: notifications must be a table",
+                        path.display()
+                    )));
+                }
+                None => toml::Table::new(),
+            };
+            match changed_item {
+                OptionsMenuItem::NotificationMode => {
+                    notifications.insert(
+                        "mode".to_owned(),
+                        notification_mode_config_value(draft.notification_mode),
+                    );
+                }
+                OptionsMenuItem::ToastCorner => {
+                    notifications.insert(
+                        "corner".to_owned(),
+                        toast_corner_config_value(draft.toast_corner),
+                    );
+                }
+                OptionsMenuItem::ToastTimeout => {
+                    notifications.insert(
+                        "timeout_ms".to_owned(),
+                        toml::Value::Integer(draft.toast_timeout_ms as i64),
+                    );
+                }
+                OptionsMenuItem::ToastMaxVisible => {
+                    notifications.insert(
+                        "max_visible".to_owned(),
+                        toml::Value::Integer(draft.toast_max_visible as i64),
+                    );
+                }
+                _ => {}
+            }
+            table.insert(
+                "notifications".to_owned(),
+                toml::Value::Table(notifications),
+            );
         }
     }
 
@@ -1399,7 +1574,7 @@ pub(crate) struct DiffApp {
     pub(crate) error_log_height: u16,
     pub(crate) error_log_resizing: bool,
     pub(crate) rendered_error_log_separator_row: Option<u16>,
-    pub(crate) notice: Option<Notice>,
+    pub(crate) toasts: Toasts,
     pub(crate) mouse_scroll: MouseScroll,
     pub(crate) keymap: Keymap,
     pub(crate) theme: DiffTheme,
@@ -1657,6 +1832,10 @@ impl DiffApp {
                 syntax_enabled: syntax.is_some(),
                 line_wrapping: settings.line_wrapping,
                 color_scheme,
+                notification_mode: settings.notifications.mode,
+                toast_corner: settings.notifications.corner,
+                toast_timeout_ms: settings.notifications.timeout_ms,
+                toast_max_visible: settings.notifications.max_visible,
             },
             color_scheme_picker_open: false,
             color_scheme_input: String::new(),
@@ -1712,7 +1891,7 @@ impl DiffApp {
             error_log_height: ERROR_LOG_DEFAULT_HEIGHT,
             error_log_resizing: false,
             rendered_error_log_separator_row: None,
-            notice: None,
+            toasts: Toasts::new(settings.notifications),
             mouse_scroll: MouseScroll::default(),
             keymap,
             theme,
@@ -2409,22 +2588,43 @@ impl DiffApp {
     }
 
     pub(crate) fn set_notice(&mut self, text: impl Into<String>) {
-        self.notice = Some(Notice {
-            text: text.into(),
-            expires_at: Instant::now() + NOTICE_TTL,
-        });
-        self.dirty = true;
-    }
-
-    pub(crate) fn expire_notice(&mut self, now: Instant) {
-        let expired = self
-            .notice
-            .as_ref()
-            .is_some_and(|notice| now >= notice.expires_at);
-        if expired {
-            self.notice = None;
+        if self.toasts.push(ToastLevel::Info, text) {
             self.dirty = true;
         }
+    }
+
+    pub(crate) fn set_success_notice(&mut self, text: impl Into<String>) {
+        if self.toasts.push(ToastLevel::Success, text) {
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn set_warning_notice(&mut self, text: impl Into<String>) {
+        if self.toasts.push(ToastLevel::Warning, text) {
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn set_blocked_notice(&mut self, text: impl Into<String>) {
+        if self.toasts.push(ToastLevel::Error, text) {
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn set_debug_notice(&mut self, text: impl Into<String>) {
+        if self.toasts.push(ToastLevel::Debug, text) {
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn expire_toasts(&mut self, now: Instant) {
+        if self.toasts.expire(now) {
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn debug_notifications_enabled(&self) -> bool {
+        self.toasts.debug_enabled()
     }
 
     pub(crate) fn mark_live_reload_invalidated(&mut self) {
@@ -2463,12 +2663,12 @@ impl DiffApp {
 
     pub(crate) fn copy_error_log_to_writer<W: Write>(&mut self, writer: &mut W) {
         let Some(error_log) = self.error_log.clone() else {
-            self.set_notice("no error log to copy");
+            self.set_warning_notice("no error log to copy");
             return;
         };
 
         match write_osc52_clipboard(writer, &error_log) {
-            Ok(()) => self.set_notice("error log copied"),
+            Ok(()) => self.set_success_notice("error log copied"),
             Err(error) => self.set_error_log(format!("error log copy failed: {error}")),
         }
     }
@@ -2480,12 +2680,12 @@ impl DiffApp {
 
     pub(crate) fn copy_marks_to_writer<W: Write>(&mut self, writer: &mut W) {
         let Some(marks) = self.marks_clipboard_json() else {
-            self.set_notice("no marks to copy");
+            self.set_warning_notice("no marks to copy");
             return;
         };
 
         match write_osc52_clipboard(writer, &marks) {
-            Ok(()) => self.set_notice("marks copied"),
+            Ok(()) => self.set_success_notice("marks copied"),
             Err(error) => self.set_error_log(format!("marks copy failed: {error}")),
         }
     }
@@ -3712,14 +3912,14 @@ impl DiffApp {
         };
         let Some(editor) = configured_editor() else {
             self.annotation_draft = Some(draft);
-            self.set_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit annotation");
+            self.set_warning_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit annotation");
             return;
         };
         let scratch = match create_annotation_scratch_file(&draft.input) {
             Ok(scratch) => scratch,
             Err(error) => {
                 self.annotation_draft = Some(draft);
-                self.set_notice(format!("annotation editor failed: {error}"));
+                self.set_error_log(format!("annotation editor failed: {error}"));
                 return;
             }
         };
@@ -3733,20 +3933,20 @@ impl DiffApp {
                     updated.input = normalize_annotation_editor_contents(&contents);
                     updated.cursor = updated.input.len();
                     self.commit_annotation_draft(updated);
-                    self.set_notice("annotation saved");
+                    self.set_success_notice("annotation saved");
                 }
                 Err(error) => {
                     self.annotation_draft = Some(draft);
-                    self.set_notice(format!("annotation read failed: {error}"));
+                    self.set_error_log(format!("annotation read failed: {error}"));
                 }
             },
             Ok(_) => {
                 self.annotation_draft = Some(draft);
-                self.set_notice("annotation editor closed");
+                self.set_warning_notice("annotation editor closed");
             }
             Err(error) => {
                 self.annotation_draft = Some(draft);
-                self.set_notice(format!("annotation editor failed: {error}"));
+                self.set_error_log(format!("annotation editor failed: {error}"));
             }
         }
         self.dirty = true;
@@ -3823,7 +4023,7 @@ impl DiffApp {
         };
 
         let Some((side, source_lines)) = self.ensure_context_lines(file) else {
-            self.set_notice("context unavailable for this diff");
+            self.set_warning_notice("context unavailable for this diff");
             return true;
         };
 
@@ -3836,7 +4036,7 @@ impl DiffApp {
         let current = expanded.min(available);
         let remaining = available.saturating_sub(current);
         if remaining == 0 {
-            self.set_notice("no more context");
+            self.set_warning_notice("no more context");
             return true;
         }
 
@@ -4081,6 +4281,10 @@ impl DiffApp {
             syntax_enabled: self.syntax.is_some(),
             line_wrapping: self.line_wrapping,
             color_scheme: self.color_scheme,
+            notification_mode: self.syntax_settings.notifications.mode,
+            toast_corner: self.syntax_settings.notifications.corner,
+            toast_timeout_ms: self.syntax_settings.notifications.timeout_ms,
+            toast_max_visible: self.syntax_settings.notifications.max_visible,
         };
         self.options_menu_selected = self
             .options_menu_selected
@@ -4228,6 +4432,18 @@ impl DiffApp {
             OptionsMenuItem::ColorScheme => {
                 color_scheme_label(self.options_menu_draft.color_scheme).to_owned()
             }
+            OptionsMenuItem::NotificationMode => {
+                notification_mode_label(self.options_menu_draft.notification_mode).to_owned()
+            }
+            OptionsMenuItem::ToastCorner => {
+                toast_corner_label(self.options_menu_draft.toast_corner).to_owned()
+            }
+            OptionsMenuItem::ToastTimeout => {
+                toast_timeout_label(self.options_menu_draft.toast_timeout_ms)
+            }
+            OptionsMenuItem::ToastMaxVisible => {
+                self.options_menu_draft.toast_max_visible.to_string()
+            }
         }
     }
 
@@ -4251,6 +4467,27 @@ impl DiffApp {
                     "[{}]",
                     color_scheme_label(self.options_menu_draft.color_scheme)
                 )
+            }
+            OptionsMenuItem::NotificationMode => {
+                format!(
+                    "[{}]",
+                    notification_mode_label(self.options_menu_draft.notification_mode)
+                )
+            }
+            OptionsMenuItem::ToastCorner => {
+                format!(
+                    "[{}]",
+                    toast_corner_label(self.options_menu_draft.toast_corner)
+                )
+            }
+            OptionsMenuItem::ToastTimeout => {
+                format!(
+                    "[{}]",
+                    toast_timeout_label(self.options_menu_draft.toast_timeout_ms)
+                )
+            }
+            OptionsMenuItem::ToastMaxVisible => {
+                format!("[{}]", self.options_menu_draft.toast_max_visible)
             }
         }
     }
@@ -4556,6 +4793,22 @@ impl DiffApp {
                 let next = (current as isize + delta).rem_euclid(choices.len() as isize) as usize;
                 self.options_menu_draft.color_scheme = choices[next];
             }
+            OptionsMenuItem::NotificationMode => {
+                self.options_menu_draft.notification_mode =
+                    next_notification_mode(self.options_menu_draft.notification_mode);
+            }
+            OptionsMenuItem::ToastCorner => {
+                self.options_menu_draft.toast_corner =
+                    next_toast_corner(self.options_menu_draft.toast_corner, delta);
+            }
+            OptionsMenuItem::ToastTimeout => {
+                self.options_menu_draft.toast_timeout_ms =
+                    next_toast_timeout_ms(self.options_menu_draft.toast_timeout_ms, delta);
+            }
+            OptionsMenuItem::ToastMaxVisible => {
+                self.options_menu_draft.toast_max_visible =
+                    next_toast_max_visible(self.options_menu_draft.toast_max_visible, delta);
+            }
         }
 
         self.apply_options_menu_draft(changed_item);
@@ -4564,6 +4817,12 @@ impl DiffApp {
     fn apply_options_menu_draft(&mut self, changed_item: OptionsMenuItem) {
         let draft = self.options_menu_draft;
         let live_reload_reenabled = draft.live_updates_enabled && !self.live_updates_enabled;
+        let notification_settings = NotificationSettings {
+            mode: draft.notification_mode,
+            corner: draft.toast_corner,
+            timeout_ms: draft.toast_timeout_ms,
+            max_visible: draft.toast_max_visible,
+        };
 
         if draft.layout != layout_setting_from_override(self.layout_override) {
             self.set_layout_setting(draft.layout);
@@ -4596,6 +4855,11 @@ impl DiffApp {
             self.line_wrapping = draft.line_wrapping;
             self.set_scroll(next_scroll);
             self.set_horizontal_scroll(self.horizontal_scroll);
+            self.dirty = true;
+        }
+        if notification_settings != self.syntax_settings.notifications {
+            self.syntax_settings.notifications = notification_settings;
+            self.toasts.configure(notification_settings);
             self.dirty = true;
         }
         self.persist_options_menu_draft(changed_item);
@@ -4726,7 +4990,7 @@ impl DiffApp {
 
     pub(crate) fn toggle_commit_menu(&mut self) {
         if self.comparison_commits.is_empty() {
-            self.set_notice("commit list unavailable");
+            self.set_warning_notice("commit list unavailable");
             return;
         }
         if self.commit_menu_open {
@@ -5130,7 +5394,7 @@ impl DiffApp {
             .get(self.commit_menu_selected)
             .map(|commit| (*commit).clone())
         else {
-            self.set_notice("no matching commit");
+            self.set_warning_notice("no matching commit");
             return;
         };
         self.close_commit_menu();
@@ -5385,7 +5649,7 @@ impl DiffApp {
             .get(self.branch_menu_selected)
             .map(|branch| (*branch).to_owned())
         else {
-            self.set_notice("no matching branch");
+            self.set_warning_notice("no matching branch");
             return;
         };
         self.close_branch_menu();
@@ -6494,11 +6758,11 @@ impl DiffApp {
         configured_editor: Option<String>,
     ) -> Option<FocusedEditorLaunch> {
         let Some(target) = self.focused_hunk_editor_target() else {
-            self.set_notice("no editable focused hunk");
+            self.set_blocked_notice("no editable focused hunk");
             return None;
         };
         let Some(editor) = configured_editor else {
-            self.set_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk");
+            self.set_warning_notice("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk");
             return None;
         };
         Some(FocusedEditorLaunch { target, editor })
@@ -6572,7 +6836,7 @@ impl DiffApp {
                 }
             }
             Ok(status) => {
-                self.set_notice(format!("editor exited with {status}"));
+                self.set_warning_notice(format!("editor exited with {status}"));
             }
             Err(error) => self.set_error_log(format!("editor failed: {error}")),
         }
@@ -6641,7 +6905,7 @@ impl DiffApp {
                 match reload.changeset {
                     Ok(changeset) => {
                         self.replace_path_changeset(&reload.path, changeset);
-                        self.set_notice("edited file reloaded");
+                        self.set_success_notice("edited file reloaded");
                     }
                     Err(error) => self.set_error_log(format!("edited file reload failed: {error}")),
                 }
@@ -7345,7 +7609,7 @@ impl DiffApp {
 
         if self.grep_matches.is_empty() {
             self.selected_grep_match = None;
-            self.set_notice("no grep matches");
+            self.set_warning_notice("no grep matches");
             return;
         }
 

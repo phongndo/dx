@@ -493,21 +493,15 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.theme)),
         remaining,
     );
-    let status_notice = app
-        .notice
-        .as_ref()
-        .map(|notice| notice.text.as_str())
-        .or_else(|| {
-            if app.pending_review_load.is_some() {
-                Some("loading review")
-            } else if app.pending_diff_load.is_some() {
-                Some("loading diff")
-            } else if app.live_reload_pending {
-                Some("refreshing diff")
-            } else {
-                None
-            }
-        });
+    let status_notice = if app.pending_review_load.is_some() {
+        Some("loading review")
+    } else if app.pending_diff_load.is_some() {
+        Some("loading diff")
+    } else if app.live_reload_pending {
+        Some("refreshing diff")
+    } else {
+        None
+    };
     if let Some(label) = status_notice {
         push_fitted_statusline_span(
             spans,
