@@ -1,6 +1,8 @@
 use std::{collections::HashSet, env, io, path::Path, process::Command};
 
-use mark_diff::{Changeset, DiffLine, DiffLineKind, DiffOptions, DiffSource, DiffStats};
+use mark_diff::{
+    Changeset, DiffLine, DiffLineKind, DiffOptions, DiffSource, DiffStats, PatchSource,
+};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use unicode_width::UnicodeWidthStr;
 
@@ -36,6 +38,7 @@ impl DiffLayoutMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DiffChoice {
     Branch,
+    Review,
     Show,
     All,
     Unstaged,
@@ -64,12 +67,24 @@ impl DiffChoice {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Branch => "Branch",
+            Self::Review => "Review",
             Self::Show => "Show",
             Self::All => "All changes",
             Self::Unstaged => "Unstaged",
             Self::Staged => "Staged",
         }
     }
+}
+
+pub(crate) fn is_review_options(options: &DiffOptions) -> bool {
+    matches!(
+        &options.source,
+        DiffSource::Patch(PatchSource::Text { label, .. }) if is_review_label(label)
+    )
+}
+
+pub(crate) fn is_review_label(label: &str) -> bool {
+    label.starts_with("review ")
 }
 
 pub(crate) fn default_branch_base(options: &DiffOptions, repo: &Path) -> Option<String> {

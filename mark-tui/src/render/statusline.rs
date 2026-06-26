@@ -498,7 +498,9 @@ pub(crate) fn push_statusline_left_spans(
         .as_ref()
         .map(|notice| notice.text.as_str())
         .or_else(|| {
-            if app.pending_diff_load.is_some() {
+            if app.pending_review_load.is_some() {
+                Some("loading review")
+            } else if app.pending_diff_load.is_some() {
                 Some("loading diff")
             } else if app.live_reload_pending {
                 Some("refreshing diff")

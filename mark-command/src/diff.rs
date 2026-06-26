@@ -34,7 +34,34 @@ pub fn github_pr_diff_options(
     stat: bool,
 ) -> MarkResult<DiffOptions> {
     let pull_request = github_pull_request_from_target(repo.as_deref(), target)?;
-    let label = github_pull_request_label(&pull_request);
+    github_pull_request_diff_options(repo, pull_request, stat, github_pull_request_label)
+}
+
+pub fn local_review_diff_options(
+    repo: Option<PathBuf>,
+    target: &str,
+    stat: bool,
+) -> MarkResult<DiffOptions> {
+    let pull_request = local_github_pull_request_from_target(repo.as_deref(), target)?;
+    github_pull_request_diff_options(repo, pull_request, stat, review_label)
+}
+
+pub fn review_diff_options(
+    repo: Option<PathBuf>,
+    target: &str,
+    stat: bool,
+) -> MarkResult<DiffOptions> {
+    let pull_request = github_pull_request_from_target(repo.as_deref(), target)?;
+    github_pull_request_diff_options(repo, pull_request, stat, review_label)
+}
+
+fn github_pull_request_diff_options(
+    repo: Option<PathBuf>,
+    pull_request: GitHubPullRequest,
+    stat: bool,
+    label: impl FnOnce(&GitHubPullRequest) -> String,
+) -> MarkResult<DiffOptions> {
+    let label = label(&pull_request);
     let patch = fetch_github_pull_request_diff(&pull_request)?;
 
     Ok(DiffOptions {
@@ -47,6 +74,22 @@ pub fn github_pr_diff_options(
         include_untracked: false,
         stat,
     })
+}
+
+pub(crate) fn local_github_pull_request_from_target(
+    repo: Option<&Path>,
+    target: &str,
+) -> MarkResult<GitHubPullRequest> {
+    let number = target.trim().parse::<u64>().map_err(|_| {
+        MarkError::Usage("expected a review number for the current repository".to_owned())
+    })?;
+    if number == 0 {
+        return Err(MarkError::Usage(
+            "review number must be greater than zero".to_owned(),
+        ));
+    }
+
+    local_github_pull_request(repo, number)
 }
 
 pub(crate) fn github_pull_request_from_target(
@@ -179,6 +222,13 @@ pub(crate) fn valid_github_path_segment(segment: &str) -> bool {
 pub(crate) fn github_pull_request_label(pull_request: &GitHubPullRequest) -> String {
     format!(
         "github pr {}/{}#{}",
+        pull_request.owner, pull_request.repo, pull_request.number
+    )
+}
+
+fn review_label(pull_request: &GitHubPullRequest) -> String {
+    format!(
+        "review {}/{}#{}",
         pull_request.owner, pull_request.repo, pull_request.number
     )
 }

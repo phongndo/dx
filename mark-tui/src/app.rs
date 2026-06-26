@@ -37,7 +37,7 @@ use crate::{
         branch_base_from_options, branch_head_from_options, branch_match_score, commit_match_score,
         commit_menu_width, commit_short_sha, comparison_branches, comparison_commits,
         current_head_label, default_branch_base, default_layout_for_width, diff_stats_for_files,
-        rev_display_label,
+        is_review_options, rev_display_label,
     },
     editor::{EditorTarget, configured_editor, open_editor, open_text_in_editor, repo_file_path},
     event_reader::TerminalEventReader,
@@ -775,6 +775,10 @@ pub(crate) fn show_rev_from_options(options: &DiffOptions) -> Option<String> {
 }
 
 pub(crate) fn diff_choice_for_options(options: &DiffOptions) -> Option<DiffChoice> {
+    if is_review_options(options) {
+        return Some(DiffChoice::Review);
+    }
+
     match (&options.source, options.scope) {
         (DiffSource::Worktree, DiffScope::All) => Some(DiffChoice::All),
         (DiffSource::Worktree, DiffScope::Unstaged) => Some(DiffChoice::Unstaged),
@@ -1082,6 +1086,12 @@ pub(crate) struct PendingDiffLoad {
 }
 
 #[derive(Debug)]
+pub(crate) struct PendingReviewLoad {
+    pub(crate) error_prefix: String,
+    pub(crate) rx: oneshot::Receiver<MarkResult<(DiffOptions, Changeset)>>,
+}
+
+#[derive(Debug)]
 pub(crate) struct DiffCacheEntry {
     pub(crate) options: DiffOptions,
     pub(crate) changeset: Changeset,
@@ -1309,6 +1319,7 @@ pub(crate) struct DiffApp {
     pub(crate) rendered_diff_menu_area: Option<Rect>,
     pub(crate) rendered_branch_menu_area: Option<Rect>,
     pub(crate) rendered_commit_menu_area: Option<Rect>,
+    pub(crate) rendered_review_input_area: Option<Rect>,
     pub(crate) rendered_color_scheme_picker_area: Option<Rect>,
     pub(crate) rendered_diff_area: Option<Rect>,
     pub(crate) mouse_hover: Option<(u16, u16)>,
@@ -1325,6 +1336,9 @@ pub(crate) struct DiffApp {
     pub(crate) diff_menu_input: String,
     pub(crate) diff_menu_input_cursor: usize,
     pub(crate) diff_menu_selected: usize,
+    pub(crate) review_input_open: bool,
+    pub(crate) review_input: String,
+    pub(crate) review_input_cursor: usize,
     pub(crate) options_menu_open: bool,
     pub(crate) options_menu_input: String,
     pub(crate) options_menu_input_cursor: usize,
@@ -1372,6 +1386,7 @@ pub(crate) struct DiffApp {
     pub(crate) live_reload_invalidated: bool,
     pub(crate) live_reload_pending: bool,
     pub(crate) pending_diff_load: Option<PendingDiffLoad>,
+    pub(crate) pending_review_load: Option<PendingReviewLoad>,
     pub(crate) diff_cache: Vec<DiffCacheEntry>,
     pub(crate) pending_diff_prefetch: Option<PendingDiffPrefetch>,
     pub(crate) diff_prefetch_queue: VecDeque<DiffOptions>,
@@ -1610,6 +1625,7 @@ impl DiffApp {
             rendered_diff_menu_area: None,
             rendered_branch_menu_area: None,
             rendered_commit_menu_area: None,
+            rendered_review_input_area: None,
             rendered_color_scheme_picker_area: None,
             rendered_diff_area: None,
             mouse_hover: None,
@@ -1626,6 +1642,9 @@ impl DiffApp {
             diff_menu_input: String::new(),
             diff_menu_input_cursor: 0,
             diff_menu_selected: 0,
+            review_input_open: false,
+            review_input: String::new(),
+            review_input_cursor: 0,
             options_menu_open: false,
             options_menu_input: String::new(),
             options_menu_input_cursor: 0,
@@ -1680,6 +1699,7 @@ impl DiffApp {
             live_reload_invalidated: false,
             live_reload_pending: false,
             pending_diff_load: None,
+            pending_review_load: None,
             diff_cache: Vec::new(),
             pending_diff_prefetch: None,
             diff_prefetch_queue: VecDeque::new(),
@@ -1743,6 +1763,10 @@ impl DiffApp {
 
         if self.commit_menu_open {
             return self.handle_commit_menu_key(key);
+        }
+
+        if self.review_input_open {
+            return self.handle_review_input_key(key);
         }
 
         if self.diff_menu_open {
@@ -1966,6 +1990,27 @@ impl DiffApp {
         Ok(false)
     }
 
+    pub(crate) fn handle_review_input_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
+        if self.keymap.matches_menu(MenuAction::Close, key) {
+            self.close_review_input();
+            return Ok(false);
+        }
+
+        if self.keymap.matches_menu(MenuAction::Select, key)
+            || self.keymap.matches_menu(MenuAction::Confirm, key)
+        {
+            self.submit_review_input();
+        } else {
+            match handle_text_input_key(&mut self.review_input, &mut self.review_input_cursor, key)
+            {
+                TextInputKeyResult::Edited | TextInputKeyResult::Moved => self.dirty = true,
+                TextInputKeyResult::Handled | TextInputKeyResult::Ignored => {}
+            }
+        }
+
+        Ok(false)
+    }
+
     pub(crate) fn handle_branch_menu_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
         if self.keymap.matches_menu(MenuAction::Close, key) {
             self.close_branch_menu();
@@ -2118,6 +2163,7 @@ impl DiffApp {
             && !self.help_menu_open
             && self.branch_menu_open.is_none()
             && !self.diff_menu_open
+            && !self.review_input_open
             && !self.options_menu_open
             && !self.leader_pending
             && !self.color_scheme_picker_open
@@ -2638,6 +2684,10 @@ impl DiffApp {
         self.rendered_commit_menu_area = area.filter(|_| self.commit_menu_open);
     }
 
+    pub(crate) fn set_rendered_review_input_area(&mut self, area: Option<Rect>) {
+        self.rendered_review_input_area = area.filter(|_| self.review_input_open);
+    }
+
     pub(crate) fn start_error_log_resize(&mut self, row: u16) -> bool {
         if self.error_log_separator_row() != Some(row) {
             return false;
@@ -2683,6 +2733,7 @@ impl DiffApp {
         use_cache: bool,
     ) {
         let error_prefix = error_prefix.into();
+        self.pending_review_load = None;
 
         let use_cache = use_cache && self.diff_cache_invalidator_active();
 
@@ -2736,6 +2787,8 @@ impl DiffApp {
     }
 
     pub(crate) fn drain_pending_diff_load(&mut self) {
+        self.drain_pending_review_load();
+
         let Some(outcome) =
             self.pending_diff_load
                 .as_mut()
@@ -2763,6 +2816,66 @@ impl DiffApp {
                 } else {
                     self.replace_loaded_diff(pending.options, changeset);
                 }
+            }
+            Some(Err(error)) => self.set_error_log(format!("{}: {error}", pending.error_prefix)),
+            None => self.set_error_log(format!("{}: worker stopped", pending.error_prefix)),
+        }
+    }
+
+    pub(crate) fn start_review_load(&mut self, target: String) {
+        let (tx, rx) = oneshot::channel();
+        let target = target.trim().to_owned();
+        let repo = Self::review_load_repo_for_target(&self.changeset.repo, &target);
+        let worker_target = target;
+        runtime::spawn_detached_blocking(move || {
+            let result = mark_command::review_diff_options(repo, &worker_target, false).and_then(
+                |options| {
+                    mark_diff::load_review_ref(&options).map(|changeset| (options, changeset))
+                },
+            );
+            let _ = tx.send(result);
+        });
+
+        self.pending_review_load = Some(PendingReviewLoad {
+            error_prefix: "review unavailable".to_owned(),
+            rx,
+        });
+        self.pending_diff_load = None;
+        self.dirty = true;
+    }
+
+    pub(crate) fn review_load_repo_for_target(repo: &Path, _target: &str) -> Option<PathBuf> {
+        // Numeric review IDs are resolved against this repository, while URLs
+        // carry their own pull request identity. In both cases, preserve the
+        // active repository so the loaded patch can resolve follow-up local
+        // actions relative to the same repo the TUI was reviewing.
+        if repo.as_os_str().is_empty() {
+            return None;
+        }
+
+        Some(repo.to_path_buf())
+    }
+
+    pub(crate) fn drain_pending_review_load(&mut self) {
+        let Some(outcome) =
+            self.pending_review_load
+                .as_mut()
+                .and_then(|pending| match pending.rx.try_recv() {
+                    Ok(result) => Some(Some(result)),
+                    Err(oneshot::error::TryRecvError::Empty) => None,
+                    Err(oneshot::error::TryRecvError::Closed) => Some(None),
+                })
+        else {
+            return;
+        };
+        let Some(pending) = self.pending_review_load.take() else {
+            return;
+        };
+
+        match outcome {
+            Some(Ok((mut options, changeset))) => {
+                options.include_untracked = self.options.include_untracked;
+                self.replace_loaded_diff(options, changeset);
             }
             Some(Err(error)) => self.set_error_log(format!("{}: {error}", pending.error_prefix)),
             None => self.set_error_log(format!("{}: worker stopped", pending.error_prefix)),
@@ -2978,6 +3091,9 @@ impl DiffApp {
             self.move_branch_selection(delta);
         } else if self.commit_menu_open {
             self.move_commit_selection(delta);
+        } else if self.review_input_open {
+            // Review input has no scrollable content, but the open modal should
+            // still consume wheel events instead of scrolling the diff behind it.
         } else if self.diff_menu_open {
             self.move_diff_menu_selection(delta);
         } else if self.options_menu_open {
@@ -3150,6 +3266,19 @@ impl DiffApp {
             .then(|| self.branch_selector_at(column))
             .flatten();
         let clicked_commit_selector = row == 0 && self.commit_selector_at(column);
+
+        if self.review_input_open {
+            if self.is_rendered_review_input_position(column, row) {
+                self.dirty = true;
+                return;
+            }
+
+            self.close_review_input();
+            if clicked_selector {
+                self.toggle_diff_menu();
+            }
+            return;
+        }
 
         if self.commit_menu_open {
             if let Some(rev) = self.commit_choice_at(column, row) {
@@ -3660,6 +3789,7 @@ impl DiffApp {
             || self.color_scheme_picker_open
             || self.options_menu_open
             || self.diff_menu_open
+            || self.review_input_open
             || self.commit_menu_open
             || self.branch_menu_open.is_some()
             || self.filter_input.is_some()
@@ -3896,6 +4026,7 @@ impl DiffApp {
         self.close_color_scheme_picker();
         self.branch_menu_open = None;
         self.rendered_branch_menu_area = None;
+        self.close_review_input();
         self.close_commit_menu();
         self.dirty = true;
     }
@@ -3909,6 +4040,35 @@ impl DiffApp {
             self.diff_menu_input.clear();
             self.diff_menu_input_cursor = 0;
             self.rendered_diff_menu_area = None;
+            self.dirty = true;
+        }
+    }
+
+    pub(crate) fn open_review_input(&mut self) {
+        self.review_input.clear();
+        self.review_input_cursor = 0;
+        self.review_input_open = true;
+        self.diff_menu_open = false;
+        self.diff_menu_input.clear();
+        self.diff_menu_input_cursor = 0;
+        self.rendered_diff_menu_area = None;
+        self.options_menu_open = false;
+        self.close_color_scheme_picker();
+        self.branch_menu_open = None;
+        self.rendered_branch_menu_area = None;
+        self.close_commit_menu();
+        self.dirty = true;
+    }
+
+    pub(crate) fn close_review_input(&mut self) {
+        if self.review_input_open
+            || !self.review_input.is_empty()
+            || self.rendered_review_input_area.is_some()
+        {
+            self.review_input_open = false;
+            self.review_input.clear();
+            self.review_input_cursor = 0;
+            self.rendered_review_input_area = None;
             self.dirty = true;
         }
     }
@@ -3934,6 +4094,7 @@ impl DiffApp {
         self.diff_menu_input.clear();
         self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
+        self.close_review_input();
         self.branch_menu_open = None;
         self.rendered_branch_menu_area = None;
         self.close_commit_menu();
@@ -4578,6 +4739,7 @@ impl DiffApp {
         self.diff_menu_input.clear();
         self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
+        self.close_review_input();
         self.branch_menu_open = None;
         self.branch_menu_input.clear();
         self.branch_menu_input_cursor = 0;
@@ -4613,6 +4775,7 @@ impl DiffApp {
         self.diff_menu_input.clear();
         self.diff_menu_input_cursor = 0;
         self.rendered_diff_menu_area = None;
+        self.close_review_input();
         self.options_menu_open = false;
         self.close_color_scheme_picker();
         self.close_commit_menu();
@@ -5034,6 +5197,11 @@ impl DiffApp {
             .is_some_and(|area| rect_contains(area, column, row))
     }
 
+    pub(crate) fn is_rendered_review_input_position(&self, column: u16, row: u16) -> bool {
+        self.rendered_review_input_area
+            .is_some_and(|area| rect_contains(area, column, row))
+    }
+
     pub(crate) fn commit_choice_at(&self, column: u16, row: u16) -> Option<String> {
         if !self.commit_menu_open {
             return None;
@@ -5365,8 +5533,10 @@ impl DiffApp {
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
         if matches!(
             &self.options.source,
-            DiffSource::Patch(_) | DiffSource::Range { .. } | DiffSource::Difftool { .. }
-        ) {
+            DiffSource::Range { .. } | DiffSource::Difftool { .. }
+        ) || (matches!(&self.options.source, DiffSource::Patch(_))
+            && !is_review_options(&self.options))
+        {
             return Vec::new();
         }
 
@@ -5376,6 +5546,7 @@ impl DiffApp {
         }
         choices.push(DiffChoice::Show);
         choices.extend([DiffChoice::Unstaged, DiffChoice::Staged]);
+        choices.push(DiffChoice::Review);
         choices
     }
 
@@ -5408,6 +5579,10 @@ impl DiffApp {
 
     pub(crate) fn selected_diff_menu_choice(&self) -> Option<DiffChoice> {
         let selected = self.pending_or_current_diff_choice()?;
+        if selected == DiffChoice::Review {
+            return None;
+        }
+
         self.diff_menu_choices()
             .contains(&selected)
             .then_some(selected)
@@ -5443,6 +5618,7 @@ impl DiffApp {
                 None => "base unavailable".to_owned(),
             },
             DiffChoice::Show => self.show_rev_menu_detail(),
+            DiffChoice::Review => "hosted review for this repo".to_owned(),
         }
     }
 
@@ -5537,23 +5713,62 @@ impl DiffApp {
     }
 
     pub(crate) fn pending_or_current_diff_choice(&self) -> Option<DiffChoice> {
+        if self.pending_review_load.is_some() {
+            return Some(DiffChoice::Review);
+        }
+
         self.pending_diff_load
             .as_ref()
             .and_then(|pending| diff_choice_for_options(&pending.options))
             .or_else(|| self.current_diff_choice())
     }
 
+    pub(crate) fn submit_review_input(&mut self) {
+        self.submit_review_input_with(Self::start_review_load);
+    }
+
+    fn submit_review_input_with(&mut self, start_review_load: impl FnOnce(&mut Self, String)) {
+        let target = self.review_input.trim().to_owned();
+        if target.is_empty() {
+            self.set_error_log("review unavailable: enter a review ID");
+            return;
+        }
+
+        self.close_review_input();
+        start_review_load(self, target);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn submit_review_input_for_test(
+        &mut self,
+        start_review_load: impl FnOnce(&mut Self, String),
+    ) {
+        self.submit_review_input_with(start_review_load);
+    }
+
     pub(crate) fn cycle_diff_choice(&mut self, delta: isize) {
-        let choices = self.diff_menu_choices();
-        if choices.is_empty() {
+        let choices: Vec<_> = self
+            .diff_menu_choices()
+            .into_iter()
+            .filter(|choice| *choice != DiffChoice::Review)
+            .collect();
+        if choices.is_empty() || delta == 0 {
             return;
         }
 
         let current = self
             .pending_or_current_diff_choice()
-            .and_then(|choice| choices.iter().position(|candidate| *candidate == choice))
-            .unwrap_or(0);
-        let next = (current as isize + delta).rem_euclid(choices.len() as isize) as usize;
+            .and_then(|choice| choices.iter().position(|candidate| *candidate == choice));
+        // Review opens an input modal, so keyboard cycling skips it. If the
+        // current choice is absent, anchor just outside the cycle so the first
+        // keypress lands on the first/last diff choice, matching the menu.
+        let choice_count = choices.len() as isize;
+        let next = match current {
+            Some(current) => current as isize + delta,
+            None if delta > 0 => delta - 1,
+            None => delta,
+        }
+        .rem_euclid(choice_count) as usize;
         self.select_diff_choice(choices[next]);
     }
 
@@ -5600,12 +5815,18 @@ impl DiffApp {
             return;
         }
 
+        if choice == DiffChoice::Review {
+            self.open_review_input();
+            return;
+        }
+
         let Some(options) = self.options_for_choice(choice) else {
             return;
         };
 
         if options == self.options {
             self.pending_diff_load = None;
+            self.pending_review_load = None;
             self.dirty = true;
             return;
         }
@@ -5646,6 +5867,7 @@ impl DiffApp {
                 options.source = DiffSource::Show(rev);
                 options.scope = DiffScope::All;
             }
+            DiffChoice::Review => return None,
         }
 
         Some(options)
@@ -6303,6 +6525,7 @@ impl DiffApp {
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.close_review_input();
         self.close_branch_menu();
         self.terminal_clear_requested = true;
         let mut paused_live_diff = false;
@@ -6733,6 +6956,7 @@ impl DiffApp {
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.close_review_input();
         self.close_branch_menu();
 
         let had_filter =
@@ -7293,6 +7517,7 @@ impl DiffApp {
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.close_review_input();
         self.close_branch_menu();
         self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
         self.dirty = true;

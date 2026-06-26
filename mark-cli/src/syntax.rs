@@ -165,7 +165,7 @@ pub(crate) fn show_options(args: ShowArgs) -> MarkResult<mark_command::DiffOptio
 }
 
 pub(crate) fn review_options(args: ReviewArgs) -> MarkResult<mark_command::DiffOptions> {
-    mark_command::github_pr_diff_options(args.repo, &args.target, args.stat)
+    mark_command::review_diff_options(args.repo, &args.target, args.stat)
 }
 
 pub(crate) fn difftool_options(args: DifftoolArgs) -> MarkResult<mark_command::DiffOptions> {

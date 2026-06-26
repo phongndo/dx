@@ -12,7 +12,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{DiffApp, OptionsMenuItem, color_scheme_label, option_label},
-    controls::{BranchMenu, DiffChoice, GitCommit, INPUT_CURSOR, commit_short_sha},
+    controls::{
+        BranchMenu, DiffChoice, GitCommit, INPUT_CURSOR, commit_short_sha, is_review_options,
+    },
     keymap::Keymap,
     render::{
         style::{base_bg, header_bg},
@@ -307,6 +309,74 @@ pub(crate) fn diff_menu_block(theme: DiffTheme) -> Block<'static> {
         .padding(Padding::horizontal(1))
         .title(Line::from(Span::styled(
             " Diff ",
+            Style::default()
+                .fg(selector_title_color(theme))
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        )))
+        .title_alignment(Alignment::Center)
+}
+
+pub(crate) fn draw_review_input(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+    let Some(menu_area) = review_input_area(app, area) else {
+        app.set_rendered_review_input_area(None);
+        return;
+    };
+    app.set_rendered_review_input_area(Some(menu_area));
+
+    let block = review_input_block(app.theme);
+    let inner = block.inner(menu_area);
+    let bg = base_bg(app.theme);
+    let input = text_with_cursor(&app.review_input, app.review_input_cursor);
+    let prompt = fit_padded(&format!("> {input}"), inner.width as usize);
+    let hint = fit_padded("Review ID for this repo", inner.width as usize);
+    let lines = vec![
+        Line::from(Span::styled(
+            prompt,
+            Style::default().fg(selector_prompt_color(app.theme)).bg(bg),
+        )),
+        Line::from(Span::styled(
+            hint,
+            Style::default().fg(selector_count_color(app.theme)).bg(bg),
+        )),
+    ];
+
+    frame.render_widget(Clear, menu_area);
+    frame.render_widget(block, menu_area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(bg)),
+        inner,
+    );
+}
+
+pub(crate) fn review_input_area(app: &DiffApp, area: Rect) -> Option<Rect> {
+    if !app.review_input_open || !floating_menu_fits_terminal(area) {
+        return None;
+    }
+
+    let content_width = app
+        .review_input
+        .width()
+        .saturating_add(6)
+        .max("Review ID for this repo".width());
+    let width = floating_menu_max_width(area, selector_menu_outer_width(content_width.max(36)));
+    let height = floating_menu_max_height(area, 4);
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    Some(centered_floating_rect(area, width, height))
+}
+
+pub(crate) fn review_input_block(theme: DiffTheme) -> Block<'static> {
+    let bg = base_bg(theme);
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(selector_border_color(theme)).bg(bg))
+        .style(Style::default().bg(bg))
+        .padding(Padding::horizontal(1))
+        .title(Line::from(Span::styled(
+            " Review ",
             Style::default()
                 .fg(selector_title_color(theme))
                 .bg(bg)
@@ -1353,6 +1423,10 @@ pub(crate) fn diff_type_label(options: &DiffOptions) -> &'static str {
 }
 
 pub(crate) fn diff_choice_from_options(options: &DiffOptions) -> Option<DiffChoice> {
+    if is_review_options(options) {
+        return Some(DiffChoice::Review);
+    }
+
     match (&options.source, options.scope) {
         (DiffSource::Base(_) | DiffSource::Branch { .. }, DiffScope::All) => {
             Some(DiffChoice::Branch)

@@ -10,6 +10,7 @@ repository.workspace = true
 fff-grep.workspace = true
 crossterm.workspace = true
 mark-core.workspace = true
+mark-command.workspace = true
 mark-diff.workspace = true
 mark-git.workspace = true
 mark-syntax.workspace = true

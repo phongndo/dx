@@ -877,6 +877,7 @@ version = "0.6.4"
 dependencies = [
  "crossterm",
  "fff-grep",
+ "mark-command",
  "mark-core",
  "mark-diff",
  "mark-git",

@@ -11,7 +11,10 @@ pub use mark_syntax::{
 };
 
 pub use config::config_path;
-pub use diff::{diff, diff_bytes, diff_to_writer, github_pr_diff_options};
+pub use diff::{
+    diff, diff_bytes, diff_to_writer, github_pr_diff_options, local_review_diff_options,
+    review_diff_options,
+};
 pub use syntax::{
     syntax_add, syntax_add_with_options, syntax_available_languages, syntax_cache_dir,
     syntax_clean_cache, syntax_colorscheme_dir, syntax_config_path, syntax_doctor,

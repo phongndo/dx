@@ -4174,6 +4174,7 @@ fn diff_menu_lists_all_changes_first() {
             DiffChoice::Show,
             DiffChoice::Unstaged,
             DiffChoice::Staged,
+            DiffChoice::Review,
         ]
     );
 }
@@ -4253,6 +4254,153 @@ fn diff_menu_keyboard_selects_diff_choice() {
         .expect("menu selection should queue diff load");
     assert_eq!(load.options.source, DiffSource::Worktree);
     assert_eq!(load.options.scope, DiffScope::Unstaged);
+}
+
+#[test]
+fn diff_menu_review_choice_opens_review_input() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+
+    app.open_diff_menu();
+    while app.highlighted_diff_choice() != Some(DiffChoice::Review) {
+        app.move_diff_menu_selection(1);
+    }
+    app.select_highlighted_diff_choice();
+
+    assert!(!app.diff_menu_open);
+    assert!(app.review_input_open);
+    assert_eq!(app.review_input, "");
+}
+
+#[test]
+fn review_input_url_queues_review_load() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+
+    app.open_review_input();
+    app.review_input = "https://github.com/owner/repo/pull/1".to_owned();
+    app.review_input_cursor = app.review_input.len();
+    let mut submitted_target = None;
+    app.submit_review_input_for_test(|app, target| {
+        submitted_target = Some(target);
+        app.pending_review_load = Some(pending_review_load());
+    });
+
+    assert!(!app.review_input_open);
+    assert_eq!(
+        submitted_target.as_deref(),
+        Some("https://github.com/owner/repo/pull/1")
+    );
+    assert!(app.pending_review_load.is_some());
+}
+
+#[test]
+fn review_input_number_queues_review_load() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+
+    app.open_review_input();
+    app.review_input = " 123 ".to_owned();
+    app.review_input_cursor = app.review_input.len();
+    let mut submitted_target = None;
+    app.submit_review_input_for_test(|app, target| {
+        submitted_target = Some(target);
+        app.pending_review_load = Some(pending_review_load());
+    });
+
+    assert!(!app.review_input_open);
+    assert_eq!(submitted_target.as_deref(), Some("123"));
+    assert!(app.pending_review_load.is_some());
+}
+
+#[test]
+fn review_load_repo_preserves_current_repo_context() {
+    assert_eq!(
+        DiffApp::review_load_repo_for_target(Path::new("/repo"), "123"),
+        Some(PathBuf::from("/repo"))
+    );
+    assert_eq!(
+        DiffApp::review_load_repo_for_target(Path::new("/repo"), " 123 "),
+        Some(PathBuf::from("/repo"))
+    );
+    assert_eq!(
+        DiffApp::review_load_repo_for_target(
+            Path::new("/repo"),
+            "https://github.com/owner/repo/pull/123",
+        ),
+        Some(PathBuf::from("/repo"))
+    );
+    assert_eq!(
+        DiffApp::review_load_repo_for_target(Path::new(""), "123"),
+        None
+    );
+}
+
+#[test]
+fn review_patch_source_uses_review_selector_label() {
+    let options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "review owner/repo#123".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let app = DiffApp::new(
+        options.clone(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+
+    assert_eq!(diff_selector_text(&options), " Review ");
+    assert_eq!(app.current_diff_choice(), Some(DiffChoice::Review));
+    assert_eq!(app.selected_diff_menu_choice(), None);
+    assert!(app.diff_menu_choices().contains(&DiffChoice::Review));
+    assert!(app.selectable_diff_choices().contains(&DiffChoice::Review));
+}
+
+#[test]
+fn review_load_preserves_include_untracked_for_followup_local_diffs() {
+    let options = DiffOptions {
+        include_untracked: true,
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    let review_options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "review owner/repo#123".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        include_untracked: false,
+        ..DiffOptions::default()
+    };
+    let (tx, rx) = oneshot::channel();
+    let _ = tx.send(Ok((review_options, changeset_with_context_lines(1))));
+    app.pending_review_load = Some(PendingReviewLoad {
+        error_prefix: "review unavailable".to_owned(),
+        rx,
+    });
+
+    app.drain_pending_review_load();
+
+    assert!(app.options.include_untracked);
+    assert!(
+        app.options_for_choice(DiffChoice::All)
+            .expect("all choice should be available")
+            .include_untracked
+    );
 }
 
 #[test]
@@ -5705,6 +5853,53 @@ fn tab_keys_cycle_diff_choice() {
         .expect("shift-tab should queue diff load");
     assert_eq!(load.options.source, DiffSource::Worktree);
     assert_eq!(load.options.scope, DiffScope::All);
+}
+
+#[test]
+fn tab_from_review_diff_cycles_to_all_changes() {
+    let options = DiffOptions {
+        source: DiffSource::Patch(PatchSource::Text {
+            label: "review owner/repo#123".to_owned(),
+            patch: Arc::from(&b""[..]),
+        }),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .expect("tab should cycle from review to all changes");
+
+    assert!(!should_quit);
+    let load = app
+        .pending_diff_load
+        .as_ref()
+        .expect("tab should queue all-changes diff load");
+    assert_eq!(load.options.source, DiffSource::Worktree);
+    assert_eq!(load.options.scope, DiffScope::All);
+}
+
+#[test]
+fn tab_from_pending_review_load_cancels_to_current_all_changes() {
+    let mut app = DiffApp::new(
+        DiffOptions::default(),
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.pending_review_load = Some(pending_review_load());
+
+    let should_quit = app
+        .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+        .expect("tab should cycle pending review to all changes");
+
+    assert!(!should_quit);
+    assert!(app.pending_review_load.is_none());
+    assert!(app.pending_diff_load.is_none());
+    assert_eq!(app.options, DiffOptions::default());
 }
 
 #[test]
@@ -7739,10 +7934,11 @@ fn filter_input_blocks_annotation_hover_drafts() {
 #[test]
 fn diff_modals_suppress_stale_mouse_hover_highlight() {
     type ModalOpener = (&'static str, fn(&mut DiffApp));
-    let modal_openers: [ModalOpener; 6] = [
+    let modal_openers: [ModalOpener; 7] = [
         ("help menu", |app| app.toggle_help_menu()),
         ("options menu", |app| app.open_options_menu()),
         ("diff menu", |app| app.open_diff_menu()),
+        ("review input", |app| app.open_review_input()),
         ("branch menu", |app| {
             app.comparison_branches = vec!["main".to_owned(), "topic".to_owned()];
             app.toggle_branch_menu(BranchMenu::Head);
@@ -9903,6 +10099,14 @@ fn pending_diff_load(options: DiffOptions) -> PendingDiffLoad {
         options,
         error_prefix: "load failed".to_owned(),
         refresh_branch_metadata: false,
+        rx,
+    }
+}
+
+fn pending_review_load() -> PendingReviewLoad {
+    let (_tx, rx) = oneshot::channel();
+    PendingReviewLoad {
+        error_prefix: "review unavailable".to_owned(),
         rx,
     }
 }
