@@ -143,10 +143,13 @@ string = "green"
 Color values support hex colors, ANSI indexes such as `ansi-5`, and named
 terminal colors.
 
-`cursor` colors the filter-bar input caret. `cursor_line_bg` colors the mouse-hover
-highlight on diff code columns (Neovim-style cursorline). With `colorscheme = "system"`,
-`cursor` uses the terminal default foreground (`reset`) and `cursor_line_bg` uses ANSI
-palette index 237 so both follow the emulator theme unless overridden in `[colors]`.
+`cursor` colors the block caret in all text inputs (filter bar, menus, review ID, and
+annotation compose). Built-in schemes usually set it to the palette foreground (often the
+scheme's white or brightest text), similar to Neovim's normal-mode cursor. Override with
+`cursor` in config or `[colors]`. `cursor_line_bg` colors the mouse-hover highlight on diff
+code columns (Neovim-style cursorline). With `colorscheme = "system"`, `cursor` uses the
+terminal default foreground (`reset`) and `cursor_line_bg` uses ANSI palette index 237 so
+both follow the emulator theme unless overridden in `[colors]`.
 
 Common override keys include:
 

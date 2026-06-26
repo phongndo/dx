@@ -2,7 +2,10 @@ use mark_diff::{DiffLineKind, FileStatus};
 use mark_syntax::DiffSignStyle;
 use ratatui::prelude::{Color, Modifier, Span, Style};
 
-use crate::theme::{DIFF_INDICATOR, DiffTheme, line_gutter_bg};
+use crate::{
+    controls::INPUT_CURSOR,
+    theme::{DIFF_INDICATOR, DiffTheme, line_gutter_bg},
+};
 
 pub(crate) fn file_sidebar_style(status: FileStatus, theme: DiffTheme) -> Style {
     let color = match status {
@@ -76,4 +79,35 @@ pub(crate) fn statusline_bg(theme: DiffTheme) -> Color {
     } else {
         theme.statusline_bg
     }
+}
+
+pub(crate) fn input_cursor_style(theme: DiffTheme, bg: Color) -> Style {
+    Style::default()
+        .fg(theme.cursor)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Split `text` on the block caret and apply `cursor_style` to each caret span.
+pub(crate) fn spans_with_input_cursor(
+    text: &str,
+    text_style: Style,
+    cursor_style: Style,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut rest = text;
+    while let Some(index) = rest.find(INPUT_CURSOR) {
+        if index > 0 {
+            spans.push(Span::styled(rest[..index].to_owned(), text_style));
+        }
+        spans.push(Span::styled(INPUT_CURSOR.to_owned(), cursor_style));
+        rest = &rest[index + INPUT_CURSOR.len()..];
+    }
+    if !rest.is_empty() {
+        spans.push(Span::styled(rest.to_owned(), text_style));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), text_style));
+    }
+    spans
 }

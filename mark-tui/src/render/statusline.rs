@@ -345,10 +345,7 @@ pub(crate) fn push_filter_bar_cursor_span(
     push_filter_bar_span(
         spans,
         INPUT_CURSOR,
-        Style::default()
-            .fg(app.theme.cursor)
-            .bg(statusline_bg(app.theme))
-            .add_modifier(Modifier::BOLD),
+        crate::render::style::input_cursor_style(app.theme, statusline_bg(app.theme)),
         remaining,
     );
 }
