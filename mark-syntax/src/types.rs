@@ -36,6 +36,7 @@ pub const DEFAULT_MAX_HIGHLIGHT_LINE_BYTES: usize = 8 * 1024;
 pub const DEFAULT_HIGHLIGHT_CACHE_ENTRIES: usize = 512;
 pub const DEFAULT_HIGHLIGHT_QUEUE_ENTRIES: usize = 512;
 pub const DEFAULT_HIGHLIGHT_PREFETCH_VIEWPORTS: usize = 1;
+pub const MAX_NOTIFICATION_TIMEOUT_MS: u64 = 10_000;
 
 pub(crate) const CORE_LANGUAGES: &[&str] = &[
     "rust",
@@ -217,7 +218,35 @@ pub(crate) struct StoredSyntaxSettings {
     #[serde(default)]
     pub(crate) diff: StoredDiffSettings,
     #[serde(default)]
+    pub(crate) notifications: StoredNotificationSettings,
+    #[serde(default)]
     pub(crate) limits: StoredSyntaxLimits,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub(crate) struct StoredNotificationSettings {
+    pub(crate) mode: Option<NotificationMode>,
+    pub(crate) corner: Option<ToastCorner>,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) max_visible: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NotificationMode {
+    #[default]
+    Default,
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToastCorner {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -283,6 +312,7 @@ pub struct SyntaxSettings {
     pub colors: ColorOverrides,
     pub transparent_background: bool,
     pub diff: DiffSettings,
+    pub notifications: NotificationSettings,
     pub limits: SyntaxLimits,
 }
 
@@ -298,7 +328,27 @@ impl Default for SyntaxSettings {
             colors: ColorOverrides::default(),
             transparent_background: false,
             diff: DiffSettings::default(),
+            notifications: NotificationSettings::default(),
             limits: SyntaxLimits::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotificationSettings {
+    pub mode: NotificationMode,
+    pub corner: ToastCorner,
+    pub timeout_ms: u64,
+    pub max_visible: usize,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            mode: NotificationMode::Default,
+            corner: ToastCorner::TopRight,
+            timeout_ms: 1_500,
+            max_visible: 3,
         }
     }
 }

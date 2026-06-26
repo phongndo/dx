@@ -29,6 +29,7 @@ use crate::render::{
 };
 use crate::{
     app::*, controls::*, editor::*, keymap::*, live_diff::*, model::*, syntax::*, theme::*,
+    toast::*,
 };
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -39,8 +40,9 @@ use mark_diff::{
 };
 use mark_syntax::{
     ColorOverrides, DiffContextExpansion, DiffSettings, HighlightedLine, LayoutSetting,
-    SyntaxClass, SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig,
-    SyntaxThemeSource,
+    MAX_NOTIFICATION_TIMEOUT_MS, NotificationMode, NotificationSettings, SyntaxClass,
+    SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
+    ToastCorner,
 };
 use ratatui::layout::Rect;
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
@@ -1214,10 +1216,7 @@ fn ctrl_g_without_editable_target_does_not_scroll_to_top() {
 
     assert!(!should_quit);
     assert_eq!(app.scroll, 1);
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no editable focused hunk")
-    );
+    assert_eq!(app.toasts.latest_text(), Some("no editable focused hunk"));
 }
 
 #[test]
@@ -1244,6 +1243,32 @@ fn ctrl_g_without_editor_launch_preserves_queued_events() {
 }
 
 #[test]
+fn debug_notifications_emit_terminal_event_toasts() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toasts = Toasts::new(NotificationSettings {
+        mode: NotificationMode::Debug,
+        corner: ToastCorner::TopRight,
+        timeout_ms: 1_500,
+        max_visible: 3,
+    });
+    let (_tx, rx) = mpsc::channel(1);
+    let mut events = crate::event_reader::TerminalEventReader::from_receiver(rx);
+    let mut live_diff = None;
+
+    let should_quit = handle_event(
+        &mut app,
+        Event::Resize(120, 40),
+        &mut live_diff,
+        &mut events,
+    )
+    .expect("resize should be handled");
+
+    assert!(!should_quit);
+    assert_eq!(app.toasts.latest_text(), Some("event: resize 120x40"));
+}
+
+#[test]
 fn editable_hunk_without_configured_editor_sets_notice() {
     let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -1251,7 +1276,7 @@ fn editable_hunk_without_configured_editor_sets_notice() {
 
     assert!(!app.prepare_focused_hunk_editor_for_test(None));
     assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
+        app.toasts.latest_text(),
         Some("set $VISUAL, $GIT_EDITOR, or $EDITOR to edit focused hunk")
     );
     assert!(app.error_log.is_none());
@@ -3208,7 +3233,7 @@ fn copy_error_log_key_ignores_absent_error_log() {
 
     assert!(!should_quit);
     assert!(app.error_log.is_none());
-    assert!(app.notice.is_none());
+    assert!(app.toasts.is_empty());
 }
 
 #[test]
@@ -3232,7 +3257,7 @@ fn copy_error_log_key_does_not_preempt_filter_input() {
     assert!(!should_quit);
     assert_eq!(app.file_filter_input, "e");
     assert_eq!(app.file_filter, "e");
-    assert!(app.notice.is_none());
+    assert!(app.toasts.is_empty());
 }
 
 #[test]
@@ -3255,7 +3280,7 @@ fn copy_error_log_key_does_not_preempt_branch_menu_input() {
 
     assert!(!should_quit);
     assert_eq!(app.branch_menu_input, "e");
-    assert!(app.notice.is_none());
+    assert!(app.toasts.is_empty());
 }
 
 #[test]
@@ -3271,10 +3296,7 @@ fn copy_error_log_writes_full_log_to_clipboard_sequence() {
         String::from_utf8(output).expect("OSC 52 sequence should be UTF-8"),
         osc52_clipboard_sequence("reload failed:\nfatal: bad revision")
     );
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("error log copied")
-    );
+    assert_eq!(app.toasts.latest_text(), Some("error log copied"));
     assert_eq!(
         app.error_log.as_deref(),
         Some("reload failed:\nfatal: bad revision")
@@ -3290,10 +3312,7 @@ fn copy_error_log_without_log_shows_notice_without_writing() {
     app.copy_error_log_to_writer(&mut output);
 
     assert!(output.is_empty());
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no error log to copy")
-    );
+    assert_eq!(app.toasts.latest_text(), Some("no error log to copy"));
 }
 
 #[test]
@@ -3335,10 +3354,7 @@ fn copy_marks_writes_structured_json_to_clipboard_sequence() {
         String::from_utf8(output).expect("OSC 52 sequence should be UTF-8"),
         osc52_clipboard_sequence(expected)
     );
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("marks copied")
-    );
+    assert_eq!(app.toasts.latest_text(), Some("marks copied"));
 }
 
 #[test]
@@ -3464,10 +3480,7 @@ fn copy_marks_without_marks_shows_notice_without_writing() {
     app.copy_marks_to_writer(&mut output);
 
     assert!(output.is_empty());
-    assert_eq!(
-        app.notice.as_ref().map(|notice| notice.text.as_str()),
-        Some("no marks to copy")
-    );
+    assert_eq!(app.toasts.latest_text(), Some("no marks to copy"));
 }
 
 #[test]
@@ -3482,17 +3495,55 @@ fn notices_expire_after_ttl() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.set_notice("reloaded");
-    let expires_at = app.notice.as_ref().unwrap().expires_at;
-    assert_eq!(app.notice.as_ref().unwrap().text, "reloaded");
+    let expires_at = app.toasts.visible().next().unwrap().expires_at;
+    assert_eq!(app.toasts.latest_text().unwrap(), "reloaded");
     app.dirty = false;
 
-    app.expire_notice(expires_at - Duration::from_millis(1));
-    assert!(app.notice.is_some());
+    app.expire_toasts(expires_at - Duration::from_millis(1));
+    assert!(!app.toasts.is_empty());
     assert!(!app.dirty);
 
-    app.expire_notice(expires_at);
-    assert!(app.notice.is_none());
+    app.expire_toasts(expires_at);
+    assert!(app.toasts.is_empty());
     assert!(app.dirty);
+}
+
+#[test]
+fn notices_mark_dirty_when_configured_max_visible_is_zero() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toasts = Toasts::new(NotificationSettings {
+        mode: NotificationMode::Default,
+        corner: ToastCorner::TopRight,
+        timeout_ms: 1_500,
+        max_visible: 0,
+    });
+    app.dirty = false;
+    app.terminal_clear_requested = true;
+
+    app.set_notice("editor closed");
+
+    assert!(app.dirty);
+    assert!(app.terminal_clear_requested);
+    assert_eq!(app.toasts.latest_text(), Some("editor closed"));
+}
+
+#[test]
+fn notices_clamp_oversized_timeout() {
+    let mut toasts = Toasts::new(NotificationSettings {
+        mode: NotificationMode::Default,
+        corner: ToastCorner::TopRight,
+        timeout_ms: u64::MAX,
+        max_visible: 3,
+    });
+
+    let before = Instant::now();
+    assert!(toasts.push(ToastLevel::Info, "saved"));
+    let after = Instant::now();
+
+    let expires_at = toasts.visible().next().unwrap().expires_at;
+    assert!(expires_at >= before);
+    assert!(expires_at <= after + Duration::from_millis(MAX_NOTIFICATION_TIMEOUT_MS));
 }
 
 #[test]
@@ -4081,17 +4132,27 @@ fn statusline_header_shows_pending_diff_load() {
 }
 
 #[test]
-fn statusline_header_shows_notice_text() {
+fn notice_toasts_render_as_overlay() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 10))
+        .expect("test terminal should be created");
 
     app.set_notice("editor closed; reloading");
 
     let line = statusline_header_line(&app, 120);
     let text = line_text(&line);
-
     assert_eq!(text.width(), 120);
-    assert!(text.contains("editor closed; reloading"));
+    assert!(!text.contains("editor closed; reloading"));
+
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("draw should succeed");
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("editor closed; reloading"))
+    );
 }
 
 #[test]
@@ -4619,6 +4680,12 @@ syntax_highlighting = true
 line_wrapping = false
 colorscheme = "system"
 
+[notifications]
+mode = "default"
+corner = "top-right"
+timeout_ms = 1500
+max_visible = 3
+
 [diff]
 line_background = "none"
 context_expand = 7
@@ -4635,6 +4702,7 @@ context_expand = 7
             syntax_enabled: false,
             line_wrapping: true,
             color_scheme: ColorSchemeChoice::Tokyonight,
+            ..default_options_draft()
         },
         OptionsMenuItem::LiveReload,
     )
@@ -4643,6 +4711,9 @@ context_expand = 7
     let saved = fs::read_to_string(&path).expect("settings file should be readable");
     let saved: toml::Value = toml::from_str(&saved).expect("settings should stay valid toml");
     let diff = saved["diff"].as_table().expect("diff should stay a table");
+    let notifications = saved["notifications"]
+        .as_table()
+        .expect("notifications should stay a table");
 
     assert_eq!(saved["mode"].as_str(), Some("enabled"));
     assert_eq!(saved["layout"].as_str(), Some("split"));
@@ -4657,6 +4728,26 @@ context_expand = 7
     assert_eq!(
         diff.get("context_expand").and_then(toml::Value::as_integer),
         Some(7)
+    );
+    assert_eq!(
+        notifications.get("mode").and_then(toml::Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        notifications.get("corner").and_then(toml::Value::as_str),
+        Some("top-right")
+    );
+    assert_eq!(
+        notifications
+            .get("timeout_ms")
+            .and_then(toml::Value::as_integer),
+        Some(1_500)
+    );
+    assert_eq!(
+        notifications
+            .get("max_visible")
+            .and_then(toml::Value::as_integer),
+        Some(3)
     );
 
     let _ = fs::remove_dir_all(dir);
@@ -4688,6 +4779,7 @@ expand_context = 9
             syntax_enabled: false,
             line_wrapping: true,
             color_scheme: ColorSchemeChoice::Tokyonight,
+            ..default_options_draft()
         },
         OptionsMenuItem::ContextExpansion,
     )
@@ -4735,6 +4827,7 @@ wrap_lines = false
             syntax_enabled: false,
             line_wrapping: true,
             color_scheme: ColorSchemeChoice::Tokyonight,
+            ..default_options_draft()
         },
         OptionsMenuItem::LineWrapping,
     )
@@ -4746,6 +4839,66 @@ wrap_lines = false
     assert_eq!(saved["line_wrapping"].as_bool(), Some(true));
     assert!(saved.get("word_wrap").is_none());
     assert!(saved.get("wrap_lines").is_none());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn options_menu_notification_persistence_updates_nested_setting() {
+    let dir = temp_test_dir("settings-menu-persist-notifications");
+    let path = dir.join("config.toml");
+    fs::create_dir_all(&dir).expect("test dir should be created");
+    fs::write(
+        &path,
+        r#"
+[notifications]
+mode = "default"
+corner = "top-right"
+timeout_ms = 1500
+max_visible = 3
+"#,
+    )
+    .expect("settings file should be written");
+
+    persist_options_menu_draft_to_path(
+        &path,
+        OptionsDraft {
+            notification_mode: NotificationMode::Debug,
+            toast_corner: ToastCorner::BottomLeft,
+            toast_timeout_ms: 5_000,
+            toast_max_visible: 5,
+            ..default_options_draft()
+        },
+        OptionsMenuItem::ToastCorner,
+    )
+    .expect("settings draft should persist");
+
+    let saved = fs::read_to_string(&path).expect("settings file should be readable");
+    let saved: toml::Value = toml::from_str(&saved).expect("settings should stay valid toml");
+    let notifications = saved["notifications"]
+        .as_table()
+        .expect("notifications should be a table");
+
+    assert_eq!(
+        notifications.get("mode").and_then(toml::Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        notifications.get("corner").and_then(toml::Value::as_str),
+        Some("bottom-left")
+    );
+    assert_eq!(
+        notifications
+            .get("timeout_ms")
+            .and_then(toml::Value::as_integer),
+        Some(1_500)
+    );
+    assert_eq!(
+        notifications
+            .get("max_visible")
+            .and_then(toml::Value::as_integer),
+        Some(3)
+    );
 
     let _ = fs::remove_dir_all(dir);
 }
@@ -4846,6 +4999,95 @@ fn options_menu_toggles_line_wrapping_and_clamps_horizontal_scroll() {
     assert_eq!(app.horizontal_scroll, 0);
     assert_eq!(app.max_horizontal_scroll(), 0);
     assert_eq!(app.option_value(OptionsMenuItem::LineWrapping), "[x]");
+}
+
+#[test]
+fn options_menu_cycles_notification_settings() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.open_options_menu();
+    app.set_options_menu_selection(6);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::NotificationMode)
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should toggle notification mode");
+    assert_eq!(
+        app.syntax_settings.notifications.mode,
+        NotificationMode::Debug
+    );
+    assert!(app.toasts.debug_enabled());
+
+    app.set_options_menu_selection(7);
+    assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::ToastCorner));
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should cycle toast corner");
+    assert_eq!(
+        app.syntax_settings.notifications.corner,
+        ToastCorner::BottomRight
+    );
+    assert_eq!(app.toasts.corner(), ToastCorner::BottomRight);
+
+    app.set_options_menu_selection(8);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::ToastTimeout)
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .expect("right should cycle toast timeout");
+    assert_eq!(app.syntax_settings.notifications.timeout_ms, 2_500);
+
+    app.set_options_menu_selection(9);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::ToastMaxVisible)
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .expect("right should cycle toast max visible");
+    assert_eq!(app.syntax_settings.notifications.max_visible, 4);
+}
+
+#[test]
+fn options_menu_cycles_custom_notification_values_to_nearest_choices() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.syntax_settings.notifications.timeout_ms = 2_000;
+    app.syntax_settings.notifications.max_visible = 10;
+
+    app.open_options_menu();
+    app.set_options_menu_selection(8);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::ToastTimeout)
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .expect("right should cycle custom toast timeout to next choice");
+    assert_eq!(app.syntax_settings.notifications.timeout_ms, 2_500);
+    assert_eq!(
+        app.last_persisted_options_menu_draft
+            .expect("timeout change should be persisted")
+            .0
+            .toast_timeout_ms,
+        2_500
+    );
+
+    app.set_options_menu_selection(9);
+    assert_eq!(
+        app.highlighted_option(),
+        Some(OptionsMenuItem::ToastMaxVisible)
+    );
+    app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+        .expect("right should cycle custom toast max visible to nearest choice");
+    assert_eq!(app.syntax_settings.notifications.max_visible, 5);
+    assert_eq!(
+        app.last_persisted_options_menu_draft
+            .expect("max visible change should be persisted")
+            .0
+            .toast_max_visible,
+        5
+    );
 }
 
 #[test]
@@ -5238,6 +5480,10 @@ fn options_menu_omits_branch_options_for_branch_diff() {
             OptionsMenuItem::SyntaxHighlighting,
             OptionsMenuItem::LineWrapping,
             OptionsMenuItem::ColorScheme,
+            OptionsMenuItem::NotificationMode,
+            OptionsMenuItem::ToastCorner,
+            OptionsMenuItem::ToastTimeout,
+            OptionsMenuItem::ToastMaxVisible,
         ]
     );
 }
@@ -5349,7 +5595,7 @@ fn options_menu_draws_centered_floating_menu() {
         })
         .expect("floating options menu should render title");
 
-    assert!(title.0 >= 4 && title.0 < 12, "title row was {}", title.0);
+    assert!(title.0 >= 3 && title.0 < 12, "title row was {}", title.0);
     assert!(title.1 > 30 && title.1 < 48, "title column was {}", title.1);
     assert!(rows.iter().any(|row| row.contains("> │")));
     assert!(rows.iter().any(|row| row.contains("Layout")));
@@ -9995,6 +10241,21 @@ fn visible_paths(app: &DiffApp) -> Vec<&str> {
         .filter_map(|file| app.changeset.files.get(*file))
         .map(|file| file.display_path())
         .collect()
+}
+
+fn default_options_draft() -> OptionsDraft {
+    OptionsDraft {
+        layout: LayoutSetting::Dynamic,
+        live_updates_enabled: true,
+        context_expansion: DiffContextExpansion::Lines(20),
+        syntax_enabled: true,
+        line_wrapping: false,
+        color_scheme: ColorSchemeChoice::System,
+        notification_mode: NotificationMode::Default,
+        toast_corner: ToastCorner::TopRight,
+        toast_timeout_ms: 1_500,
+        toast_max_visible: 3,
+    }
 }
 
 fn span_text(spans: &[Span<'_>]) -> String {

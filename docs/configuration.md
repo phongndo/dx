@@ -32,6 +32,12 @@ live_reload = true
 syntax_highlighting = true
 line_wrapping = false
 
+[notifications]
+mode = "default"
+corner = "top-right"
+timeout_ms = 1500
+max_visible = 3
+
 [diff]
 line_background = "subtle"
 gutter_background = "delta"
@@ -157,6 +163,29 @@ line_wrapping = false
 when it is narrow.
 Changing Layout in the settings menu persists this value; the layout keybinding
 only toggles split/unified for the current session.
+
+## Notifications
+
+Toasts are separate from the error pane. The error pane is still used for
+errors and longer diagnostic text; toasts are for short, transient feedback.
+
+```toml
+[notifications]
+mode = "default"      # default, debug
+corner = "top-right"  # top-left, top-right, bottom-left, bottom-right
+timeout_ms = 1500
+max_visible = 3
+```
+
+`mode = "default"` stays quiet except for feedback that would otherwise be hard
+to infer, such as a copy action completing or a requested action having no
+matching target. `mode = "debug"` also emits a toast for each terminal event to
+make UI behavior easier to trace.
+
+The configured `timeout_ms` is clamped to 10,000 ms.
+
+These notification settings can also be changed from the interactive settings
+menu.
 
 `[diff]` controls visual emphasis:
 

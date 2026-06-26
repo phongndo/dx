@@ -436,6 +436,12 @@ layout = "unified"
 live_reload = false
 syntax_highlighting = false
 line_wrapping = true
+
+[notifications]
+mode = "debug"
+corner = "bottom-left"
+timeout_ms = 2500
+max_visible = 5
 "#,
     )
     .expect("settings should parse");
@@ -444,9 +450,42 @@ line_wrapping = true
     assert!(!settings.live_reload);
     assert!(!settings.syntax_highlighting);
     assert!(settings.line_wrapping);
+    assert_eq!(settings.notifications.mode, NotificationMode::Debug);
+    assert_eq!(settings.notifications.corner, ToastCorner::BottomLeft);
+    assert_eq!(settings.notifications.timeout_ms, 2_500);
+    assert_eq!(settings.notifications.max_visible, 5);
 
     let settings = parse_settings("layout = \"dynamic\"\n").expect("settings should parse");
     assert_eq!(settings.layout, Some(LayoutSetting::Dynamic));
+}
+
+#[test]
+fn syntax_settings_clamp_notification_max_visible_to_positive() {
+    let settings = parse_settings(
+        r#"
+[notifications]
+max_visible = 0
+"#,
+    )
+    .expect("settings should parse");
+
+    assert_eq!(settings.notifications.max_visible, 1);
+}
+
+#[test]
+fn syntax_settings_clamp_notification_timeout_to_max() {
+    let settings = parse_settings(
+        r#"
+[notifications]
+timeout_ms = 9223372036854775807
+"#,
+    )
+    .expect("settings should parse");
+
+    assert_eq!(
+        settings.notifications.timeout_ms,
+        MAX_NOTIFICATION_TIMEOUT_MS
+    );
 }
 
 #[test]

@@ -17,7 +17,6 @@ use ratatui::prelude::Color;
 use crate::keymap::GlobalAction;
 
 pub(crate) const EVENT_POLL: Duration = Duration::from_millis(120);
-pub(crate) const NOTICE_TTL: Duration = Duration::from_millis(1_500);
 pub(crate) const LIVE_RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 pub(crate) const MAX_READY_EVENTS_PER_FRAME: usize = 64;
 pub(crate) const MOUSE_SCROLL_HISTORY_SIZE: usize = 3;
