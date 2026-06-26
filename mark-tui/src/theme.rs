@@ -39,7 +39,7 @@ pub(crate) const SYNTAX_THEME_ID: u64 = 0;
 pub(crate) const MAX_INLINE_DIFF_LINE_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_INLINE_DIFF_TOKENS: usize = 256;
 pub(crate) const MAX_INLINE_DIFF_CACHE_ENTRIES: usize = 512;
-pub(crate) const MAX_BRANCH_MENU_ROWS: usize = 10;
+pub(crate) const MAX_BRANCH_MENU_ROWS: usize = 16;
 pub(crate) const FILE_SIDEBAR_MIN_WIDTH: u16 = 20;
 pub(crate) const FILE_SIDEBAR_MAX_WIDTH: u16 = 40;
 pub(crate) const FILE_SIDEBAR_MIN_DIFF_WIDTH: u16 = 30;
@@ -47,7 +47,8 @@ pub(crate) const BRANCH_COMPARISON_SEPARATOR: &str = " → ";
 pub(crate) const CURRENT_BRANCH_MARKER: &str = "●";
 pub(crate) const BASE_BRANCH_MARKER: &str = "⌂";
 pub(crate) const STATUSLINE_SELECTOR_GAP: &str = " ";
-pub(crate) const HELP_MENU_WIDTH: u16 = 90;
+pub(crate) const FLOATING_MENU_MIN_WIDTH: u16 = 24;
+pub(crate) const FLOATING_MENU_MIN_HEIGHT: u16 = 5;
 pub(crate) const HELP_KEY_COLUMN_WIDTH: usize = 17;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

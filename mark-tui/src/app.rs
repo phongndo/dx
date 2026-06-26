@@ -55,8 +55,10 @@ use crate::{
         },
         draw,
         menus::{
-            branch_menu_block, branch_menu_width, color_scheme_picker_block, commit_menu_block,
-            diff_menu_block, diff_selector_width, help_menu_list_visible_rows,
+            branch_menu_block, branch_menu_list_visible_rows, branch_menu_width,
+            color_scheme_picker_block, color_scheme_picker_list_visible_rows, commit_menu_block,
+            commit_menu_list_visible_rows, diff_menu_block, diff_selector_width,
+            help_menu_list_visible_rows,
         },
         sidebar::max_file_sidebar_width,
         viewport_plan::{
@@ -1980,8 +1982,8 @@ impl DiffApp {
             self.select_highlighted_branch_match();
         } else if !self.apply_branch_input_key(key) {
             match key.code {
-                KeyCode::PageDown => self.move_branch_selection(MAX_BRANCH_MENU_ROWS as isize),
-                KeyCode::PageUp => self.move_branch_selection(-(MAX_BRANCH_MENU_ROWS as isize)),
+                KeyCode::PageDown => self.move_branch_selection(self.branch_menu_rows() as isize),
+                KeyCode::PageUp => self.move_branch_selection(-(self.branch_menu_rows() as isize)),
                 KeyCode::Home => self.set_branch_selection(0),
                 KeyCode::End => self.set_branch_selection(usize::MAX),
                 _ => {}
@@ -2007,8 +2009,8 @@ impl DiffApp {
             self.select_highlighted_commit_match();
         } else if !self.apply_commit_input_key(key) {
             match key.code {
-                KeyCode::PageDown => self.move_commit_selection(MAX_BRANCH_MENU_ROWS as isize),
-                KeyCode::PageUp => self.move_commit_selection(-(MAX_BRANCH_MENU_ROWS as isize)),
+                KeyCode::PageDown => self.move_commit_selection(self.commit_menu_rows() as isize),
+                KeyCode::PageUp => self.move_commit_selection(-(self.commit_menu_rows() as isize)),
                 KeyCode::Home => self.set_commit_selection(0),
                 KeyCode::End => self.set_commit_selection(usize::MAX),
                 _ => {}
@@ -2961,13 +2963,41 @@ impl DiffApp {
             .any(|entry| &entry.options == options)
     }
 
-    pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> MarkResult<()> {
+    fn handle_open_menu_mouse_scroll(&mut self, kind: MouseEventKind) -> bool {
+        let delta = match kind {
+            MouseEventKind::ScrollDown => 1,
+            MouseEventKind::ScrollUp => -1,
+            _ => return false,
+        };
+
         if self.help_menu_open {
-            match mouse.kind {
-                MouseEventKind::ScrollDown => self.scroll_help_menu(1),
-                MouseEventKind::ScrollUp => self.scroll_help_menu(-1),
-                MouseEventKind::Down(MouseButton::Left) => self.close_help_menu(),
-                _ => {}
+            self.scroll_help_menu(delta);
+        } else if self.color_scheme_picker_open {
+            self.move_color_scheme_selection(delta);
+        } else if self.branch_menu_open.is_some() {
+            self.move_branch_selection(delta);
+        } else if self.commit_menu_open {
+            self.move_commit_selection(delta);
+        } else if self.diff_menu_open {
+            self.move_diff_menu_selection(delta);
+        } else if self.options_menu_open {
+            self.move_options_menu_selection(delta);
+        } else {
+            return false;
+        }
+
+        self.mouse_scroll.reset();
+        true
+    }
+
+    pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> MarkResult<()> {
+        if self.handle_open_menu_mouse_scroll(mouse.kind) {
+            return Ok(());
+        }
+
+        if self.help_menu_open {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                self.close_help_menu();
             }
             self.mouse_scroll.reset();
             return Ok(());
@@ -2990,14 +3020,6 @@ impl DiffApp {
 
         if self.color_scheme_picker_open {
             match mouse.kind {
-                MouseEventKind::ScrollDown => {
-                    self.move_color_scheme_selection(1);
-                    return Ok(());
-                }
-                MouseEventKind::ScrollUp => {
-                    self.move_color_scheme_selection(-1);
-                    return Ok(());
-                }
                 MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => {
                     if let Some(index) = self.color_scheme_index_at(mouse.column, mouse.row) {
                         self.set_color_scheme_selection(index);
@@ -3021,34 +3043,9 @@ impl DiffApp {
         }
 
         if self.options_menu_open {
-            match mouse.kind {
-                MouseEventKind::ScrollDown => {
-                    self.move_options_menu_selection(1);
-                    return Ok(());
-                }
-                MouseEventKind::ScrollUp => {
-                    self.move_options_menu_selection(-1);
-                    return Ok(());
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    self.close_options_menu();
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-
-        if self.branch_menu_open.is_some() {
-            match mouse.kind {
-                MouseEventKind::ScrollDown => {
-                    self.move_branch_selection(1);
-                    return Ok(());
-                }
-                MouseEventKind::ScrollUp => {
-                    self.move_branch_selection(-1);
-                    return Ok(());
-                }
-                _ => {}
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                self.close_options_menu();
+                return Ok(());
             }
         }
 
@@ -4225,23 +4222,24 @@ impl DiffApp {
             .collect()
     }
 
-    pub(crate) fn visible_color_scheme_rows(&self) -> usize {
-        self.filtered_color_schemes()
-            .len()
-            .clamp(1, MAX_COLOR_SCHEME_MENU_ROWS)
-    }
-
     pub(crate) fn max_color_scheme_selection(&self) -> usize {
         self.filtered_color_schemes().len().saturating_sub(1)
     }
 
+    fn color_scheme_picker_rows(&self) -> usize {
+        color_scheme_picker_list_visible_rows(self, self.terminal_area)
+            .unwrap_or(MAX_COLOR_SCHEME_MENU_ROWS)
+            .max(1)
+    }
+
     pub(crate) fn ensure_color_scheme_selection_visible(&mut self) {
         let len = self.filtered_color_schemes().len();
+        let visible_rows = self.color_scheme_picker_rows();
         ensure_selector_scroll(
             &mut self.color_scheme_scroll,
             self.color_scheme_selected,
             len,
-            MAX_COLOR_SCHEME_MENU_ROWS,
+            visible_rows,
         );
     }
 
@@ -4679,9 +4677,7 @@ impl DiffApp {
         }
 
         let branch_index = row_index.saturating_sub(pinned_rows);
-        let rendered_choices = self
-            .visible_branch_menu_rows()
-            .min(inner.height.saturating_sub(2 + pinned_rows as u16) as usize);
+        let rendered_choices = inner.height.saturating_sub(2 + pinned_rows as u16) as usize;
         if branch_index >= rendered_choices {
             return None;
         }
@@ -4731,7 +4727,13 @@ impl DiffApp {
     }
 
     pub(crate) fn ensure_branch_selection_visible(&mut self) {
-        self.ensure_branch_selection_visible_for_rows(MAX_BRANCH_MENU_ROWS);
+        self.ensure_branch_selection_visible_for_rows(self.branch_menu_rows());
+    }
+
+    fn branch_menu_rows(&self) -> usize {
+        branch_menu_list_visible_rows(self, self.terminal_area)
+            .unwrap_or(MAX_BRANCH_MENU_ROWS)
+            .max(1)
     }
 
     pub(crate) fn ensure_branch_selection_visible_for_rows(&mut self, visible_rows: usize) {
@@ -4749,26 +4751,13 @@ impl DiffApp {
     }
 
     pub(crate) fn max_branch_menu_scroll(&self) -> usize {
-        self.max_branch_menu_scroll_for_rows(MAX_BRANCH_MENU_ROWS)
+        self.max_branch_menu_scroll_for_rows(self.branch_menu_rows())
     }
 
     pub(crate) fn max_branch_menu_scroll_for_rows(&self, visible_rows: usize) -> usize {
         self.filtered_branches()
             .len()
             .saturating_sub(visible_rows.max(1))
-    }
-
-    pub(crate) fn visible_branch_menu_rows(&self) -> usize {
-        self.filtered_branches().len().min(MAX_BRANCH_MENU_ROWS)
-    }
-
-    pub(crate) fn branch_menu_height(&self) -> usize {
-        let menu = self.branch_menu_open.unwrap_or(BranchMenu::Base);
-        let pinned_rows = usize::from(self.selected_branch_menu_choice(menu).is_some());
-        self.visible_branch_menu_rows()
-            .max(usize::from(self.filtered_branches().is_empty()))
-            .saturating_add(4)
-            .saturating_add(pinned_rows)
     }
 
     pub(crate) fn is_show_diff(&self) -> bool {
@@ -4790,22 +4779,10 @@ impl DiffApp {
         }
     }
 
-    pub(crate) fn commit_menu_height(&self) -> usize {
-        let pinned_rows = usize::from(self.selected_commit_menu_choice().is_some());
-        self.visible_commit_menu_rows()
-            .max(usize::from(self.filtered_commits().is_empty()))
-            .saturating_add(4)
-            .saturating_add(pinned_rows)
-    }
-
     pub(crate) fn commit_menu_width(&self) -> u16 {
         let commit_width = commit_menu_width(&self.comparison_commits) as usize;
         let input_width = self.commit_menu_input.width().saturating_add(4);
         commit_width.max(input_width).max(36).saturating_add(4) as u16
-    }
-
-    pub(crate) fn visible_commit_menu_rows(&self) -> usize {
-        self.filtered_commits().len().min(MAX_BRANCH_MENU_ROWS)
     }
 
     pub(crate) fn max_commit_menu_selection(&self) -> usize {
@@ -4819,7 +4796,13 @@ impl DiffApp {
     }
 
     pub(crate) fn ensure_commit_selection_visible(&mut self) {
-        self.ensure_commit_selection_visible_for_rows(MAX_BRANCH_MENU_ROWS);
+        self.ensure_commit_selection_visible_for_rows(self.commit_menu_rows());
+    }
+
+    fn commit_menu_rows(&self) -> usize {
+        commit_menu_list_visible_rows(self, self.terminal_area)
+            .unwrap_or(MAX_BRANCH_MENU_ROWS)
+            .max(1)
     }
 
     pub(crate) fn ensure_commit_selection_visible_for_rows(&mut self, visible_rows: usize) {
@@ -5073,9 +5056,7 @@ impl DiffApp {
         }
 
         let commit_index = row_index.saturating_sub(pinned_rows);
-        let rendered_choices = self
-            .visible_commit_menu_rows()
-            .min(inner.height.saturating_sub(2 + pinned_rows as u16) as usize);
+        let rendered_choices = inner.height.saturating_sub(2 + pinned_rows as u16) as usize;
         if commit_index >= rendered_choices {
             return None;
         }
@@ -7604,7 +7585,7 @@ impl DiffApp {
             comparison_commits(&self.changeset.repo, self.show_rev.as_deref());
         self.commit_menu_scroll = self
             .commit_menu_scroll
-            .min(self.max_commit_menu_scroll_for_rows(MAX_BRANCH_MENU_ROWS));
+            .min(self.max_commit_menu_scroll_for_rows(self.commit_menu_rows()));
         self.total_stats = total_stats;
         self.base_changeset = changeset.clone();
         self.changeset = changeset;
@@ -7714,7 +7695,7 @@ impl DiffApp {
         self.comparison_commits = comparison_commits(&changeset.repo, self.show_rev.as_deref());
         self.commit_menu_scroll = self
             .commit_menu_scroll
-            .min(self.max_commit_menu_scroll_for_rows(MAX_BRANCH_MENU_ROWS));
+            .min(self.max_commit_menu_scroll_for_rows(self.commit_menu_rows()));
         self.total_stats = changeset.stats();
         self.base_changeset = changeset.clone();
         self.changeset = changeset;
