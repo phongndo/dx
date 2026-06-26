@@ -12,8 +12,9 @@ use crate::render::{
     },
     headers::{file_header_line, file_separator_line, hunk_header_line, hunk_header_spans},
     menus::{
-        diff_comparison_label, diff_selector_text, diff_selector_width, help_menu_bg,
-        help_menu_content_rows, help_menu_lines, help_menu_row_spans, help_menu_title_color,
+        branch_menu_block, diff_comparison_label, diff_selector_text, diff_selector_width,
+        help_menu_bg, help_menu_content_rows, help_menu_lines, help_menu_list_visible_rows,
+        help_menu_row_line, help_menu_row_spans, help_menu_title_color,
     },
     sidebar::file_sidebar_lines,
     statusline::{
@@ -3571,6 +3572,111 @@ fn help_menu_lines_use_configured_keymap_labels() {
 }
 
 #[test]
+fn help_menu_long_key_labels_do_not_cover_descriptions() {
+    let width = 80;
+    let keymap = Keymap::default();
+    let lines = help_menu_lines(
+        width,
+        help_menu_content_rows(width),
+        DiffTheme::default(),
+        &keymap,
+    );
+    let text: Vec<_> = lines.iter().map(line_text).collect();
+
+    assert!(
+        text.iter()
+            .any(|line| line.contains("Cmd-←/→, Ctrl-A/E  line start / end"))
+    );
+}
+
+#[test]
+fn help_menu_long_key_labels_leave_description_space() {
+    let keymap = Keymap::default();
+    let line = help_menu_row_line(
+        HelpMenuRow::Binding(
+            HelpMenuKey::Static("Very-Long-Key-Label-That-Would-Otherwise-Cover-Text"),
+            "description remains visible",
+        ),
+        48,
+        DiffTheme::default(),
+        &keymap,
+    );
+
+    assert!(line_text(&line).contains("description remains"));
+}
+
+#[test]
+fn help_menu_rendered_rows_keep_key_description_separator() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toggle_help_menu();
+    for character in "line start".chars() {
+        app.push_help_menu_input(character);
+    }
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("help menu draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Cmd-←/→, Ctrl-A/E  line start / end")),
+        "rendered rows did not keep key/description separator:\n{}",
+        rows.join("\n")
+    );
+}
+
+#[test]
+fn help_menu_rendered_rows_are_wide_enough_for_default_descriptions() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toggle_help_menu();
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 60))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("help menu draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("next / previous grep match")),
+        "rendered rows cut off grep description:\n{}",
+        rows.join("\n")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("edit active mark in editor")),
+        "rendered rows cut off annotation description:\n{}",
+        rows.join("\n")
+    );
+}
+
+#[test]
+fn help_menu_height_is_capped_in_tall_terminals() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.toggle_help_menu();
+
+    let visible_rows = help_menu_list_visible_rows(
+        &app,
+        Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 60,
+        },
+    )
+    .expect("help menu layout should exist");
+
+    assert_eq!(visible_rows, 32);
+}
+
+#[test]
 fn help_menu_ctrl_n_scrolls_without_tab() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -5287,6 +5393,66 @@ fn options_menu_scrolls_selected_setting_into_short_terminal() {
 }
 
 #[test]
+fn scrollable_menu_draws_thin_scrollbar() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.open_options_menu();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 5))
+        .expect("test terminal should be created");
+
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("options menu draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(
+        rows.iter().any(|row| row.contains("┃")),
+        "scrollable menu should show a thin scrollbar:\n{}",
+        rows.join("\n")
+    );
+}
+
+#[test]
+fn scrollable_menu_scrollbar_reaches_bottom_at_last_page() {
+    let options = DiffOptions {
+        source: DiffSource::Base("branch-00".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.branch_base = Some("branch-00".to_owned());
+    app.branch_head = Some("branch-01".to_owned());
+    app.current_head = Some("branch-01".to_owned());
+    app.comparison_branches = (0..59).map(|index| format!("branch-{index:02}")).collect();
+    app.toggle_branch_menu(BranchMenu::Base);
+    app.set_branch_selection(usize::MAX);
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 60))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("branch menu draw should succeed");
+
+    let menu_area = app
+        .rendered_branch_menu_area
+        .expect("branch menu should render");
+    let inner = branch_menu_block(app.theme, BranchMenu::Base).inner(menu_area);
+    let scrollbar_column = inner.x.saturating_add(inner.width).saturating_sub(1);
+    let scrollbar_bottom = inner.y.saturating_add(inner.height).saturating_sub(1);
+    let symbol = terminal
+        .backend()
+        .buffer()
+        .cell((scrollbar_column, scrollbar_bottom))
+        .expect("scrollbar cell should exist")
+        .symbol();
+
+    assert_eq!(symbol, "┃");
+}
+
+#[test]
 fn selector_menus_do_not_render_footers() {
     let keymap = Keymap::parse(
         r#"
@@ -5372,6 +5538,25 @@ fn colorscheme_picker_draws_input_dropdown() {
         buffer.cell((column, row)).expect("cell should exist").fg,
         app.theme.muted
     );
+}
+
+#[test]
+fn colorscheme_picker_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.set_terminal_area(Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 60,
+    });
+    app.options_menu_draft.color_scheme = ColorSchemeChoice::System;
+    app.open_color_scheme_picker();
+
+    app.move_color_scheme_selection(9);
+
+    assert_eq!(app.color_scheme_selected, 9);
+    assert_eq!(app.color_scheme_scroll, 0);
 }
 
 #[test]
@@ -6032,16 +6217,43 @@ fn branch_menu_scrolls_visible_branch_window() {
     );
     app.comparison_branches = (0..12).map(|index| format!("branch-{index:02}")).collect();
 
-    assert_eq!(app.visible_branch_menu_rows(), MAX_BRANCH_MENU_ROWS);
-    assert_eq!(app.max_branch_menu_scroll(), 1);
+    assert_eq!(app.max_branch_menu_scroll(), 0);
 
     app.move_branch_selection(99);
     assert_eq!(app.branch_menu_selected, 10);
-    assert_eq!(app.branch_menu_scroll, 1);
+    assert_eq!(app.branch_menu_scroll, 0);
 
     app.move_branch_selection(-1);
     assert_eq!(app.branch_menu_selected, 9);
-    assert_eq!(app.branch_menu_scroll, 1);
+    assert_eq!(app.branch_menu_scroll, 0);
+}
+
+#[test]
+fn branch_menu_expands_to_show_long_branch_when_terminal_allows() {
+    let options = DiffOptions {
+        source: DiffSource::Base("main".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    let long_branch = "feature/really-long-branch-name-that-should-fit-without-being-cut-off";
+    app.branch_base = Some("main".to_owned());
+    app.branch_head = Some("feature".to_owned());
+    app.current_head = Some("feature".to_owned());
+    app.comparison_branches = vec!["main".to_owned(), long_branch.to_owned()];
+    app.toggle_branch_menu(BranchMenu::Base);
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("branch menu draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(rows.iter().any(|row| row.contains(long_branch)));
 }
 
 #[test]
@@ -6078,6 +6290,44 @@ fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
             .iter()
             .any(|row| row.contains("branch-02") && row.contains("│"))
     );
+}
+
+#[test]
+fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
+    let options = DiffOptions {
+        source: DiffSource::Base("branch-00".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.set_terminal_area(Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 60,
+    });
+    app.branch_base = Some("branch-00".to_owned());
+    app.branch_head = Some("branch-01".to_owned());
+    app.current_head = Some("branch-01".to_owned());
+    app.comparison_branches = (0..40).map(|index| format!("branch-{index:02}")).collect();
+    app.toggle_branch_menu(BranchMenu::Base);
+
+    app.move_branch_selection(20);
+    assert_eq!(app.branch_menu_selected, 20);
+    assert_eq!(app.branch_menu_scroll, 0);
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 60))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("branch menu draw should succeed");
+
+    assert_eq!(app.branch_menu_scroll, 0);
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(rows.iter().any(|row| row.contains("branch-01")));
 }
 
 #[test]
@@ -6120,6 +6370,83 @@ fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
             .iter()
             .any(|row| row.contains("0000001") && row.contains("commit-01") && row.contains("│"))
     );
+}
+
+#[test]
+fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
+    let options = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(1),
+        DiffLayoutMode::Unified,
+    );
+    app.set_terminal_area(Rect {
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 60,
+    });
+    app.show_rev = Some("0000000".to_owned());
+    app.comparison_commits = (0..40)
+        .map(|index| GitCommit {
+            sha: format!("{index:07x}"),
+            subject: format!("commit-{index:02}"),
+        })
+        .collect();
+    app.toggle_commit_menu();
+
+    app.move_commit_selection(20);
+    assert_eq!(app.commit_menu_selected, 20);
+    assert_eq!(app.commit_menu_scroll, 0);
+
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 60))
+        .expect("test terminal should be created");
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("commit menu draw should succeed");
+
+    assert_eq!(app.commit_menu_scroll, 0);
+    let rows = buffer_rows(terminal.backend().buffer());
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("0000001") && row.contains("commit-01"))
+    );
+}
+
+#[test]
+fn mouse_wheel_over_commit_menu_scrolls_menu_not_diff() {
+    let options = DiffOptions {
+        source: DiffSource::Show("HEAD".to_owned()),
+        ..DiffOptions::default()
+    };
+    let mut app = DiffApp::new(
+        options,
+        changeset_with_context_lines(60),
+        DiffLayoutMode::Unified,
+    );
+    app.set_viewport_rows(10);
+    assert!(app.max_scroll() > 0);
+    app.comparison_commits = (0..12)
+        .map(|index| GitCommit {
+            sha: format!("{index:07x}"),
+            subject: format!("commit-{index:02}"),
+        })
+        .collect();
+    app.toggle_commit_menu();
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    })
+    .expect("mouse wheel should be handled");
+
+    assert_eq!(app.scroll, 0);
+    assert_eq!(app.commit_menu_selected, 1);
 }
 
 #[test]
