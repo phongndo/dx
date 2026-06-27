@@ -26,7 +26,8 @@ fn temp_syntax_test_dir(name: &str) -> PathBuf {
 fn language_pack_version_matches_workspace_dependency() {
     let workspace_manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("mark-syntax manifest should be in a workspace member")
+        .and_then(|crates_dir| crates_dir.parent())
+        .expect("mark-syntax manifest should be in crates/ under the workspace")
         .join("Cargo.toml");
     let manifest = fs::read_to_string(workspace_manifest).unwrap();
     let manifest: toml::Value = toml::from_str(&manifest).unwrap();
