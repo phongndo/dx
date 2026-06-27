@@ -879,7 +879,17 @@ fn statusline_header_hides_pending_live_reload() {
 }
 
 #[test]
-fn debug_live_reload_emits_success_toast() {
+fn live_reload_suppresses_toast_in_default_notification_mode() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.mark_live_reload_pending();
+
+    assert!(app.notifications.toasts.is_empty());
+}
+
+#[test]
+fn live_reload_emits_success_toast_in_debug_notification_mode() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.notifications.toasts = Toasts::new(NotificationSettings {
