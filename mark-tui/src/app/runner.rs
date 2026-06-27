@@ -21,13 +21,13 @@ pub(crate) async fn run_loop(
         app.start_due_filter_apply();
         app.drain_filter_worker();
         app.drain_syntax();
-        if app.dirty {
-            if app.terminal_clear_requested {
+        if app.runtime.dirty {
+            if app.runtime.terminal_clear_requested {
                 terminal.clear()?;
-                app.terminal_clear_requested = false;
+                app.runtime.terminal_clear_requested = false;
             }
             terminal.draw(|frame| draw(frame, app))?;
-            app.dirty = false;
+            app.runtime.dirty = false;
             app.start_diff_prefetches();
         }
         app.start_pending_editor_reload();
@@ -79,40 +79,40 @@ pub(crate) fn sync_live_diff(
     live_updates: bool,
 ) {
     if !live_updates
-        || !app.live_updates_allowed
-        || !app.live_updates_enabled
-        || !live_diff_supported(&app.options)
+        || !app.jobs.live_updates_allowed
+        || !app.jobs.live_updates_enabled
+        || !live_diff_supported(&app.document.options)
     {
         *live_diff = None;
-        app.live_diff_failed_options = None;
-        app.live_reload_invalidated = false;
-        app.live_reload_pending = false;
+        app.jobs.live_diff_failed_options = None;
+        app.jobs.live_reload_invalidated = false;
+        app.jobs.live_reload_pending = false;
         app.clear_cached_diff_choices();
         return;
     }
 
     if live_diff
         .as_ref()
-        .is_some_and(|live_diff| live_diff.options == app.options)
+        .is_some_and(|live_diff| live_diff.options == app.document.options)
     {
         return;
     }
-    if app.live_diff_failed_options.as_ref() == Some(&app.options) {
+    if app.jobs.live_diff_failed_options.as_ref() == Some(&app.document.options) {
         return;
     }
 
-    match LiveDiff::start(app.options.clone(), &app.changeset.repo) {
+    match LiveDiff::start(app.document.options.clone(), &app.document.changeset.repo) {
         Ok(next_live_diff) => {
-            app.live_diff_failed_options = None;
-            app.live_reload_invalidated = false;
-            app.live_reload_pending = false;
+            app.jobs.live_diff_failed_options = None;
+            app.jobs.live_reload_invalidated = false;
+            app.jobs.live_reload_pending = false;
             *live_diff = Some(next_live_diff);
         }
         Err(error) => {
             *live_diff = None;
-            app.live_diff_failed_options = Some(app.options.clone());
-            app.live_reload_invalidated = false;
-            app.live_reload_pending = false;
+            app.jobs.live_diff_failed_options = Some(app.document.options.clone());
+            app.jobs.live_reload_invalidated = false;
+            app.jobs.live_reload_pending = false;
             app.clear_cached_diff_choices();
             app.set_error_log(format!("live reload unavailable: {error}"));
         }
@@ -130,14 +130,14 @@ pub(crate) fn drain_live_reloads(
     while let Ok(reload) = live_reload_rx.try_recv() {
         match reload {
             LiveDiffReload::Started => {
-                if !app.live_reload_pending {
+                if !app.jobs.live_reload_pending {
                     app.mark_live_reload_pending();
                 }
             }
             LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset),
             LiveDiffReload::Loaded(Err(error)) => {
-                app.live_reload_invalidated = false;
-                app.live_reload_pending = false;
+                app.jobs.live_reload_invalidated = false;
+                app.jobs.live_reload_pending = false;
                 app.set_error_log(format!("live reload failed: {error}"));
             }
         }
@@ -160,10 +160,13 @@ pub(crate) fn handle_event(
         Event::Key(key) if app.handle_annotation_save_or_cancel_key(key) => Ok(false),
         Event::Key(key) if is_quit_key(key) => Ok(true),
         Event::Key(key)
-            if app.keymap.matches_single(GlobalAction::EditHunk, key)
+            if app
+                .config
+                .keymap
+                .matches_single(GlobalAction::EditHunk, key)
                 && app.editor_shortcut_available() =>
         {
-            if app.annotation_draft.is_some() {
+            if app.annotations_state.annotation_draft.is_some() {
                 let paused_events = events.pause();
                 app.open_annotation_draft_in_editor();
                 paused_events.resume()?;

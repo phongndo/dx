@@ -68,14 +68,14 @@ async fn run_diff_with_live_updates_and_syntax_async(
         SyntaxStartupMode::Disabled
     };
     let mut app = DiffApp::new_with_syntax(options, changeset, layout, syntax_mode);
-    app.live_updates_allowed = live_updates;
-    app.live_updates_enabled = live_updates && app.live_updates_enabled;
+    app.jobs.live_updates_allowed = live_updates;
+    app.jobs.live_updates_enabled = live_updates && app.jobs.live_updates_enabled;
 
     let mut cleanup = TerminalCleanup::install()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let terminal_width = terminal.size()?.width;
-    if default_layout_for_width(terminal_width) != app.layout {
+    if default_layout_for_width(terminal_width) != app.viewport.layout {
         app.apply_responsive_layout(terminal_width);
     }
     let mut live_diff = None;
@@ -108,43 +108,43 @@ pub fn benchmark_diff_view(
         syntax_mode,
     );
     let open_micros = open_start.elapsed().as_micros();
-    let row_count = app.model.len();
-    let syntax_enabled = app.syntax.is_some();
+    let row_count = app.document.model.len();
+    let syntax_enabled = app.config.syntax.is_some();
 
     let file_filter_start = Instant::now();
-    let _ = app.search_index.search("src", "");
+    let _ = app.document.search_index.search("src", "");
     let file_filter_micros = file_filter_start.elapsed().as_micros();
 
     let legacy_file_filter_start = Instant::now();
-    let _ = filtered_file_indices(&app.changeset, "src", "");
+    let _ = filtered_file_indices(&app.document.changeset, "src", "");
     let legacy_file_filter_micros = legacy_file_filter_start.elapsed().as_micros();
 
     let grep_filter_start = Instant::now();
-    let _ = app.search_index.search("", "line");
+    let _ = app.document.search_index.search("", "line");
     let grep_filter_micros = grep_filter_start.elapsed().as_micros();
 
     let legacy_grep_filter_start = Instant::now();
-    let _ = filtered_file_indices(&app.changeset, "", "line");
+    let _ = filtered_file_indices(&app.document.changeset, "", "line");
     let legacy_grep_filter_micros = legacy_grep_filter_start.elapsed().as_micros();
 
     let file_filter_apply_start = Instant::now();
-    app.file_filter = "src".to_owned();
+    app.filters.file_filter = "src".to_owned();
     app.apply_filters(false);
     let file_filter_apply_micros = file_filter_apply_start.elapsed().as_micros();
 
-    app.file_filter.clear();
+    app.filters.file_filter.clear();
     app.apply_filters(false);
 
     let grep_filter_apply_start = Instant::now();
-    app.grep_filter = "line".to_owned();
+    app.filters.grep_filter = "line".to_owned();
     app.apply_filters(true);
     let grep_filter_apply_micros = grep_filter_apply_start.elapsed().as_micros();
 
-    app.grep_filter.clear();
+    app.filters.grep_filter.clear();
     app.apply_filters(false);
 
     let (hunk_navigation_steps, hunk_navigation_total_micros, hunk_navigation_max_micros) =
-        benchmark_hunk_navigation(&app.model);
+        benchmark_hunk_navigation(&app.document.model);
 
     app.set_viewport_rows(options.viewport_rows);
 
@@ -153,7 +153,7 @@ pub fn benchmark_diff_view(
     let initial_render_micros = initial_render_start.elapsed().as_micros();
 
     let positions = benchmark_scroll_positions(
-        app.model.len(),
+        app.document.model.len(),
         options.viewport_rows,
         options.scroll_step,
         options.max_scroll_steps,
@@ -231,12 +231,12 @@ pub(crate) fn sanitize_benchmark_options(
 }
 
 pub(crate) fn render_viewport_for_benchmark(app: &mut DiffApp, width: usize) {
-    app.prepare_syntax_for_viewport(app.viewport_rows);
-    for offset in 0..app.viewport_rows {
-        let Some(row) = app.model.row(app.scroll + offset) else {
+    app.prepare_syntax_for_viewport(app.viewport.viewport_rows);
+    for offset in 0..app.viewport.viewport_rows {
+        let Some(row) = app.document.model.row(app.viewport.scroll + offset) else {
             continue;
         };
-        let _ = render_row(app, app.scroll + offset, row, width);
+        let _ = render_row(app, app.viewport.scroll + offset, row, width);
     }
 }
 
@@ -281,13 +281,17 @@ pub(crate) fn benchmark_scroll_positions(
 }
 
 pub(crate) fn settle_syntax_for_benchmark(app: &mut DiffApp) -> Option<Duration> {
-    app.syntax.as_ref()?;
+    app.config.syntax.as_ref()?;
 
     let start = Instant::now();
     let timeout = Duration::from_secs(30);
     loop {
         app.drain_syntax();
-        let idle = app.syntax.as_ref().is_none_or(SyntaxRuntime::is_idle);
+        let idle = app
+            .config
+            .syntax
+            .as_ref()
+            .is_none_or(SyntaxRuntime::is_idle);
         if idle || start.elapsed() >= timeout {
             return Some(start.elapsed());
         }

@@ -19,7 +19,7 @@ use crate::{
 };
 
 pub(crate) fn file_sidebar_width(app: &DiffApp, area_width: u16) -> u16 {
-    if !app.file_sidebar_open {
+    if !app.sidebar.file_sidebar_open {
         return 0;
     }
 
@@ -28,7 +28,8 @@ pub(crate) fn file_sidebar_width(app: &DiffApp, area_width: u16) -> u16 {
         return 0;
     }
 
-    app.file_sidebar_width
+    app.sidebar
+        .file_sidebar_width
         .unwrap_or_else(|| file_sidebar_desired_width(app))
         .clamp(FILE_SIDEBAR_MIN_WIDTH, max_width)
 }
@@ -44,10 +45,11 @@ pub(crate) fn max_file_sidebar_width(area_width: u16) -> u16 {
 
 pub(crate) fn file_sidebar_desired_width(app: &DiffApp) -> u16 {
     let content_width = app
+        .document
         .model
         .visible_files()
         .iter()
-        .filter_map(|file| app.changeset.files.get(*file))
+        .filter_map(|file| app.document.changeset.files.get(*file))
         .map(|file| {
             let stats = file_sidebar_stats(file);
             let stats_width = if stats.is_empty() {
@@ -79,7 +81,7 @@ pub(crate) fn draw_file_sidebar(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
             area.width as usize,
             area.height as usize,
         )))
-        .style(Style::default().bg(base_bg(app.theme))),
+        .style(Style::default().bg(base_bg(app.config.theme))),
         area,
     );
 }
@@ -89,12 +91,17 @@ pub(crate) fn file_sidebar_lines(app: &DiffApp, width: usize, height: usize) -> 
         return Vec::new();
     }
 
-    let theme = app.theme;
+    let theme = app.config.theme;
     let mut lines = Vec::with_capacity(height);
     let visible_files = height;
     let content_width = width.saturating_sub(1);
-    for position in app.file_sidebar_scroll..app.file_sidebar_scroll.saturating_add(visible_files) {
-        let Some(file_index) = app.model.visible_files().get(position).copied() else {
+    for position in app.sidebar.file_sidebar_scroll
+        ..app
+            .sidebar
+            .file_sidebar_scroll
+            .saturating_add(visible_files)
+    {
+        let Some(file_index) = app.document.model.visible_files().get(position).copied() else {
             lines.push(file_sidebar_line(
                 "",
                 Style::default().bg(base_bg(theme)),
@@ -103,13 +110,13 @@ pub(crate) fn file_sidebar_lines(app: &DiffApp, width: usize, height: usize) -> 
             ));
             continue;
         };
-        let Some(file) = app.changeset.files.get(file_index) else {
+        let Some(file) = app.document.changeset.files.get(file_index) else {
             continue;
         };
 
         lines.push(file_sidebar_entry_line(
             file,
-            file_index == app.selected_file,
+            file_index == app.sidebar.selected_file,
             content_width,
             theme,
         ));

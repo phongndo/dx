@@ -3,140 +3,37 @@ use ratatui::{
     Frame,
     layout::{Alignment, Rect},
     prelude::{Color, Line, Modifier, Span, Style, Text},
-    widgets::{
-        Block, BorderType, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
-    },
+    widgets::{Block, BorderType, Clear, Padding, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{DiffApp, OptionsMenuItem, color_scheme_label, option_label},
-    controls::{
-        BranchMenu, DiffChoice, GitCommit, INPUT_CURSOR, commit_short_sha, is_review_options,
-    },
+    controls::{BranchMenu, DiffChoice, GitCommit, commit_short_sha, is_review_options},
     keymap::Keymap,
     render::{
+        selector_menu::{
+            ScrollableSelectorMenu, SelectorMenuInput, SelectorMenuLinesRequest,
+            centered_floating_rect, floating_menu_fits_terminal, floating_menu_max_height,
+            floating_menu_max_inner_height, floating_menu_max_width,
+            render_scrollable_selector_menu, selector_border_color, selector_count_color,
+            selector_disabled_line, selector_entry_line, selector_highlight_color,
+            selector_menu_lines, selector_menu_list_rows, selector_menu_outer_height,
+            selector_menu_outer_width, selector_menu_rendered_list_rows, selector_prompt_color,
+            selector_row_style, selector_scrollbar_needed, selector_title_color,
+            selector_width_with_scrollbar, text_with_cursor,
+        },
         style::{base_bg, header_bg, input_cursor_style, spans_with_input_cursor},
         text::{fit_padded, fit_with_ellipsis},
     },
-    theme::{
-        DiffTheme, FLOATING_MENU_MIN_HEIGHT, FLOATING_MENU_MIN_WIDTH, HELP_KEY_COLUMN_WIDTH,
-        HELP_MENU_ROWS, HelpMenuKey, HelpMenuRow,
-    },
+    theme::{DiffTheme, HELP_KEY_COLUMN_WIDTH, HELP_MENU_ROWS, HelpMenuKey, HelpMenuRow},
 };
 
-/// Vertical chrome: bordered block title row + input line + separator (see `selector_input_line`).
-pub(crate) const SELECTOR_MENU_FIXED_INNER_ROWS: u16 = 2;
-const FLOATING_MENU_HORIZONTAL_MARGIN: u16 = 2;
-const FLOATING_MENU_MAX_HEIGHT: u16 = 36;
-const FLOATING_MENU_MAX_HEIGHT_PERCENT: u16 = 70;
-const FLOATING_MENU_SMALL_HEIGHT: u16 = 12;
 const HELP_DESCRIPTION_MIN_WIDTH: usize = 24;
-const SELECTOR_SCROLLBAR_TRACK: &str = "│";
-const SELECTOR_SCROLLBAR_THUMB: &str = "┃";
-
-pub(crate) fn floating_menu_fits_terminal(area: Rect) -> bool {
-    area.width >= FLOATING_MENU_MIN_WIDTH && area.height >= FLOATING_MENU_MIN_HEIGHT
-}
-
-pub(crate) fn floating_menu_max_width(area: Rect, content_width: u16) -> u16 {
-    let terminal_cap = floating_menu_width_cap(area.width);
-    if terminal_cap == 0 {
-        return 0;
-    }
-
-    content_width.clamp(1, terminal_cap)
-}
-
-pub(crate) fn floating_menu_max_height(area: Rect, content_height: u16) -> u16 {
-    let terminal_cap = floating_menu_height_cap(area.height);
-    if terminal_cap == 0 {
-        return 0;
-    }
-
-    content_height.clamp(1, terminal_cap)
-}
-
-fn floating_menu_width_cap(width: u16) -> u16 {
-    if width <= FLOATING_MENU_HORIZONTAL_MARGIN.saturating_add(1) {
-        width
-    } else {
-        width.saturating_sub(FLOATING_MENU_HORIZONTAL_MARGIN)
-    }
-}
-
-fn floating_menu_height_cap(height: u16) -> u16 {
-    if height <= FLOATING_MENU_SMALL_HEIGHT {
-        return height;
-    }
-
-    height
-        .saturating_mul(FLOATING_MENU_MAX_HEIGHT_PERCENT)
-        .saturating_div(100)
-        .clamp(FLOATING_MENU_MIN_HEIGHT, FLOATING_MENU_MAX_HEIGHT)
-        .min(height)
-}
-
-pub(crate) fn floating_menu_max_inner_height(area: Rect) -> u16 {
-    floating_menu_max_height(area, u16::MAX)
-        .saturating_sub(2)
-        .max(1)
-}
-
-pub(crate) fn centered_floating_rect(area: Rect, width: u16, height: u16) -> Rect {
-    Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    }
-}
-
-pub(crate) fn selector_menu_list_rows(inner_height: u16, pinned_rows: u16) -> usize {
-    inner_height
-        .saturating_sub(SELECTOR_MENU_FIXED_INNER_ROWS)
-        .saturating_sub(pinned_rows)
-        .max(1) as usize
-}
-
-pub(crate) fn selector_menu_outer_height(area: Rect, list_rows: usize, pinned_rows: u16) -> u16 {
-    let inner_list = list_rows.max(1) as u16;
-    let inner = inner_list
-        .saturating_add(SELECTOR_MENU_FIXED_INNER_ROWS)
-        .saturating_add(pinned_rows);
-    let block = inner.saturating_add(2);
-    floating_menu_max_height(area, block)
-}
-
-pub(crate) fn selector_menu_outer_width(content_width: usize) -> u16 {
-    content_width.saturating_add(4).min(usize::from(u16::MAX)) as u16
-}
-
-fn selector_menu_rendered_list_rows(
-    area: Rect,
-    item_count: usize,
-    pinned_rows: u16,
-) -> Option<usize> {
-    if !floating_menu_fits_terminal(area) {
-        return None;
-    }
-
-    let list_cap = selector_menu_list_rows(floating_menu_max_inner_height(area), pinned_rows);
-    let list_rows = item_count.max(1).min(list_cap);
-    let outer_height = selector_menu_outer_height(area, list_rows, pinned_rows);
-    if outer_height == 0 {
-        return None;
-    }
-
-    let inner_height = outer_height.saturating_sub(2);
-    let fixed_rows = SELECTOR_MENU_FIXED_INNER_ROWS.saturating_add(pinned_rows);
-    Some(inner_height.saturating_sub(fixed_rows) as usize)
-}
 
 pub(crate) fn branch_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    let menu = app.branch_menu_open?;
-    if app.comparison_branches.is_empty() {
+    let menu = app.refs.branch_menu_open?;
+    if app.refs.comparison_branches.is_empty() {
         return None;
     }
 
@@ -145,7 +42,7 @@ pub(crate) fn branch_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option
 }
 
 pub(crate) fn commit_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    if !app.commit_menu_open || app.comparison_commits.is_empty() {
+    if !app.refs.commit_menu_open || app.refs.comparison_commits.is_empty() {
         return None;
     }
 
@@ -154,96 +51,11 @@ pub(crate) fn commit_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option
 }
 
 pub(crate) fn color_scheme_picker_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    if !app.color_scheme_picker_open {
+    if !app.overlays.color_scheme_picker_open {
         return None;
     }
 
     selector_menu_rendered_list_rows(area, app.filtered_color_schemes().len(), 1)
-}
-
-fn selector_width_with_scrollbar(width: u16, has_scrollbar: bool) -> u16 {
-    width.saturating_add(u16::from(has_scrollbar))
-}
-
-fn selector_scrollbar_needed(item_count: usize, visible_rows: usize) -> bool {
-    visible_rows > 0 && item_count > visible_rows
-}
-
-fn selector_list_width(inner_width: u16, has_scrollbar: bool) -> usize {
-    inner_width.saturating_sub(u16::from(has_scrollbar)) as usize
-}
-
-fn render_selector_scrollbar(
-    frame: &mut Frame<'_>,
-    inner: Rect,
-    list_start_row: u16,
-    item_count: usize,
-    visible_rows: usize,
-    scroll: usize,
-    theme: DiffTheme,
-) {
-    if !selector_scrollbar_needed(item_count, visible_rows) || inner.width == 0 {
-        return;
-    }
-
-    let y = inner.y.saturating_add(list_start_row);
-    let max_height = inner.y.saturating_add(inner.height).saturating_sub(y);
-    let height = (visible_rows.min(usize::from(u16::MAX)) as u16).min(max_height);
-    if height == 0 {
-        return;
-    }
-
-    let area = Rect {
-        x: inner.x,
-        y,
-        width: inner.width,
-        height,
-    };
-    let bg = base_bg(theme);
-    let max_scroll = item_count.saturating_sub(visible_rows.max(1));
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .track_symbol(Some(SELECTOR_SCROLLBAR_TRACK))
-        .track_style(Style::default().fg(selector_count_color(theme)).bg(bg))
-        .thumb_symbol(SELECTOR_SCROLLBAR_THUMB)
-        .thumb_style(Style::default().fg(selector_title_color(theme)).bg(bg));
-    // `scroll` is the top visible row, so the scrollbar range is the number of
-    // possible top-row positions rather than the number of rows in the list.
-    let mut state = ScrollbarState::new(max_scroll.saturating_add(1))
-        .position(scroll.min(max_scroll))
-        .viewport_content_length(visible_rows);
-    frame.render_stateful_widget(scrollbar, area, &mut state);
-}
-
-struct ScrollableSelectorMenu {
-    menu_area: Rect,
-    block: Block<'static>,
-    inner: Rect,
-    lines: Vec<Line<'static>>,
-    list_start_row: u16,
-    item_count: usize,
-    visible_rows: usize,
-    scroll: usize,
-    theme: DiffTheme,
-}
-
-fn render_scrollable_selector_menu(frame: &mut Frame<'_>, menu: ScrollableSelectorMenu) {
-    frame.render_widget(Clear, menu.menu_area);
-    frame.render_widget(menu.block, menu.menu_area);
-    frame.render_widget(
-        Paragraph::new(Text::from(menu.lines)).style(Style::default().bg(base_bg(menu.theme))),
-        menu.inner,
-    );
-    render_selector_scrollbar(
-        frame,
-        menu.inner,
-        menu.list_start_row,
-        menu.item_count,
-        menu.visible_rows,
-        menu.scroll,
-        menu.theme,
-    );
 }
 
 pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
@@ -254,64 +66,66 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
     };
     app.set_rendered_diff_menu_area(Some(menu_area));
 
-    let block = diff_menu_block(app.theme);
+    let block = diff_menu_block(app.config.theme);
     let inner = block.inner(menu_area);
-    let selected = app.diff_menu.selected.min(choices.len().saturating_sub(1));
-    let mut lines = vec![selector_input_line(
-        &app.diff_menu.input,
-        app.diff_menu.input_cursor,
-        inner.width as usize,
-        app.theme,
-        choices.len(),
-        app.selectable_diff_choices().len(),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    if let Some(choice) = app.selected_diff_menu_choice() {
-        lines.push(selector_disabled_line(
-            choice.label(),
-            &app.diff_choice_detail(choice),
-            inner.width as usize,
-            app.theme,
-        ));
-    }
-    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
-    if choices.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching diff types",
+    let selected = app
+        .overlays
+        .diff_menu
+        .selected
+        .min(choices.len().saturating_sub(1));
+    let pinned_lines = app
+        .selected_diff_menu_choice()
+        .map(|choice| {
+            selector_disabled_line(
+                choice.label(),
+                &app.diff_choice_detail(choice),
                 inner.width as usize,
-                app.theme,
-            ));
-        }
-    } else {
-        lines.extend(
-            choices
-                .iter()
-                .enumerate()
-                .take(remaining_rows)
-                .map(|(index, choice)| {
-                    let highlighted = index == selected;
-                    selector_entry_line(
-                        choice.label(),
-                        &app.diff_choice_detail(*choice),
-                        inner.width as usize,
-                        app.theme,
-                        highlighted,
-                    )
-                }),
-        );
-    }
+                app.config.theme,
+            )
+        })
+        .into_iter()
+        .collect();
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.overlays.diff_menu.input,
+                input_cursor: app.overlays.diff_menu.input_cursor,
+                matched: choices.len(),
+                total: app.selectable_diff_choices().len(),
+                theme: app.config.theme,
+            },
+            inner,
+            items: &choices,
+            scroll: 0,
+            selected,
+            pinned_lines,
+            empty_message: " no matching diff types",
+        },
+        |_, choice, width, highlighted| {
+            selector_entry_line(
+                choice.label(),
+                &app.diff_choice_detail(*choice),
+                width,
+                app.config.theme,
+                highlighted,
+            )
+        },
+    );
 
-    frame.render_widget(Clear, menu_area);
-    frame.render_widget(block, menu_area);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.theme))),
-        inner,
+    render_scrollable_selector_menu(
+        frame,
+        ScrollableSelectorMenu {
+            menu_area,
+            block,
+            inner,
+            content,
+            theme: app.config.theme,
+        },
     );
 }
 
 pub(crate) fn diff_menu_area(app: &DiffApp, area: Rect, choices: &[DiffChoice]) -> Option<Rect> {
-    if !app.diff_menu_open
+    if !app.overlays.diff_menu_open
         || !floating_menu_fits_terminal(area)
         || app.diff_menu_choices().is_empty()
     {
@@ -354,22 +168,26 @@ pub(crate) fn draw_review_input(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
     };
     app.set_rendered_review_input_area(Some(menu_area));
 
-    let block = review_input_block(app.theme);
+    let block = review_input_block(app.config.theme);
     let inner = block.inner(menu_area);
-    let bg = base_bg(app.theme);
-    let input = text_with_cursor(&app.review_input, app.review_input_cursor);
+    let bg = base_bg(app.config.theme);
+    let input = text_with_cursor(&app.overlays.review_input, app.overlays.review_input_cursor);
     let prompt = fit_padded(&format!("> {input}"), inner.width as usize);
     let hint = fit_padded("Review ID for this repo", inner.width as usize);
-    let prompt_style = Style::default().fg(selector_prompt_color(app.theme)).bg(bg);
+    let prompt_style = Style::default()
+        .fg(selector_prompt_color(app.config.theme))
+        .bg(bg);
     let lines = vec![
         Line::from(spans_with_input_cursor(
             &prompt,
             prompt_style,
-            input_cursor_style(app.theme, bg),
+            input_cursor_style(app.config.theme, bg),
         )),
         Line::from(Span::styled(
             hint,
-            Style::default().fg(selector_count_color(app.theme)).bg(bg),
+            Style::default()
+                .fg(selector_count_color(app.config.theme))
+                .bg(bg),
         )),
     ];
 
@@ -382,11 +200,12 @@ pub(crate) fn draw_review_input(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
 }
 
 pub(crate) fn review_input_area(app: &DiffApp, area: Rect) -> Option<Rect> {
-    if !app.review_input_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.review_input_open || !floating_menu_fits_terminal(area) {
         return None;
     }
 
     let content_width = app
+        .overlays
         .review_input
         .width()
         .saturating_add(6)
@@ -418,7 +237,7 @@ pub(crate) fn review_input_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn diff_menu_floating_width(app: &DiffApp, choices: &[DiffChoice]) -> u16 {
-    let input = app.diff_menu.input.width().saturating_add(12);
+    let input = app.overlays.diff_menu.input.width().saturating_add(12);
     let rows = choices
         .iter()
         .map(|choice| format!(" {}  {} ", choice.label(), app.diff_choice_detail(*choice),).width())
@@ -431,150 +250,8 @@ fn diff_menu_floating_width(app: &DiffApp, choices: &[DiffChoice]) -> u16 {
     selector_menu_outer_width(rows.max(selected).max(input).max(42))
 }
 
-fn selector_input_line(
-    input: &str,
-    cursor: usize,
-    width: usize,
-    theme: DiffTheme,
-    matched: usize,
-    total: usize,
-) -> Line<'static> {
-    let input = text_with_cursor(input, cursor);
-    let left = format!("> {input}");
-    let right = format!("{matched}/{total}");
-    let bg = base_bg(theme);
-    let right_width = right.width();
-    if width <= right_width {
-        return Line::from(Span::styled(
-            fit_padded(&right, width),
-            Style::default().fg(selector_count_color(theme)).bg(bg),
-        ));
-    }
-    let left_width = width.saturating_sub(right_width).saturating_sub(1);
-    let left = fit_padded(&left, left_width);
-    let text_style = Style::default().fg(selector_prompt_color(theme)).bg(bg);
-    let cursor_style = input_cursor_style(theme, bg);
-    let mut spans = spans_with_input_cursor(&left, text_style, cursor_style);
-    spans.push(Span::styled(" ", Style::default().bg(bg)));
-    spans.push(Span::styled(
-        fit_padded(&right, right_width.min(width)),
-        Style::default().fg(selector_count_color(theme)).bg(bg),
-    ));
-    Line::from(spans)
-}
-
-fn text_with_cursor(input: &str, cursor: usize) -> String {
-    let cursor = cursor.min(input.len());
-    if input.is_char_boundary(cursor) {
-        format!("{}{}{}", &input[..cursor], INPUT_CURSOR, &input[cursor..])
-    } else {
-        format!("{input}{INPUT_CURSOR}")
-    }
-}
-
-fn selector_separator_line(width: usize, theme: DiffTheme) -> Line<'static> {
-    Line::from(Span::styled(
-        "─".repeat(width),
-        Style::default()
-            .fg(selector_border_color(theme))
-            .bg(base_bg(theme)),
-    ))
-}
-
-fn selector_empty_line(text: &str, width: usize, theme: DiffTheme) -> Line<'static> {
-    Line::from(Span::styled(
-        fit_padded(text, width),
-        Style::default().fg(theme.muted).bg(base_bg(theme)),
-    ))
-}
-
-fn selector_disabled_line(
-    label: &str,
-    detail: &str,
-    width: usize,
-    theme: DiffTheme,
-) -> Line<'static> {
-    Line::from(Span::styled(
-        selector_label_detail_text(label, detail, width),
-        Style::default().fg(theme.muted).bg(base_bg(theme)),
-    ))
-}
-
-fn selector_label_detail_text(label: &str, detail: &str, width: usize) -> String {
-    let left = format!(" {label}");
-    if detail.is_empty() {
-        return fit_padded(&left, width);
-    }
-
-    let detail_width = detail.width();
-    if width <= detail_width.saturating_add(2) {
-        return fit_padded(&format!("{left}  {detail}"), width);
-    }
-
-    let left_width = width.saturating_sub(detail_width).saturating_sub(1);
-    format!("{} {detail}", fit_padded(&left, left_width))
-}
-
-fn selector_row_style(theme: DiffTheme, highlighted: bool) -> Style {
-    let mut style = Style::default().fg(theme.foreground).bg(base_bg(theme));
-    if highlighted {
-        style = style
-            .fg(selector_highlight_color(theme))
-            .bg(header_bg(theme))
-            .add_modifier(Modifier::BOLD);
-    }
-    style
-}
-
-fn selector_title_color(theme: DiffTheme) -> Color {
-    theme.syntax.function.unwrap_or(theme.header)
-}
-
-fn selector_prompt_color(theme: DiffTheme) -> Color {
-    theme.syntax.operator.unwrap_or(selector_title_color(theme))
-}
-
-fn selector_border_color(theme: DiffTheme) -> Color {
-    theme.syntax.punctuation.unwrap_or(theme.muted)
-}
-
-fn selector_count_color(theme: DiffTheme) -> Color {
-    theme.syntax.comment.unwrap_or(theme.muted)
-}
-
-fn selector_highlight_color(theme: DiffTheme) -> Color {
-    theme.syntax.keyword.unwrap_or(theme.header)
-}
-
-fn selector_entry_line(
-    label: &str,
-    detail: &str,
-    width: usize,
-    theme: DiffTheme,
-    highlighted: bool,
-) -> Line<'static> {
-    Line::from(Span::styled(
-        selector_label_detail_text(label, detail, width),
-        selector_row_style(theme, highlighted),
-    ))
-}
-
-/// Visible slice of a scrollable selector list. `global_index = scroll + visible_row`.
-fn scrolled_selector_items<'a, T>(
-    items: &'a [T],
-    scroll: usize,
-    visible_rows: usize,
-) -> impl Iterator<Item = (usize, &'a T)> + 'a {
-    items
-        .iter()
-        .skip(scroll)
-        .take(visible_rows)
-        .enumerate()
-        .map(move |(visible_row, item)| (scroll.saturating_add(visible_row), item))
-}
-
 pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
-    if !app.options_menu_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.options_menu_open || !floating_menu_fits_terminal(area) {
         return;
     }
 
@@ -594,47 +271,42 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
     }
 
     let menu_area = centered_floating_rect(area, width, height);
-    let block = options_menu_block(app.theme);
+    let block = options_menu_block(app.config.theme);
     let inner = block.inner(menu_area);
     let list_visible_rows = selector_menu_list_rows(inner.height, 0);
     app.ensure_options_menu_selection_visible(list_visible_rows);
 
-    let selected = app.options_menu.selected.min(items.len().saturating_sub(1));
-    let mut lines = vec![selector_input_line(
-        &app.options_menu.input,
-        app.options_menu.input_cursor,
-        inner.width as usize,
-        app.theme,
-        items.len(),
-        app.options_menu_items().len(),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    let list_start_row = lines.len() as u16;
-    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
-    let has_scrollbar = selector_scrollbar_needed(items.len(), remaining_rows);
-    let list_width = selector_list_width(inner.width, has_scrollbar);
-    if items.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching settings",
-                list_width,
-                app.theme,
-            ));
-        }
-    } else {
-        let scroll = app.options_menu.scroll;
-        lines.extend(scrolled_selector_items(&items, scroll, remaining_rows).map(
-            |(global_index, item)| {
-                selector_setting_line(
-                    option_label(*item),
-                    &app.option_value(*item),
-                    list_width,
-                    app.theme,
-                    global_index == selected,
-                )
+    let selected = app
+        .overlays
+        .options_menu
+        .selected
+        .min(items.len().saturating_sub(1));
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.overlays.options_menu.input,
+                input_cursor: app.overlays.options_menu.input_cursor,
+                matched: items.len(),
+                total: app.options_menu_items().len(),
+                theme: app.config.theme,
             },
-        ));
-    }
+            inner,
+            items: &items,
+            scroll: app.overlays.options_menu.scroll,
+            selected,
+            pinned_lines: Vec::new(),
+            empty_message: " no matching settings",
+        },
+        |global_index, item, width, _| {
+            selector_setting_line(
+                option_label(*item),
+                &app.option_value(*item),
+                width,
+                app.config.theme,
+                global_index == selected,
+            )
+        },
+    );
 
     render_scrollable_selector_menu(
         frame,
@@ -642,12 +314,8 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
             menu_area,
             block,
             inner,
-            lines,
-            list_start_row,
-            item_count: items.len(),
-            visible_rows: remaining_rows,
-            scroll: app.options_menu.scroll,
-            theme: app.theme,
+            content,
+            theme: app.config.theme,
         },
     );
 }
@@ -670,7 +338,7 @@ pub(crate) fn options_menu_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn options_menu_width(app: &DiffApp, items: &[OptionsMenuItem]) -> u16 {
-    let input = app.options_menu.input.width().saturating_add(12);
+    let input = app.overlays.options_menu.input.width().saturating_add(12);
     let rows = items
         .iter()
         .map(|item| format!(" › {}  {} ", option_label(*item), app.option_value(*item)).width())
@@ -702,8 +370,8 @@ fn selector_setting_line(
 }
 
 pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
-    if !app.color_scheme_picker_open || !floating_menu_fits_terminal(area) {
-        app.rendered_color_scheme_picker_area = None;
+    if !app.overlays.color_scheme_picker_open || !floating_menu_fits_terminal(area) {
+        app.overlays.rendered_color_scheme_picker_area = None;
         return;
     }
 
@@ -720,58 +388,51 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
     );
     let height = selector_menu_outer_height(area, list_rows.max(1), pinned_rows);
     if width == 0 || height == 0 {
-        app.rendered_color_scheme_picker_area = None;
+        app.overlays.rendered_color_scheme_picker_area = None;
         return;
     }
 
     let picker_area = centered_floating_rect(area, width, height);
-    app.rendered_color_scheme_picker_area = Some(picker_area);
-    let block = color_scheme_picker_block(app.theme);
+    app.overlays.rendered_color_scheme_picker_area = Some(picker_area);
+    let block = color_scheme_picker_block(app.config.theme);
     let inner = block.inner(picker_area);
     let choices = app.filtered_color_schemes();
-    let mut lines = vec![selector_input_line(
-        &app.color_scheme_picker.input,
-        app.color_scheme_picker.input_cursor,
-        inner.width as usize,
-        app.theme,
-        choices.len(),
-        app.selectable_color_schemes().len(),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    lines.push(selector_disabled_line(
-        color_scheme_label(app.options_menu_draft.color_scheme),
-        "",
-        inner.width as usize,
-        app.theme,
-    ));
-
-    let list_start_row = lines.len() as u16;
-    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
-    let has_scrollbar = selector_scrollbar_needed(choices.len(), remaining_rows);
-    let list_width = selector_list_width(inner.width, has_scrollbar);
-    app.color_scheme_picker
+    let remaining_rows = selector_menu_list_rows(inner.height, pinned_rows);
+    app.overlays
+        .color_scheme_picker
         .ensure_selected_visible(choices.len(), remaining_rows);
-    if choices.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching colorscheme",
-                list_width,
-                app.theme,
-            ));
-        }
-    } else {
-        let scroll = app.color_scheme_picker.scroll;
-        let selected = app.color_scheme_picker.selected;
-        lines.extend(
-            scrolled_selector_items(&choices, scroll, remaining_rows).map(
-                |(global_index, choice)| {
-                    let highlighted = global_index == selected;
-                    let label = color_scheme_label(*choice);
-                    selector_entry_line(label, "", list_width, app.theme, highlighted)
-                },
-            ),
-        );
-    }
+    let selected = app.overlays.color_scheme_picker.selected;
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.overlays.color_scheme_picker.input,
+                input_cursor: app.overlays.color_scheme_picker.input_cursor,
+                matched: choices.len(),
+                total: app.selectable_color_schemes().len(),
+                theme: app.config.theme,
+            },
+            inner,
+            items: &choices,
+            scroll: app.overlays.color_scheme_picker.scroll,
+            selected,
+            pinned_lines: vec![selector_disabled_line(
+                color_scheme_label(app.overlays.options_menu_draft.color_scheme),
+                "",
+                inner.width as usize,
+                app.config.theme,
+            )],
+            empty_message: " no matching colorscheme",
+        },
+        |_, choice, width, highlighted| {
+            selector_entry_line(
+                color_scheme_label(*choice),
+                "",
+                width,
+                app.config.theme,
+                highlighted,
+            )
+        },
+    );
 
     render_scrollable_selector_menu(
         frame,
@@ -779,12 +440,8 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
             menu_area: picker_area,
             block,
             inner,
-            lines,
-            list_start_row,
-            item_count: choices.len(),
-            visible_rows: remaining_rows,
-            scroll: app.color_scheme_picker.scroll,
-            theme: app.theme,
+            content,
+            theme: app.config.theme,
         },
     );
 }
@@ -807,7 +464,12 @@ pub(crate) fn color_scheme_picker_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn color_scheme_picker_width(app: &DiffApp) -> u16 {
-    let input = app.color_scheme_picker.input.width().saturating_add(12);
+    let input = app
+        .overlays
+        .color_scheme_picker
+        .input
+        .width()
+        .saturating_add(12);
     let rows = app
         .filtered_color_schemes()
         .iter()
@@ -816,18 +478,18 @@ fn color_scheme_picker_width(app: &DiffApp) -> u16 {
         .unwrap_or_else(|| " no matching colorscheme ".width());
     let current = format!(
         " {} ",
-        color_scheme_label(app.options_menu_draft.color_scheme)
+        color_scheme_label(app.overlays.options_menu_draft.color_scheme)
     )
     .width();
     selector_menu_outer_width(rows.max(current).max(input).max(42))
 }
 
 pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
-    let Some(menu) = app.branch_menu_open else {
+    let Some(menu) = app.refs.branch_menu_open else {
         app.set_rendered_branch_menu_area(None);
         return;
     };
-    if !floating_menu_fits_terminal(area) || app.comparison_branches.is_empty() {
+    if !floating_menu_fits_terminal(area) || app.refs.comparison_branches.is_empty() {
         app.set_rendered_branch_menu_area(None);
         return;
     }
@@ -852,51 +514,37 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let menu_area = centered_floating_rect(area, width, height);
     app.set_rendered_branch_menu_area(Some(menu_area));
 
-    let block = branch_menu_block(app.theme, menu);
+    let block = branch_menu_block(app.config.theme, menu);
     let inner = block.inner(menu_area);
-    let mut lines = vec![selector_input_line(
-        &app.branch_menu.input,
-        app.branch_menu.input_cursor,
-        inner.width as usize,
-        app.theme,
-        match_count,
-        app.selectable_branch_count(menu),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    if let Some(branch) = app.selected_branch_menu_choice(menu) {
-        lines.push(selector_disabled_line(
-            branch,
-            "",
-            inner.width as usize,
-            app.theme,
-        ));
-    }
-    let list_start_row = lines.len() as u16;
-    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    let remaining_rows = selector_menu_list_rows(inner.height, pinned_rows);
     app.ensure_branch_selection_visible_for_rows(remaining_rows);
     let matches = app.filtered_branches();
-    let has_scrollbar = selector_scrollbar_needed(matches.len(), remaining_rows);
-    let list_width = selector_list_width(inner.width, has_scrollbar);
-    if matches.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching branches",
-                list_width,
-                app.theme,
-            ));
-        }
-    } else {
-        let scroll = app.branch_menu.scroll;
-        let selected = app.branch_menu.selected;
-        lines.extend(
-            scrolled_selector_items(&matches, scroll, remaining_rows).map(
-                |(global_index, branch)| {
-                    let highlighted = global_index == selected;
-                    selector_entry_line(branch, "", list_width, app.theme, highlighted)
-                },
-            ),
-        );
-    }
+    let selected = app.refs.branch_menu.selected;
+    let pinned_lines = app
+        .selected_branch_menu_choice(menu)
+        .map(|branch| selector_disabled_line(branch, "", inner.width as usize, app.config.theme))
+        .into_iter()
+        .collect();
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.refs.branch_menu.input,
+                input_cursor: app.refs.branch_menu.input_cursor,
+                matched: match_count,
+                total: app.selectable_branch_count(menu),
+                theme: app.config.theme,
+            },
+            inner,
+            items: &matches,
+            scroll: app.refs.branch_menu.scroll,
+            selected,
+            pinned_lines,
+            empty_message: " no matching branches",
+        },
+        |_, branch, width, highlighted| {
+            selector_entry_line(branch, "", width, app.config.theme, highlighted)
+        },
+    );
 
     render_scrollable_selector_menu(
         frame,
@@ -904,12 +552,8 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
             menu_area,
             block,
             inner,
-            lines,
-            list_start_row,
-            item_count: matches.len(),
-            visible_rows: remaining_rows,
-            scroll: app.branch_menu.scroll,
-            theme: app.theme,
+            content,
+            theme: app.config.theme,
         },
     );
 }
@@ -1026,11 +670,11 @@ fn commit_menu_row_line(
 }
 
 pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
-    if !app.commit_menu_open {
+    if !app.refs.commit_menu_open {
         app.set_rendered_commit_menu_area(None);
         return;
     }
-    if !floating_menu_fits_terminal(area) || app.comparison_commits.is_empty() {
+    if !floating_menu_fits_terminal(area) || app.refs.comparison_commits.is_empty() {
         app.set_rendered_commit_menu_area(None);
         return;
     }
@@ -1055,52 +699,39 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let menu_area = centered_floating_rect(area, width, height);
     app.set_rendered_commit_menu_area(Some(menu_area));
 
-    let block = commit_menu_block(app.theme);
+    let block = commit_menu_block(app.config.theme);
     let inner = block.inner(menu_area);
-    let mut lines = vec![selector_input_line(
-        &app.commit_menu.input,
-        app.commit_menu.input_cursor,
-        inner.width as usize,
-        app.theme,
-        match_count,
-        app.selectable_commit_count(),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    if let Some(commit) = app.selected_commit_menu_choice() {
-        lines.push(commit_menu_row_line(
-            commit,
-            inner.width as usize,
-            app.theme,
-            false,
-            true,
-        ));
-    }
-    let list_start_row = lines.len() as u16;
-    let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
+    let remaining_rows = selector_menu_list_rows(inner.height, pinned_rows);
     app.ensure_commit_selection_visible_for_rows(remaining_rows);
     let matches = app.filtered_commits();
-    let has_scrollbar = selector_scrollbar_needed(matches.len(), remaining_rows);
-    let list_width = selector_list_width(inner.width, has_scrollbar);
-    if matches.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching commits",
-                list_width,
-                app.theme,
-            ));
-        }
-    } else {
-        let scroll = app.commit_menu.scroll;
-        let selected = app.commit_menu.selected;
-        lines.extend(
-            scrolled_selector_items(&matches, scroll, remaining_rows).map(
-                |(global_index, commit)| {
-                    let highlighted = global_index == selected;
-                    commit_menu_row_line(commit, list_width, app.theme, highlighted, false)
-                },
-            ),
-        );
-    }
+    let selected = app.refs.commit_menu.selected;
+    let pinned_lines = app
+        .selected_commit_menu_choice()
+        .map(|commit| {
+            commit_menu_row_line(commit, inner.width as usize, app.config.theme, false, true)
+        })
+        .into_iter()
+        .collect();
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.refs.commit_menu.input,
+                input_cursor: app.refs.commit_menu.input_cursor,
+                matched: match_count,
+                total: app.selectable_commit_count(),
+                theme: app.config.theme,
+            },
+            inner,
+            items: &matches,
+            scroll: app.refs.commit_menu.scroll,
+            selected,
+            pinned_lines,
+            empty_message: " no matching commits",
+        },
+        |_, commit, width, highlighted| {
+            commit_menu_row_line(commit, width, app.config.theme, highlighted, false)
+        },
+    );
 
     render_scrollable_selector_menu(
         frame,
@@ -1108,12 +739,8 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
             menu_area,
             block,
             inner,
-            lines,
-            list_start_row,
-            item_count: matches.len(),
-            visible_rows: remaining_rows,
-            scroll: app.commit_menu.scroll,
-            theme: app.theme,
+            content,
+            theme: app.config.theme,
         },
     );
 }
@@ -1130,7 +757,7 @@ struct HelpMenuLayout {
 }
 
 fn help_menu_layout(app: &DiffApp, area: Rect) -> Option<HelpMenuLayout> {
-    if !app.help_menu_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.help_menu_open || !floating_menu_fits_terminal(area) {
         return None;
     }
 
@@ -1151,7 +778,7 @@ fn help_menu_layout(app: &DiffApp, area: Rect) -> Option<HelpMenuLayout> {
 
     let menu_area = centered_floating_rect(area, width, height);
 
-    let block = help_menu_block(app.theme);
+    let block = help_menu_block(app.config.theme);
     let inner = block.inner(menu_area);
     const HEADER_LINES: u16 = 2;
     let list_visible_rows = inner.height.saturating_sub(HEADER_LINES) as usize;
@@ -1174,53 +801,39 @@ pub(crate) fn draw_help_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
     let rows = app.filtered_help_menu_rows();
     let inner = layout.inner;
     let remaining_rows = layout.list_visible_rows;
-    app.help_menu_visible_rows = remaining_rows;
+    app.overlays.help_menu_visible_rows = remaining_rows;
     app.clamp_help_menu_scroll(remaining_rows);
     let menu_area = layout.menu_area;
 
-    let block = help_menu_block(app.theme);
-    let mut lines = vec![selector_input_line(
-        &app.help_menu_input,
-        app.help_menu_input_cursor,
-        inner.width as usize,
-        app.theme,
-        rows.len(),
-        HELP_MENU_ROWS.len(),
-    )];
-    lines.push(selector_separator_line(inner.width as usize, app.theme));
-    let list_start_row = lines.len() as u16;
-    let has_scrollbar = selector_scrollbar_needed(rows.len(), remaining_rows);
-    let list_width = selector_list_width(inner.width, has_scrollbar);
-    if rows.is_empty() {
-        if remaining_rows > 0 {
-            lines.push(selector_empty_line(
-                " no matching keybindings",
-                list_width,
-                app.theme,
-            ));
-        }
-    } else {
-        let scroll = app.help_menu_scroll;
-        lines.extend(
-            scrolled_selector_items(&rows, scroll, remaining_rows)
-                .map(|(_, row)| help_menu_row_line(*row, list_width, app.theme, &app.keymap)),
-        );
-    }
-
-    frame.render_widget(Clear, menu_area);
-    frame.render_widget(block, menu_area);
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(help_menu_bg(app.theme))),
-        inner,
+    let block = help_menu_block(app.config.theme);
+    let content = selector_menu_lines(
+        SelectorMenuLinesRequest {
+            input: SelectorMenuInput {
+                input: &app.overlays.help_menu_input,
+                input_cursor: app.overlays.help_menu_input_cursor,
+                matched: rows.len(),
+                total: HELP_MENU_ROWS.len(),
+                theme: app.config.theme,
+            },
+            inner,
+            items: &rows,
+            scroll: app.overlays.help_menu_scroll,
+            selected: 0,
+            pinned_lines: Vec::new(),
+            empty_message: " no matching keybindings",
+        },
+        |_, row, width, _| help_menu_row_line(*row, width, app.config.theme, &app.config.keymap),
     );
-    render_selector_scrollbar(
+
+    render_scrollable_selector_menu(
         frame,
-        inner,
-        list_start_row,
-        rows.len(),
-        remaining_rows,
-        app.help_menu_scroll,
-        app.theme,
+        ScrollableSelectorMenu {
+            menu_area,
+            block,
+            inner,
+            content,
+            theme: app.config.theme,
+        },
     );
 }
 
@@ -1263,10 +876,10 @@ pub(crate) fn help_menu_description_color(theme: DiffTheme) -> Color {
 }
 
 fn help_menu_width(app: &DiffApp, rows: &[HelpMenuRow]) -> u16 {
-    let input = app.help_menu_input.width().saturating_add(12);
+    let input = app.overlays.help_menu_input.width().saturating_add(12);
     let rows = rows
         .iter()
-        .map(|row| help_menu_row_width(*row, &app.keymap))
+        .map(|row| help_menu_row_width(*row, &app.config.keymap))
         .max()
         .unwrap_or_else(|| " no matching keybindings ".width());
     selector_menu_outer_width(rows.max(input).max(42))

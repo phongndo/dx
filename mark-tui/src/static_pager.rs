@@ -86,8 +86,8 @@ pub fn render_static_changeset(
     settle_static_syntax(&mut app, pager_options.syntax_timeout);
 
     let mut output = String::new();
-    for row_index in 0..app.model.len() {
-        let Some(row) = app.model.row(row_index) else {
+    for row_index in 0..app.document.model.len() {
+        let Some(row) = app.document.model.row(row_index) else {
             continue;
         };
         let line = render_row(&mut app, row_index, row, width);
@@ -97,9 +97,9 @@ pub fn render_static_changeset(
 }
 
 fn configure_static_app(app: &mut DiffApp, width: usize) {
-    app.line_wrapping = false;
+    app.viewport.line_wrapping = false;
     app.set_viewport_width(width);
-    app.set_viewport_rows(app.model.len().max(1));
+    app.set_viewport_rows(app.document.model.len().max(1));
 }
 
 fn apply_static_auto_layout(app: &mut DiffApp, width: usize) {
@@ -119,15 +119,19 @@ fn static_width_for_layout(width: usize) -> u16 {
 }
 
 fn settle_static_syntax(app: &mut DiffApp, timeout: Duration) {
-    if app.syntax.is_none() {
+    if app.config.syntax.is_none() {
         return;
     }
 
-    app.prepare_syntax_for_viewport(app.model.len().max(1));
+    app.prepare_syntax_for_viewport(app.document.model.len().max(1));
     let start = std::time::Instant::now();
     loop {
         app.drain_syntax();
-        let idle = app.syntax.as_ref().is_none_or(SyntaxRuntime::is_idle);
+        let idle = app
+            .config
+            .syntax
+            .as_ref()
+            .is_none_or(SyntaxRuntime::is_idle);
         if idle || start.elapsed() >= timeout {
             break;
         }
@@ -315,16 +319,16 @@ mod tests {
             DiffLayoutMode::Split,
             SyntaxStartupMode::Disabled,
         );
-        app.layout_override = Some(DiffLayoutMode::Split);
+        app.viewport.layout_override = Some(DiffLayoutMode::Split);
 
         apply_static_auto_layout(&mut app, usize::from(MIN_SPLIT_WIDTH - 1));
 
-        assert_eq!(app.layout, DiffLayoutMode::Split);
-        assert_eq!(app.layout_override, Some(DiffLayoutMode::Split));
+        assert_eq!(app.viewport.layout, DiffLayoutMode::Split);
+        assert_eq!(app.viewport.layout_override, Some(DiffLayoutMode::Split));
 
         apply_static_auto_layout(&mut app, usize::from(MIN_SPLIT_WIDTH));
 
-        assert_eq!(app.layout, DiffLayoutMode::Split);
+        assert_eq!(app.viewport.layout, DiffLayoutMode::Split);
     }
 
     #[test]
@@ -336,8 +340,8 @@ mod tests {
             DiffLayoutMode::Unified,
             SyntaxStartupMode::Disabled,
         );
-        app.line_wrapping = true;
-        app.syntax = Some(syntax_runtime_with_rust_queue(queue.clone()));
+        app.viewport.line_wrapping = true;
+        app.config.syntax = Some(syntax_runtime_with_rust_queue(queue.clone()));
 
         configure_static_app(&mut app, 20);
         settle_static_syntax(&mut app, Duration::ZERO);
@@ -349,7 +353,7 @@ mod tests {
         files.sort_unstable();
         files.dedup();
 
-        assert!(!app.line_wrapping);
+        assert!(!app.viewport.line_wrapping);
         assert_eq!(files, vec![0, 1]);
     }
 

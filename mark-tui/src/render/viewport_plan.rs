@@ -30,7 +30,7 @@ pub(crate) struct ViewportSlot {
 }
 
 pub(crate) fn plan_diff_viewport_rows(app: &DiffApp, visible_rows: usize) -> Vec<ViewportSlot> {
-    plan_diff_viewport_rows_at_scroll(app, app.scroll, visible_rows)
+    plan_diff_viewport_rows_at_scroll(app, app.viewport.scroll, visible_rows)
 }
 
 pub(crate) fn plan_diff_viewport_rows_at_scroll(
@@ -38,7 +38,7 @@ pub(crate) fn plan_diff_viewport_rows_at_scroll(
     scroll: usize,
     visible_rows: usize,
 ) -> Vec<ViewportSlot> {
-    if app.line_wrapping {
+    if app.viewport.line_wrapping {
         plan_wrapped_viewport_rows(app, scroll, visible_rows)
     } else {
         plan_unwrapped_viewport_rows(app, scroll, visible_rows)
@@ -50,8 +50,8 @@ fn plan_unwrapped_viewport_rows(
     scroll: usize,
     visible_rows: usize,
 ) -> Vec<ViewportSlot> {
-    let draft = app.annotation_draft.as_ref();
-    let annotations = &app.annotations;
+    let draft = app.annotations_state.annotation_draft.as_ref();
+    let annotations = &app.annotations_state.annotations;
     let mut plans = Vec::with_capacity(visible_rows);
 
     for offset in 0..visible_rows {
@@ -59,7 +59,7 @@ fn plan_unwrapped_viewport_rows(
             break;
         }
         let visual_row = scroll.saturating_add(offset);
-        let Some(row) = app.model.row(visual_row) else {
+        let Some(row) = app.document.model.row(visual_row) else {
             break;
         };
         plans.push(ViewportSlot {
@@ -69,13 +69,13 @@ fn plan_unwrapped_viewport_rows(
             },
         });
 
-        for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+        for key in AnnotationKey::candidates_from_ui_row(&app.document.changeset, row) {
             if let Some(draft) = draft.filter(|d| d.model_row_index == visual_row && d.key == key) {
                 push_compose_plan_slots(
                     &mut plans,
                     visual_row,
                     draft,
-                    app.viewport_width,
+                    app.viewport.viewport_width,
                     visible_rows,
                 );
             } else if let Some(text) = annotations.get(&key)
@@ -86,7 +86,7 @@ fn plan_unwrapped_viewport_rows(
                     visual_row,
                     key,
                     text,
-                    app.viewport_width,
+                    app.viewport.viewport_width,
                     visible_rows,
                 );
             }
@@ -102,8 +102,8 @@ fn plan_wrapped_viewport_rows(
     scroll: usize,
     visible_rows: usize,
 ) -> Vec<ViewportSlot> {
-    let draft = app.annotation_draft.as_ref();
-    let annotations = &app.annotations;
+    let draft = app.annotations_state.annotation_draft.as_ref();
+    let annotations = &app.annotations_state.annotations;
     let mut plans = Vec::with_capacity(visible_rows);
     let Some((mut row_index, mut row_offset)) = app.model_row_at_scroll(scroll) else {
         return plans;
@@ -111,7 +111,7 @@ fn plan_wrapped_viewport_rows(
     let mut visual_row = scroll;
 
     while plans.len() < visible_rows {
-        let Some(row) = app.model.row(row_index) else {
+        let Some(row) = app.document.model.row(row_index) else {
             break;
         };
         let remaining = visible_rows.saturating_sub(plans.len());
@@ -138,7 +138,7 @@ fn plan_wrapped_viewport_rows(
             break;
         }
         if wraps_left == 0 {
-            for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+            for key in AnnotationKey::candidates_from_ui_row(&app.document.changeset, row) {
                 if let Some(draft) =
                     draft.filter(|d| d.model_row_index == row_index && d.key == key)
                 {
@@ -146,7 +146,7 @@ fn plan_wrapped_viewport_rows(
                         &mut plans,
                         row_index,
                         draft,
-                        app.viewport_width,
+                        app.viewport.viewport_width,
                         visible_rows,
                     );
                 } else if let Some(text) = annotations.get(&key)
@@ -157,7 +157,7 @@ fn plan_wrapped_viewport_rows(
                         row_index,
                         key,
                         text,
-                        app.viewport_width,
+                        app.viewport.viewport_width,
                         visible_rows,
                     );
                 }
@@ -217,7 +217,7 @@ fn push_saved_plan_slots(
 }
 
 pub(crate) fn visual_scroll_for_viewport_row(app: &DiffApp, viewport_row: u16) -> Option<usize> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     let slot = plans.get(usize::from(viewport_row))?;
     match &slot.kind {
         ViewportSlotKind::DiffVisual { visual_scroll, .. } => Some(*visual_scroll),
@@ -226,7 +226,7 @@ pub(crate) fn visual_scroll_for_viewport_row(app: &DiffApp, viewport_row: u16) -
 }
 
 pub(crate) fn model_row_for_viewport_row(app: &DiffApp, viewport_row: u16) -> Option<usize> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     let slot = plans.get(usize::from(viewport_row))?;
     match &slot.kind {
         ViewportSlotKind::DiffVisual { model_row, .. } => Some(*model_row),
@@ -236,7 +236,7 @@ pub(crate) fn model_row_for_viewport_row(app: &DiffApp, viewport_row: u16) -> Op
 }
 
 pub(crate) fn compose_block_top_viewport_row(app: &DiffApp, model_row: usize) -> Option<u16> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     plans
         .iter()
         .enumerate()
@@ -251,7 +251,7 @@ pub(crate) fn compose_block_top_viewport_row(app: &DiffApp, model_row: usize) ->
 }
 
 pub(crate) fn compose_block_bottom_viewport_row(app: &DiffApp, model_row: usize) -> Option<u16> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     plans
         .iter()
         .enumerate()
@@ -271,7 +271,7 @@ pub(crate) fn annotation_saved_key_at_bottom_border(
     app: &DiffApp,
     viewport_row: u16,
 ) -> Option<(usize, AnnotationKey)> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     let slot = plans.get(usize::from(viewport_row))?;
     match &slot.kind {
         ViewportSlotKind::AnnotationSaved {
@@ -288,7 +288,7 @@ pub(crate) fn annotation_saved_key_at_top_border(
     app: &DiffApp,
     viewport_row: u16,
 ) -> Option<(usize, AnnotationKey)> {
-    let plans = plan_diff_viewport_rows(app, app.viewport_rows.max(1));
+    let plans = plan_diff_viewport_rows(app, app.viewport.viewport_rows.max(1));
     let slot = plans.get(usize::from(viewport_row))?;
     match &slot.kind {
         ViewportSlotKind::AnnotationSaved {

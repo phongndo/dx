@@ -41,8 +41,8 @@ use crate::{
 };
 
 pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
-    if app.model.is_empty() {
-        let message = if app.filters_active() && !app.base_changeset.files.is_empty() {
+    if app.document.model.is_empty() {
+        let message = if app.filters_active() && !app.document.base_changeset.files.is_empty() {
             "No files match filters."
         } else {
             "No changes."
@@ -50,9 +50,9 @@ pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 message,
-                Style::default().fg(app.theme.muted),
+                Style::default().fg(app.config.theme.muted),
             )))
-            .style(Style::default().bg(base_bg(app.theme))),
+            .style(Style::default().bg(base_bg(app.config.theme))),
             area,
         );
         return;
@@ -63,7 +63,7 @@ pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
     let width = area.width as usize;
     let lines = build_diff_viewport_lines(app, width, visible_rows);
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.theme))),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.config.theme))),
         area,
     );
 }
@@ -73,15 +73,15 @@ pub(crate) fn build_diff_viewport_lines(
     width: usize,
     visible_rows: usize,
 ) -> Vec<Line<'static>> {
-    if app.line_wrapping {
+    if app.viewport.line_wrapping {
         return build_wrapped_viewport_lines(app, width, visible_rows);
     }
 
     let mouse_highlight = mouse_highlight_for_viewport(app);
-    let theme = app.theme;
-    let layout = app.layout;
-    let draft = app.annotation_draft.clone();
-    let annotations = app.annotations.clone();
+    let theme = app.config.theme;
+    let layout = app.viewport.layout;
+    let draft = app.annotations_state.annotation_draft.clone();
+    let annotations = app.annotations_state.annotations.clone();
     let focused_hunk = app.focused_hunk_for_viewport(visible_rows);
     let mut lines = Vec::with_capacity(visible_rows);
 
@@ -89,8 +89,8 @@ pub(crate) fn build_diff_viewport_lines(
         if lines.len() >= visible_rows {
             break;
         }
-        let visual_row = app.scroll.saturating_add(offset);
-        let Some(row) = app.model.row(visual_row) else {
+        let visual_row = app.viewport.scroll.saturating_add(offset);
+        let Some(row) = app.document.model.row(visual_row) else {
             break;
         };
         let mut line = render_row_with_focus(app, visual_row, row, width, focused_hunk);
@@ -105,7 +105,7 @@ pub(crate) fn build_diff_viewport_lines(
         }
         lines.push(line);
 
-        for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+        for key in AnnotationKey::candidates_from_ui_row(&app.document.changeset, row) {
             if let Some(draft) = draft
                 .as_ref()
                 .filter(|d| d.model_row_index == visual_row && d.key == key)
@@ -139,18 +139,18 @@ fn build_wrapped_viewport_lines(
     visible_rows: usize,
 ) -> Vec<Line<'static>> {
     let mouse_highlight = mouse_highlight_for_viewport(app);
-    let theme = app.theme;
-    let layout = app.layout;
-    let draft = app.annotation_draft.clone();
-    let annotations = app.annotations.clone();
+    let theme = app.config.theme;
+    let layout = app.viewport.layout;
+    let draft = app.annotations_state.annotation_draft.clone();
+    let annotations = app.annotations_state.annotations.clone();
     let focused_hunk = app.focused_hunk_for_viewport(visible_rows);
     let mut lines = Vec::with_capacity(visible_rows);
-    let Some((mut row_index, mut row_offset)) = app.model_row_at_scroll(app.scroll) else {
+    let Some((mut row_index, mut row_offset)) = app.model_row_at_scroll(app.viewport.scroll) else {
         return lines;
     };
-    let mut visual_row = app.scroll;
+    let mut visual_row = app.viewport.scroll;
     while lines.len() < visible_rows {
-        let Some(row) = app.model.row(row_index) else {
+        let Some(row) = app.document.model.row(row_index) else {
             break;
         };
         let remaining = visible_rows.saturating_sub(lines.len());
@@ -180,7 +180,7 @@ fn build_wrapped_viewport_lines(
                 break;
             }
             if is_last_wrap {
-                for key in AnnotationKey::candidates_from_ui_row(&app.changeset, row) {
+                for key in AnnotationKey::candidates_from_ui_row(&app.document.changeset, row) {
                     if let Some(draft) = draft
                         .as_ref()
                         .filter(|d| d.model_row_index == row_index && d.key == key)
@@ -228,13 +228,13 @@ fn mouse_highlight_for_viewport(app: &DiffApp) -> Option<(u16, usize)> {
     if app.diff_modal_blocks_mouse_hover() {
         return None;
     }
-    let (column, _) = app.mouse_hover?;
+    let (column, _) = app.viewport.mouse_hover?;
     app.diff_mouse_highlight_visual_row()
         .map(|visual_row| (column, visual_row))
 }
 
 fn row_has_annotation_target(app: &DiffApp, row: UiRow) -> bool {
-    AnnotationKey::from_ui_row(&app.changeset, row).is_some()
+    AnnotationKey::from_ui_row(&app.document.changeset, row).is_some()
 }
 
 fn row_has_diff_code_content(row: UiRow) -> bool {
@@ -260,7 +260,7 @@ pub(crate) fn render_row_wrapped_with_focus(
     width: usize,
     focused_hunk: Option<(usize, usize)>,
 ) -> Vec<Line<'static>> {
-    let theme = app.theme;
+    let theme = app.config.theme;
     let hunk_focused = row
         .hunk_key()
         .is_some_and(|hunk_key| Some(hunk_key) == focused_hunk);
@@ -272,11 +272,11 @@ pub(crate) fn render_row_wrapped_with_focus(
             new_line,
         } => render_context_line_wrapped(app, file, old_line, new_line, row_index, width),
         UiRow::UnifiedLine { file, hunk, line } => {
-            let kind = app.changeset.files[file].hunks[hunk].lines[line].kind;
+            let kind = app.document.changeset.files[file].hunks[hunk].lines[line].kind;
             let syntax =
                 unified_syntax_side(kind).and_then(|side| app.syntax_line(file, hunk, line, side));
             let inline = app.inline_ranges(file, hunk, line);
-            let diff_line = &app.changeset.files[file].hunks[hunk].lines[line];
+            let diff_line = &app.document.changeset.files[file].hunks[hunk].lines[line];
             render_unified_line_wrapped_with_focus(
                 diff_line,
                 syntax.as_ref(),
@@ -284,11 +284,11 @@ pub(crate) fn render_row_wrapped_with_focus(
                 width,
                 theme,
                 hunk_focused,
-                &app.grep_filter,
+                &app.filters.grep_filter,
             )
         }
         UiRow::MetaLine { file, hunk, line } => {
-            let diff_line = &app.changeset.files[file].hunks[hunk].lines[line];
+            let diff_line = &app.document.changeset.files[file].hunks[hunk].lines[line];
             render_unified_line_wrapped_with_focus(
                 diff_line,
                 None,
@@ -296,7 +296,7 @@ pub(crate) fn render_row_wrapped_with_focus(
                 width,
                 theme,
                 hunk_focused,
-                &app.grep_filter,
+                &app.filters.grep_filter,
             )
         }
         UiRow::SplitLine {
@@ -333,19 +333,19 @@ pub(crate) fn render_row_with_focus(
     width: usize,
     focused_hunk: Option<(usize, usize)>,
 ) -> Line<'static> {
-    let theme = app.theme;
-    let horizontal_scroll = app.horizontal_scroll;
+    let theme = app.config.theme;
+    let horizontal_scroll = app.viewport.horizontal_scroll;
     let hunk_focused = row
         .hunk_key()
         .is_some_and(|hunk_key| Some(hunk_key) == focused_hunk);
     let mut line = match row {
-        UiRow::FileSeparator => file_separator_line(app.layout, width, theme),
+        UiRow::FileSeparator => file_separator_line(app.viewport.layout, width, theme),
         UiRow::FileHeader(file_index) => {
-            let file = &app.changeset.files[file_index];
+            let file = &app.document.changeset.files[file_index];
             file_header_line(file, width, theme)
         }
         UiRow::BinaryFile(file_index) => {
-            let file = &app.changeset.files[file_index];
+            let file = &app.document.changeset.files[file_index];
             let message = if file.is_binary {
                 "binary file"
             } else {
@@ -377,7 +377,7 @@ pub(crate) fn render_row_with_focus(
             context_hide_line(lines, context_hide_marker(hunk), width, theme)
         }
         UiRow::HunkHeader { file, hunk } => {
-            let hunk = &app.changeset.files[file].hunks[hunk];
+            let hunk = &app.document.changeset.files[file].hunks[hunk];
             if hunk_focused {
                 hunk_header_line_with_focus(hunk, width, theme, true)
             } else {
@@ -385,11 +385,11 @@ pub(crate) fn render_row_with_focus(
             }
         }
         UiRow::UnifiedLine { file, hunk, line } => {
-            let kind = app.changeset.files[file].hunks[hunk].lines[line].kind;
+            let kind = app.document.changeset.files[file].hunks[hunk].lines[line].kind;
             let syntax =
                 unified_syntax_side(kind).and_then(|side| app.syntax_line(file, hunk, line, side));
             let inline = app.inline_ranges(file, hunk, line);
-            let diff_line = &app.changeset.files[file].hunks[hunk].lines[line];
+            let diff_line = &app.document.changeset.files[file].hunks[hunk].lines[line];
             render_unified_line_at_scroll_with_focus(
                 diff_line,
                 syntax.as_ref(),
@@ -401,7 +401,7 @@ pub(crate) fn render_row_with_focus(
             )
         }
         UiRow::MetaLine { file, hunk, line } => {
-            let diff_line = &app.changeset.files[file].hunks[hunk].lines[line];
+            let diff_line = &app.document.changeset.files[file].hunks[hunk].lines[line];
             render_unified_line_at_scroll_with_focus(
                 diff_line,
                 None,
@@ -431,9 +431,9 @@ pub(crate) fn render_row_with_focus(
         ),
     };
 
-    if !app.grep_filter.is_empty() {
+    if !app.filters.grep_filter.is_empty() {
         let targets = grep_highlight_targets_for_row(app, row, &line, width);
-        line = highlighted_grep_text_line(line, &app.grep_filter, targets, theme);
+        line = highlighted_grep_text_line(line, &app.filters.grep_filter, targets, theme);
     }
     line
 }
@@ -518,8 +518,8 @@ pub(crate) fn render_context_line(
     row_index: usize,
     width: usize,
 ) -> Line<'static> {
-    let theme = app.theme;
-    let horizontal_scroll = app.horizontal_scroll;
+    let theme = app.config.theme;
+    let horizontal_scroll = app.viewport.horizontal_scroll;
     let side = app.context_source_side(file);
     let syntax = side.and_then(|side| {
         let line_number = match side {
@@ -535,7 +535,7 @@ pub(crate) fn render_context_line(
         text: app.context_line_text(file, old_line, new_line),
     };
 
-    match app.layout {
+    match app.viewport.layout {
         DiffLayoutMode::Unified => render_unified_line_at_scroll(
             &diff_line,
             syntax.as_ref(),
@@ -564,7 +564,7 @@ pub(crate) fn render_context_line_wrapped(
     row_index: usize,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let theme = app.theme;
+    let theme = app.config.theme;
     let side = app.context_source_side(file);
     let syntax = side.and_then(|side| {
         let line_number = match side {
@@ -580,7 +580,7 @@ pub(crate) fn render_context_line_wrapped(
         text: app.context_line_text(file, old_line, new_line),
     };
 
-    match app.layout {
+    match app.viewport.layout {
         DiffLayoutMode::Unified => render_unified_line_wrapped_with_focus(
             &diff_line,
             syntax.as_ref(),
@@ -588,7 +588,7 @@ pub(crate) fn render_context_line_wrapped(
             width,
             theme,
             false,
-            &app.grep_filter,
+            &app.filters.grep_filter,
         ),
         DiffLayoutMode::Split => {
             let visual_row_start = app.wrapped_visual_scroll_for_model_row(row_index);
@@ -598,7 +598,7 @@ pub(crate) fn render_context_line_wrapped(
                 visual_row_start,
                 width,
                 theme,
-                &app.grep_filter,
+                &app.filters.grep_filter,
             )
         }
     }
@@ -1263,8 +1263,8 @@ pub(crate) fn render_split_line_with_focus(
     if width == 0 {
         return Line::default();
     }
-    let theme = app.theme;
-    let horizontal_scroll = app.horizontal_scroll;
+    let theme = app.config.theme;
+    let horizontal_scroll = app.viewport.horizontal_scroll;
 
     let left_syntax = left.and_then(|index| app.syntax_line(file, hunk, index, DiffSide::Old));
     let right_syntax = right.and_then(|index| app.syntax_line(file, hunk, index, DiffSide::New));
@@ -1277,7 +1277,7 @@ pub(crate) fn render_split_line_with_focus(
 
     let left_width = width / 2;
     let right_width = width.saturating_sub(left_width);
-    let lines = &app.changeset.files[file].hunks[hunk].lines;
+    let lines = &app.document.changeset.files[file].hunks[hunk].lines;
     let left_line = left.and_then(|index| lines.get(index));
     let right_line = right.and_then(|index| lines.get(index));
     let mut spans = split_cell_spans_at_scroll_with_focus(
@@ -1325,7 +1325,7 @@ pub(crate) fn render_split_line_wrapped_with_focus(
     if width == 0 {
         return vec![Line::default()];
     }
-    let theme = app.theme;
+    let theme = app.config.theme;
 
     let left_syntax = left.and_then(|index| app.syntax_line(file, hunk, index, DiffSide::Old));
     let right_syntax = right.and_then(|index| app.syntax_line(file, hunk, index, DiffSide::New));
@@ -1338,7 +1338,7 @@ pub(crate) fn render_split_line_wrapped_with_focus(
 
     let left_width = width / 2;
     let right_width = width.saturating_sub(left_width);
-    let lines = &app.changeset.files[file].hunks[hunk].lines;
+    let lines = &app.document.changeset.files[file].hunks[hunk].lines;
     let left_line = left.and_then(|index| lines.get(index));
     let right_line = right.and_then(|index| lines.get(index));
     let left_content_width = split_cell_content_width(left_width);
@@ -1392,7 +1392,7 @@ pub(crate) fn render_split_line_wrapped_with_focus(
             left_line,
             right_line,
             SplitGrepRender {
-                query: &app.grep_filter,
+                query: &app.filters.grep_filter,
                 width,
                 left_scroll,
                 right_scroll,

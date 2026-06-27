@@ -3,8 +3,8 @@ use super::*;
 impl DiffApp {
     pub(crate) fn diff_choice_at(&self, column: u16, row: u16) -> Option<DiffChoice> {
         let choices = self.filtered_diff_choices();
-        let menu_area = self.rendered_diff_menu_area?;
-        let inner = diff_menu_block(self.theme).inner(menu_area);
+        let menu_area = self.overlays.rendered_diff_menu_area?;
+        let inner = diff_menu_block(self.config.theme).inner(menu_area);
         if column < inner.x
             || column >= inner.x.saturating_add(inner.width)
             || row < inner.y.saturating_add(2)
@@ -31,13 +31,14 @@ impl DiffApp {
     }
 
     pub(crate) fn is_rendered_diff_menu_position(&self, column: u16, row: u16) -> bool {
-        self.rendered_diff_menu_area
+        self.overlays
+            .rendered_diff_menu_area
             .is_some_and(|area| rect_contains(area, column, row))
     }
 
     pub(crate) fn color_scheme_index_at(&self, column: u16, row: u16) -> Option<usize> {
-        let menu_area = self.rendered_color_scheme_picker_area?;
-        let inner = color_scheme_picker_block(self.theme).inner(menu_area);
+        let menu_area = self.overlays.rendered_color_scheme_picker_area?;
+        let inner = color_scheme_picker_block(self.config.theme).inner(menu_area);
         let choices = self.filtered_color_schemes();
         if column < inner.x
             || column >= inner.x.saturating_add(inner.width)
@@ -48,6 +49,7 @@ impl DiffApp {
         }
 
         let choice_index = self
+            .overlays
             .color_scheme_picker
             .scroll
             .saturating_add(usize::from(row.saturating_sub(inner.y).saturating_sub(3)));
@@ -55,22 +57,23 @@ impl DiffApp {
     }
 
     pub(crate) fn is_rendered_color_scheme_picker_position(&self, column: u16, row: u16) -> bool {
-        self.rendered_color_scheme_picker_area
+        self.overlays
+            .rendered_color_scheme_picker_area
             .is_some_and(|area| rect_contains(area, column, row))
     }
 
     pub(crate) fn diff_menu_choices(&self) -> Vec<DiffChoice> {
         if matches!(
-            &self.options.source,
+            &self.document.options.source,
             DiffSource::Range { .. } | DiffSource::Difftool { .. }
-        ) || (matches!(&self.options.source, DiffSource::Patch(_))
-            && !is_review_options(&self.options))
+        ) || (matches!(&self.document.options.source, DiffSource::Patch(_))
+            && !is_review_options(&self.document.options))
         {
             return Vec::new();
         }
 
         let mut choices = vec![DiffChoice::All];
-        if self.branch_base.is_some() {
+        if self.refs.branch_base.is_some() {
             choices.push(DiffChoice::Branch);
         }
         choices.push(DiffChoice::Show);
@@ -81,7 +84,7 @@ impl DiffApp {
 
     pub(crate) fn filtered_diff_choices(&self) -> Vec<DiffChoice> {
         let choices = self.selectable_diff_choices();
-        let query = self.diff_menu.input.trim().to_ascii_lowercase();
+        let query = self.overlays.diff_menu.input.trim().to_ascii_lowercase();
         if query.is_empty() {
             return choices;
         }
@@ -135,12 +138,13 @@ impl DiffApp {
             DiffChoice::All => "HEAD → working tree".to_owned(),
             DiffChoice::Unstaged => "index → working tree".to_owned(),
             DiffChoice::Staged => "HEAD → index".to_owned(),
-            DiffChoice::Branch => match self.branch_base.as_deref() {
+            DiffChoice::Branch => match self.refs.branch_base.as_deref() {
                 Some(base) => {
                     let head = self
+                        .refs
                         .branch_head
                         .as_deref()
-                        .or(self.current_head.as_deref())
+                        .or(self.refs.current_head.as_deref())
                         .unwrap_or("HEAD");
                     format!("{head} → {base}")
                 }
@@ -153,7 +157,7 @@ impl DiffApp {
 
     pub(crate) fn highlighted_diff_choice(&self) -> Option<DiffChoice> {
         self.filtered_diff_choices()
-            .get(self.diff_menu.selected)
+            .get(self.overlays.diff_menu.selected)
             .copied()
     }
 
@@ -163,47 +167,51 @@ impl DiffApp {
             return;
         }
 
-        self.diff_menu.move_wrapping(choices.len(), delta);
-        self.dirty = true;
+        self.overlays.diff_menu.move_wrapping(choices.len(), delta);
+        self.runtime.dirty = true;
     }
 
     pub(crate) fn set_diff_menu_selection(&mut self, selected: usize) {
         if self
+            .overlays
             .diff_menu
             .set_selected(selected, self.filtered_diff_choices().len())
         {
-            self.dirty = true;
+            self.runtime.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn push_diff_menu_input(&mut self, character: char) {
-        self.diff_menu.push_input(character);
-        self.dirty = true;
+        self.overlays.diff_menu.push_input(character);
+        self.runtime.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_diff_menu_input(&mut self) {
-        if matches!(self.diff_menu.pop_input(), TextInputKeyResult::Edited) {
-            self.dirty = true;
+        if matches!(
+            self.overlays.diff_menu.pop_input(),
+            TextInputKeyResult::Edited
+        ) {
+            self.runtime.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn clear_diff_menu_input(&mut self) {
-        if self.diff_menu.clear_input_and_selection() {
-            self.dirty = true;
+        if self.overlays.diff_menu.clear_input_and_selection() {
+            self.runtime.dirty = true;
         }
     }
 
     pub(super) fn apply_diff_menu_input_key(&mut self, key: KeyEvent) -> bool {
-        match self.diff_menu.apply_input_key(key) {
+        match self.overlays.diff_menu.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.dirty = true;
+                self.runtime.dirty = true;
                 true
             }
             TextInputKeyResult::Moved => {
-                self.dirty = true;
+                self.runtime.dirty = true;
                 true
             }
             TextInputKeyResult::Handled => true,
@@ -221,15 +229,16 @@ impl DiffApp {
     }
 
     pub(crate) fn current_diff_choice(&self) -> Option<DiffChoice> {
-        diff_choice_for_options(&self.options)
+        diff_choice_for_options(&self.document.options)
     }
 
     pub(crate) fn pending_or_current_diff_choice(&self) -> Option<DiffChoice> {
-        if self.pending_review_load.is_some() {
+        if self.jobs.pending_review_load.is_some() {
             return Some(DiffChoice::Review);
         }
 
-        self.pending_diff_load
+        self.jobs
+            .pending_diff_load
             .as_ref()
             .and_then(|pending| diff_choice_for_options(&pending.options))
             .or_else(|| self.current_diff_choice())
@@ -240,7 +249,7 @@ impl DiffApp {
     }
 
     fn submit_review_input_with(&mut self, start_review_load: impl FnOnce(&mut Self, String)) {
-        let target = self.review_input.trim().to_owned();
+        let target = self.overlays.review_input.trim().to_owned();
         if target.is_empty() {
             self.set_error_log("review unavailable: enter a review ID");
             return;
@@ -286,28 +295,29 @@ impl DiffApp {
 
     pub(crate) fn select_branch(&mut self, menu: BranchMenu, branch: String) {
         let base = match menu {
-            BranchMenu::Head => self.branch_base.clone(),
+            BranchMenu::Head => self.refs.branch_base.clone(),
             BranchMenu::Base => Some(branch.clone()),
         };
         let head = match menu {
             BranchMenu::Head => Some(branch.clone()),
             BranchMenu::Base => self
+                .refs
                 .branch_head
                 .clone()
-                .or_else(|| self.current_head.clone())
-                .or_else(|| current_head_label(&self.changeset.repo)),
+                .or_else(|| self.refs.current_head.clone())
+                .or_else(|| current_head_label(&self.document.changeset.repo)),
         };
         let Some((base, head)) = base.zip(head) else {
             self.set_error_log("branch diff unavailable");
             return;
         };
 
-        let mut options = self.options.clone();
+        let mut options = self.document.options.clone();
         options.source = self.branch_source(base, head);
         options.scope = DiffScope::All;
 
-        if options == self.options {
-            self.dirty = true;
+        if options == self.document.options {
+            self.runtime.dirty = true;
             return;
         }
 
@@ -315,7 +325,7 @@ impl DiffApp {
     }
 
     pub(crate) fn branch_source(&self, base: String, head: String) -> DiffSource {
-        if self.current_head.as_deref() == Some(head.as_str()) {
+        if self.refs.current_head.as_deref() == Some(head.as_str()) {
             DiffSource::Base(base)
         } else {
             DiffSource::Branch { base, head }
@@ -336,10 +346,10 @@ impl DiffApp {
             return;
         };
 
-        if options == self.options {
-            self.pending_diff_load = None;
-            self.pending_review_load = None;
-            self.dirty = true;
+        if options == self.document.options {
+            self.jobs.pending_diff_load = None;
+            self.jobs.pending_review_load = None;
+            self.runtime.dirty = true;
             return;
         }
 
@@ -347,18 +357,18 @@ impl DiffApp {
     }
 
     pub(crate) fn options_for_choice(&self, choice: DiffChoice) -> Option<DiffOptions> {
-        let mut options = self.options.clone();
+        let mut options = self.document.options.clone();
         match choice {
             DiffChoice::Branch => {
-                let base = self
-                    .branch_base
-                    .clone()
-                    .or_else(|| default_branch_base(&self.options, &self.changeset.repo))?;
+                let base = self.refs.branch_base.clone().or_else(|| {
+                    default_branch_base(&self.document.options, &self.document.changeset.repo)
+                })?;
                 let head = self
+                    .refs
                     .branch_head
                     .clone()
-                    .or_else(|| self.current_head.clone())
-                    .or_else(|| current_head_label(&self.changeset.repo))?;
+                    .or_else(|| self.refs.current_head.clone())
+                    .or_else(|| current_head_label(&self.document.changeset.repo))?;
                 options.source = self.branch_source(base, head);
                 options.scope = DiffScope::All;
             }
@@ -375,7 +385,11 @@ impl DiffApp {
                 options.scope = DiffScope::Staged;
             }
             DiffChoice::Show => {
-                let rev = self.show_rev.clone().unwrap_or_else(|| "HEAD".to_owned());
+                let rev = self
+                    .refs
+                    .show_rev
+                    .clone()
+                    .unwrap_or_else(|| "HEAD".to_owned());
                 options.source = DiffSource::Show(rev);
                 options.scope = DiffScope::All;
             }
