@@ -68,11 +68,13 @@ use crate::{
     },
     runtime,
     search::{DiffSearchIndex, DiffSearchResult, grep_match_rows},
+    selector::SelectorState,
     syntax::{
         DiffSide, InlineHunkEmphasisCache, InlineHunkKey, InlineRange, LruCache, SyntaxPosition,
         SyntaxPriority, SyntaxRuntime, available_context_lines, full_file_source,
         load_full_file_source, split_context_source_lines, unified_syntax_side,
     },
+    text_input::{TextInputKeyResult, handle_text_input_key},
     theme::{
         BASE_BRANCH_MARKER, BRANCH_COMPARISON_SEPARATOR, CURRENT_BRANCH_MARKER, DiffTheme,
         EVENT_POLL, FILE_SIDEBAR_MIN_WIDTH, GUTTER_WIDTH, HELP_MENU_ROWS, HORIZONTAL_SCROLL_STEP,
@@ -526,281 +528,11 @@ pub(crate) fn is_plain_char_key(key: KeyEvent, character: char) -> bool {
         && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextInputKeyResult {
-    Ignored,
-    Handled,
-    Moved,
-    Edited,
-}
-
-fn handle_text_input_key(
-    input: &mut String,
-    cursor: &mut usize,
-    key: KeyEvent,
-) -> TextInputKeyResult {
-    clamp_text_cursor(input, cursor);
-    if input.is_empty() {
-        match key.code {
-            KeyCode::Home
-            | KeyCode::End
-            | KeyCode::Left
-            | KeyCode::Right
-            | KeyCode::Backspace
-            | KeyCode::Delete => return TextInputKeyResult::Ignored,
-            KeyCode::Char('a' | 'e' | 'u' | 'k' | 'w')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
-                return TextInputKeyResult::Ignored;
-            }
-            _ => {}
-        }
-    }
-    let before_input = input.clone();
-    let before_cursor = *cursor;
-
-    let handled = match key.code {
-        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            *cursor = line_start(input, *cursor);
-            true
-        }
-        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            *cursor = line_end(input, *cursor);
-            true
-        }
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            delete_range(input, cursor, line_start(input, *cursor), *cursor);
-            true
-        }
-        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            delete_range(input, cursor, *cursor, line_end(input, *cursor));
-            true
-        }
-        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            delete_range(
-                input,
-                cursor,
-                previous_word_boundary(input, *cursor),
-                *cursor,
-            );
-            true
-        }
-        KeyCode::Home => {
-            *cursor = line_start(input, *cursor);
-            true
-        }
-        KeyCode::End => {
-            *cursor = line_end(input, *cursor);
-            true
-        }
-        KeyCode::Left if key_has_command_modifier(key.modifiers) => {
-            *cursor = line_start(input, *cursor);
-            true
-        }
-        KeyCode::Right if key_has_command_modifier(key.modifiers) => {
-            *cursor = line_end(input, *cursor);
-            true
-        }
-        KeyCode::Left if key_has_word_modifier(key.modifiers) => {
-            *cursor = previous_word_boundary(input, *cursor);
-            true
-        }
-        KeyCode::Right if key_has_word_modifier(key.modifiers) => {
-            *cursor = next_word_boundary(input, *cursor);
-            true
-        }
-        KeyCode::Left => {
-            *cursor = previous_char_boundary(input, *cursor);
-            true
-        }
-        KeyCode::Right => {
-            *cursor = next_char_boundary(input, *cursor);
-            true
-        }
-        KeyCode::Backspace | KeyCode::Delete if key_has_command_modifier(key.modifiers) => {
-            delete_range(input, cursor, line_start(input, *cursor), *cursor);
-            true
-        }
-        KeyCode::Backspace if key_has_word_modifier(key.modifiers) => {
-            delete_range(
-                input,
-                cursor,
-                previous_word_boundary(input, *cursor),
-                *cursor,
-            );
-            true
-        }
-        KeyCode::Delete if key_has_word_modifier(key.modifiers) => {
-            delete_range(input, cursor, *cursor, next_word_boundary(input, *cursor));
-            true
-        }
-        KeyCode::Backspace => {
-            delete_range(
-                input,
-                cursor,
-                previous_char_boundary(input, *cursor),
-                *cursor,
-            );
-            true
-        }
-        KeyCode::Delete => {
-            delete_range(input, cursor, *cursor, next_char_boundary(input, *cursor));
-            true
-        }
-        KeyCode::Char(character) if is_text_input_character(key.modifiers) => {
-            input.insert(*cursor, character);
-            *cursor += character.len_utf8();
-            true
-        }
-        _ => false,
-    };
-
-    if !handled {
-        TextInputKeyResult::Ignored
-    } else if before_input != *input {
-        TextInputKeyResult::Edited
-    } else if before_cursor != *cursor {
-        TextInputKeyResult::Moved
-    } else {
-        TextInputKeyResult::Handled
-    }
-}
-
-fn is_text_input_character(modifiers: KeyModifiers) -> bool {
-    !modifiers.intersects(
-        KeyModifiers::CONTROL
-            | KeyModifiers::ALT
-            | KeyModifiers::SUPER
-            | KeyModifiers::HYPER
-            | KeyModifiers::META,
-    )
-}
-
-fn key_has_command_modifier(modifiers: KeyModifiers) -> bool {
-    modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::META)
-}
-
-fn key_has_word_modifier(modifiers: KeyModifiers) -> bool {
-    modifiers.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
-}
-
-fn clamp_text_cursor(input: &str, cursor: &mut usize) {
-    *cursor = (*cursor).min(input.len());
-    while *cursor > 0 && !input.is_char_boundary(*cursor) {
-        *cursor -= 1;
-    }
-}
-
-fn delete_range(input: &mut String, cursor: &mut usize, start: usize, end: usize) {
-    let start = start.min(input.len());
-    let end = end.min(input.len());
-    if start >= end || !input.is_char_boundary(start) || !input.is_char_boundary(end) {
-        return;
-    }
-    input.replace_range(start..end, "");
-    *cursor = start;
-}
-
-fn previous_char_boundary(input: &str, cursor: usize) -> usize {
-    input[..cursor.min(input.len())]
-        .char_indices()
-        .last()
-        .map(|(index, _)| index)
-        .unwrap_or(0)
-}
-
-fn next_char_boundary(input: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(input.len());
-    input[cursor..]
-        .chars()
-        .next()
-        .map(|character| cursor + character.len_utf8())
-        .unwrap_or(cursor)
-}
-
-fn line_start(input: &str, cursor: usize) -> usize {
-    input[..cursor.min(input.len())]
-        .rfind('\n')
-        .map(|index| index + 1)
-        .unwrap_or(0)
-}
-
-fn line_end(input: &str, cursor: usize) -> usize {
-    let cursor = cursor.min(input.len());
-    input[cursor..]
-        .find('\n')
-        .map(|index| cursor + index)
-        .unwrap_or(input.len())
-}
-
-fn previous_word_boundary(input: &str, cursor: usize) -> usize {
-    let mut index = cursor.min(input.len());
-    while index > 0 {
-        let prev = previous_char_boundary(input, index);
-        let ch = input[prev..index].chars().next().unwrap_or_default();
-        if !ch.is_whitespace() {
-            break;
-        }
-        index = prev;
-    }
-    while index > 0 {
-        let prev = previous_char_boundary(input, index);
-        let ch = input[prev..index].chars().next().unwrap_or_default();
-        if ch.is_whitespace() {
-            break;
-        }
-        index = prev;
-    }
-    index
-}
-
-fn next_word_boundary(input: &str, cursor: usize) -> usize {
-    let mut index = cursor.min(input.len());
-    while index < input.len() {
-        let next = next_char_boundary(input, index);
-        let ch = input[index..next].chars().next().unwrap_or_default();
-        if ch.is_whitespace() {
-            break;
-        }
-        index = next;
-    }
-    while index < input.len() {
-        let next = next_char_boundary(input, index);
-        let ch = input[index..next].chars().next().unwrap_or_default();
-        if !ch.is_whitespace() {
-            break;
-        }
-        index = next;
-    }
-    index
-}
-
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
     column >= area.x
         && column < area.x.saturating_add(area.width)
         && row >= area.y
         && row < area.y.saturating_add(area.height)
-}
-
-/// Keeps `selected` visible in a scrollable list of `item_count` rows.
-pub(crate) fn ensure_selector_scroll(
-    scroll: &mut usize,
-    selected: usize,
-    item_count: usize,
-    visible_rows: usize,
-) {
-    if visible_rows == 0 {
-        *scroll = 0;
-        return;
-    }
-
-    let max_scroll = item_count.saturating_sub(visible_rows.max(1));
-    if selected < *scroll {
-        *scroll = selected;
-    } else if selected >= scroll.saturating_add(visible_rows) {
-        *scroll = selected.saturating_add(1).saturating_sub(visible_rows);
-    }
-    *scroll = (*scroll).min(max_scroll);
 }
 
 pub(crate) fn show_rev_from_options(options: &DiffOptions) -> Option<String> {
@@ -1534,23 +1266,15 @@ pub(crate) struct DiffApp {
     pub(crate) help_menu_visible_rows: usize,
     terminal_area: Rect,
     pub(crate) diff_menu_open: bool,
-    pub(crate) diff_menu_input: String,
-    pub(crate) diff_menu_input_cursor: usize,
-    pub(crate) diff_menu_selected: usize,
+    pub(crate) diff_menu: SelectorState,
     pub(crate) review_input_open: bool,
     pub(crate) review_input: String,
     pub(crate) review_input_cursor: usize,
     pub(crate) options_menu_open: bool,
-    pub(crate) options_menu_input: String,
-    pub(crate) options_menu_input_cursor: usize,
-    pub(crate) options_menu_selected: usize,
-    pub(crate) options_menu_scroll: usize,
+    pub(crate) options_menu: SelectorState,
     pub(crate) options_menu_draft: OptionsDraft,
     pub(crate) color_scheme_picker_open: bool,
-    pub(crate) color_scheme_input: String,
-    pub(crate) color_scheme_input_cursor: usize,
-    pub(crate) color_scheme_scroll: usize,
-    pub(crate) color_scheme_selected: usize,
+    pub(crate) color_scheme_picker: SelectorState,
     pub(crate) color_scheme_preview_original: Option<(ColorSchemeChoice, DiffTheme)>,
     pub(crate) filter_input: Option<DiffFilterKind>,
     pub(crate) file_filter: String,
@@ -1563,19 +1287,13 @@ pub(crate) struct DiffApp {
     pub(crate) grep_matches_truncated: bool,
     pub(crate) selected_grep_match: Option<usize>,
     pub(crate) branch_menu_open: Option<BranchMenu>,
-    pub(crate) branch_menu_input: String,
-    pub(crate) branch_menu_input_cursor: usize,
-    pub(crate) branch_menu_scroll: usize,
-    pub(crate) branch_menu_selected: usize,
+    pub(crate) branch_menu: SelectorState,
     pub(crate) branch_base: Option<String>,
     pub(crate) branch_head: Option<String>,
     pub(crate) current_head: Option<String>,
     pub(crate) comparison_branches: Vec<String>,
     pub(crate) commit_menu_open: bool,
-    pub(crate) commit_menu_input: String,
-    pub(crate) commit_menu_input_cursor: usize,
-    pub(crate) commit_menu_scroll: usize,
-    pub(crate) commit_menu_selected: usize,
+    pub(crate) commit_menu: SelectorState,
     pub(crate) show_rev: Option<String>,
     pub(crate) comparison_commits: Vec<GitCommit>,
     pub(crate) live_diff_failed_options: Option<DiffOptions>,
@@ -1840,17 +1558,12 @@ impl DiffApp {
             help_menu_visible_rows: 1,
             terminal_area: Rect::default(),
             diff_menu_open: false,
-            diff_menu_input: String::new(),
-            diff_menu_input_cursor: 0,
-            diff_menu_selected: 0,
+            diff_menu: SelectorState::default(),
             review_input_open: false,
             review_input: String::new(),
             review_input_cursor: 0,
             options_menu_open: false,
-            options_menu_input: String::new(),
-            options_menu_input_cursor: 0,
-            options_menu_selected: 0,
-            options_menu_scroll: 0,
+            options_menu: SelectorState::default(),
             options_menu_draft: OptionsDraft {
                 layout: layout_setting_from_override(layout_override),
                 live_updates_enabled: settings.live_reload,
@@ -1864,10 +1577,7 @@ impl DiffApp {
                 toast_max_visible: settings.notifications.max_visible,
             },
             color_scheme_picker_open: false,
-            color_scheme_input: String::new(),
-            color_scheme_input_cursor: 0,
-            color_scheme_scroll: 0,
-            color_scheme_selected: 0,
+            color_scheme_picker: SelectorState::default(),
             color_scheme_preview_original: None,
             filter_input: None,
             file_filter: String::new(),
@@ -1880,19 +1590,13 @@ impl DiffApp {
             grep_matches_truncated: false,
             selected_grep_match: None,
             branch_menu_open: None,
-            branch_menu_input: String::new(),
-            branch_menu_input_cursor: 0,
-            branch_menu_scroll: 0,
-            branch_menu_selected: 0,
+            branch_menu: SelectorState::default(),
             branch_base,
             branch_head,
             current_head,
             comparison_branches,
             commit_menu_open: false,
-            commit_menu_input: String::new(),
-            commit_menu_input_cursor: 0,
-            commit_menu_scroll: 0,
-            commit_menu_selected: 0,
+            commit_menu: SelectorState::default(),
             show_rev,
             comparison_commits,
             live_diff_failed_options: None,
@@ -4478,9 +4182,7 @@ impl DiffApp {
         if choices.is_empty() {
             return;
         }
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
-        self.diff_menu_selected = 0;
+        self.diff_menu.reset();
         self.diff_menu_open = true;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -4493,12 +4195,11 @@ impl DiffApp {
 
     pub(crate) fn close_diff_menu(&mut self) {
         if self.diff_menu_open
-            || !self.diff_menu_input.is_empty()
+            || !self.diff_menu.input.is_empty()
             || self.rendered_diff_menu_area.is_some()
         {
             self.diff_menu_open = false;
-            self.diff_menu_input.clear();
-            self.diff_menu_input_cursor = 0;
+            self.diff_menu.reset_input();
             self.rendered_diff_menu_area = None;
             self.dirty = true;
         }
@@ -4509,8 +4210,7 @@ impl DiffApp {
         self.review_input_cursor = 0;
         self.review_input_open = true;
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -4546,17 +4246,14 @@ impl DiffApp {
             toast_timeout_ms: self.syntax_settings.notifications.timeout_ms,
             toast_max_visible: self.syntax_settings.notifications.max_visible,
         };
-        self.options_menu_selected = self
-            .options_menu_selected
-            .min(self.options_menu_items().len().saturating_sub(1));
-        self.options_menu_input.clear();
-        self.options_menu_input_cursor = 0;
-        self.options_menu_scroll = 0;
+        let len = self.options_menu_items().len();
+        self.options_menu
+            .set_selected(self.options_menu.selected, len);
+        self.options_menu.reset_input_and_scroll();
         self.options_menu_open = true;
         self.close_color_scheme_picker();
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.close_review_input();
         self.branch_menu_open = None;
@@ -4567,14 +4264,11 @@ impl DiffApp {
 
     pub(crate) fn close_options_menu(&mut self) {
         if self.options_menu_open
-            || !self.options_menu_input.is_empty()
-            || self.options_menu_scroll != 0
+            || !self.options_menu.input.is_empty()
+            || self.options_menu.scroll != 0
         {
             self.options_menu_open = false;
-            self.options_menu_input.clear();
-            self.options_menu_input_cursor = 0;
-            self.options_menu_selected = 0;
-            self.options_menu_scroll = 0;
+            self.options_menu.reset();
             self.close_color_scheme_picker();
             self.dirty = true;
         }
@@ -4582,7 +4276,7 @@ impl DiffApp {
 
     pub(crate) fn highlighted_option(&self) -> Option<OptionsMenuItem> {
         self.filtered_options_menu_items()
-            .get(self.options_menu_selected)
+            .get(self.options_menu.selected)
             .copied()
     }
 
@@ -4592,45 +4286,27 @@ impl DiffApp {
             return;
         }
 
-        self.options_menu_selected =
-            (self.options_menu_selected as isize + delta).rem_euclid(len as isize) as usize;
+        self.options_menu.move_wrapping(len, delta);
         self.dirty = true;
     }
 
     pub(crate) fn set_options_menu_selection(&mut self, selected: usize) {
-        let selected = selected.min(self.filtered_options_menu_items().len().saturating_sub(1));
-        if self.options_menu_selected != selected {
-            self.options_menu_selected = selected;
+        if self
+            .options_menu
+            .set_selected(selected, self.filtered_options_menu_items().len())
+        {
             self.dirty = true;
         }
     }
 
     pub(crate) fn ensure_options_menu_selection_visible(&mut self, visible_rows: usize) {
         let len = self.filtered_options_menu_items().len();
-        ensure_selector_scroll(
-            &mut self.options_menu_scroll,
-            self.options_menu_selected,
-            len,
-            visible_rows,
-        );
+        self.options_menu.ensure_selected_visible(len, visible_rows);
     }
 
     fn clamp_options_menu_selection_to_filtered_items(&mut self) {
         let len = self.filtered_options_menu_items().len();
-        let previous_selected = self.options_menu_selected;
-        let previous_scroll = self.options_menu_scroll;
-
-        if len == 0 {
-            self.options_menu_selected = 0;
-            self.options_menu_scroll = 0;
-        } else {
-            self.options_menu_selected = self.options_menu_selected.min(len.saturating_sub(1));
-            self.options_menu_scroll = self.options_menu_scroll.min(self.options_menu_selected);
-        }
-
-        if self.options_menu_selected != previous_selected
-            || self.options_menu_scroll != previous_scroll
-        {
+        if self.options_menu.clamp(len) {
             self.dirty = true;
         }
     }
@@ -4641,7 +4317,7 @@ impl DiffApp {
 
     pub(crate) fn filtered_options_menu_items(&self) -> Vec<OptionsMenuItem> {
         let items = self.options_menu_items();
-        let query = self.options_menu_input.trim().to_ascii_lowercase();
+        let query = self.options_menu.input.trim().to_ascii_lowercase();
         if query.is_empty() {
             return items.to_vec();
         }
@@ -4754,51 +4430,27 @@ impl DiffApp {
 
     #[allow(dead_code)]
     pub(crate) fn push_options_menu_input(&mut self, character: char) {
-        self.options_menu_input
-            .insert(self.options_menu_input_cursor, character);
-        self.options_menu_input_cursor += character.len_utf8();
-        self.options_menu_selected = 0;
-        self.options_menu_scroll = 0;
+        self.options_menu.push_input(character);
         self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_options_menu_input(&mut self) {
-        let result = handle_text_input_key(
-            &mut self.options_menu_input,
-            &mut self.options_menu_input_cursor,
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        if matches!(result, TextInputKeyResult::Edited) {
-            self.options_menu_selected = 0;
-            self.options_menu_scroll = 0;
+        if matches!(self.options_menu.pop_input(), TextInputKeyResult::Edited) {
             self.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn clear_options_menu_input(&mut self) {
-        if !self.options_menu_input.is_empty()
-            || self.options_menu_selected != 0
-            || self.options_menu_scroll != 0
-        {
-            self.options_menu_input.clear();
-            self.options_menu_input_cursor = 0;
-            self.options_menu_selected = 0;
-            self.options_menu_scroll = 0;
+        if self.options_menu.clear_input_and_selection() {
             self.dirty = true;
         }
     }
 
     fn apply_options_menu_input_key(&mut self, key: KeyEvent) -> bool {
-        match handle_text_input_key(
-            &mut self.options_menu_input,
-            &mut self.options_menu_input_cursor,
-            key,
-        ) {
+        match self.options_menu.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.options_menu_selected = 0;
-                self.options_menu_scroll = 0;
                 self.dirty = true;
                 true
             }
@@ -4822,10 +4474,7 @@ impl DiffApp {
     pub(crate) fn open_color_scheme_picker(&mut self) {
         self.color_scheme_picker_open = true;
         self.color_scheme_preview_original = Some((self.color_scheme, self.theme));
-        self.color_scheme_input.clear();
-        self.color_scheme_input_cursor = 0;
-        self.color_scheme_scroll = 0;
-        self.color_scheme_selected = 0;
+        self.color_scheme_picker.reset();
         self.ensure_color_scheme_selection_visible();
         self.dirty = true;
     }
@@ -4837,9 +4486,7 @@ impl DiffApp {
                 self.theme = theme;
             }
             self.color_scheme_picker_open = false;
-            self.color_scheme_input.clear();
-            self.color_scheme_input_cursor = 0;
-            self.color_scheme_scroll = 0;
+            self.color_scheme_picker.reset_input_and_scroll();
             self.rendered_color_scheme_picker_area = None;
             self.dirty = true;
         }
@@ -4855,7 +4502,7 @@ impl DiffApp {
 
     pub(crate) fn filtered_color_schemes(&self) -> Vec<ColorSchemeChoice> {
         let choices = self.selectable_color_schemes();
-        let query = self.color_scheme_input.trim().to_ascii_lowercase();
+        let query = self.color_scheme_picker.input.trim().to_ascii_lowercase();
         if query.is_empty() {
             return choices;
         }
@@ -4880,10 +4527,6 @@ impl DiffApp {
             .collect()
     }
 
-    pub(crate) fn max_color_scheme_selection(&self) -> usize {
-        self.filtered_color_schemes().len().saturating_sub(1)
-    }
-
     fn color_scheme_picker_rows(&self) -> usize {
         color_scheme_picker_list_visible_rows(self, self.terminal_area)
             .unwrap_or(MAX_COLOR_SCHEME_MENU_ROWS)
@@ -4893,17 +4536,13 @@ impl DiffApp {
     pub(crate) fn ensure_color_scheme_selection_visible(&mut self) {
         let len = self.filtered_color_schemes().len();
         let visible_rows = self.color_scheme_picker_rows();
-        ensure_selector_scroll(
-            &mut self.color_scheme_scroll,
-            self.color_scheme_selected,
-            len,
-            visible_rows,
-        );
+        self.color_scheme_picker
+            .ensure_selected_visible(len, visible_rows);
     }
 
     pub(crate) fn set_color_scheme_selection(&mut self, selected: usize) {
-        let selected = selected.min(self.max_color_scheme_selection());
-        self.color_scheme_selected = selected;
+        self.color_scheme_picker
+            .set_selected(selected, self.filtered_color_schemes().len());
         self.ensure_color_scheme_selection_visible();
         self.preview_highlighted_color_scheme();
         self.dirty = true;
@@ -4914,31 +4553,25 @@ impl DiffApp {
         if len == 0 {
             return;
         }
-        let selected = (self.color_scheme_selected as isize + delta).rem_euclid(len as isize);
-        self.set_color_scheme_selection(selected as usize);
+        self.color_scheme_picker.move_wrapping(len, delta);
+        self.ensure_color_scheme_selection_visible();
+        self.preview_highlighted_color_scheme();
+        self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn push_color_scheme_input(&mut self, character: char) {
-        self.color_scheme_input
-            .insert(self.color_scheme_input_cursor, character);
-        self.color_scheme_input_cursor += character.len_utf8();
-        self.color_scheme_scroll = 0;
-        self.color_scheme_selected = 0;
+        self.color_scheme_picker.push_input(character);
         self.preview_highlighted_color_scheme();
         self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_color_scheme_input(&mut self) {
-        let result = handle_text_input_key(
-            &mut self.color_scheme_input,
-            &mut self.color_scheme_input_cursor,
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        if matches!(result, TextInputKeyResult::Edited) {
-            self.color_scheme_scroll = 0;
-            self.color_scheme_selected = 0;
+        if matches!(
+            self.color_scheme_picker.pop_input(),
+            TextInputKeyResult::Edited
+        ) {
             self.preview_highlighted_color_scheme();
             self.dirty = true;
         }
@@ -4946,28 +4579,15 @@ impl DiffApp {
 
     #[allow(dead_code)]
     pub(crate) fn clear_color_scheme_input(&mut self) {
-        if !self.color_scheme_input.is_empty()
-            || self.color_scheme_scroll != 0
-            || self.color_scheme_selected != 0
-        {
-            self.color_scheme_input.clear();
-            self.color_scheme_input_cursor = 0;
-            self.color_scheme_scroll = 0;
-            self.color_scheme_selected = 0;
+        if self.color_scheme_picker.clear_input_and_selection() {
             self.preview_highlighted_color_scheme();
             self.dirty = true;
         }
     }
 
     fn apply_color_scheme_input_key(&mut self, key: KeyEvent) -> bool {
-        match handle_text_input_key(
-            &mut self.color_scheme_input,
-            &mut self.color_scheme_input_cursor,
-            key,
-        ) {
+        match self.color_scheme_picker.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.color_scheme_scroll = 0;
-                self.color_scheme_selected = 0;
                 self.preview_highlighted_color_scheme();
                 self.dirty = true;
                 true
@@ -4984,7 +4604,7 @@ impl DiffApp {
     pub(crate) fn preview_highlighted_color_scheme(&mut self) {
         let Some(choice) = self
             .filtered_color_schemes()
-            .get(self.color_scheme_selected)
+            .get(self.color_scheme_picker.selected)
             .copied()
         else {
             return;
@@ -4996,7 +4616,7 @@ impl DiffApp {
     pub(crate) fn select_highlighted_color_scheme(&mut self) {
         let Some(choice) = self
             .filtered_color_schemes()
-            .get(self.color_scheme_selected)
+            .get(self.color_scheme_picker.selected)
             .copied()
         else {
             self.dirty = true;
@@ -5006,9 +4626,7 @@ impl DiffApp {
         self.options_menu_draft.color_scheme = choice;
         self.color_scheme_picker_open = false;
         self.color_scheme_preview_original = None;
-        self.color_scheme_input.clear();
-        self.color_scheme_input_cursor = 0;
-        self.color_scheme_scroll = 0;
+        self.color_scheme_picker.reset_input_and_scroll();
         self.rendered_color_scheme_picker_area = None;
         self.apply_options_menu_draft(OptionsMenuItem::ColorScheme);
     }
@@ -5218,15 +4836,12 @@ impl DiffApp {
 
     pub(crate) fn close_branch_menu(&mut self) {
         if self.branch_menu_open.is_some()
-            || !self.branch_menu_input.is_empty()
-            || self.branch_menu_scroll != 0
+            || !self.branch_menu.input.is_empty()
+            || self.branch_menu.scroll != 0
             || self.rendered_branch_menu_area.is_some()
         {
             self.branch_menu_open = None;
-            self.branch_menu_input.clear();
-            self.branch_menu_input_cursor = 0;
-            self.branch_menu_scroll = 0;
-            self.branch_menu_selected = 0;
+            self.branch_menu.reset();
             self.rendered_branch_menu_area = None;
             self.dirty = true;
         }
@@ -5234,15 +4849,12 @@ impl DiffApp {
 
     pub(crate) fn close_commit_menu(&mut self) {
         if self.commit_menu_open
-            || !self.commit_menu_input.is_empty()
-            || self.commit_menu_scroll != 0
+            || !self.commit_menu.input.is_empty()
+            || self.commit_menu.scroll != 0
             || self.rendered_commit_menu_area.is_some()
         {
             self.commit_menu_open = false;
-            self.commit_menu_input.clear();
-            self.commit_menu_input_cursor = 0;
-            self.commit_menu_scroll = 0;
-            self.commit_menu_selected = 0;
+            self.commit_menu.reset();
             self.rendered_commit_menu_area = None;
             self.dirty = true;
         }
@@ -5260,19 +4872,16 @@ impl DiffApp {
 
         self.commit_menu_open = true;
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.close_review_input();
         self.branch_menu_open = None;
-        self.branch_menu_input.clear();
-        self.branch_menu_input_cursor = 0;
+        self.branch_menu.reset_input();
         self.rendered_branch_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
-        self.commit_menu_input.clear();
-        self.commit_menu_input_cursor = 0;
-        self.commit_menu_selected = self
+        self.commit_menu.reset_input();
+        self.commit_menu.selected = self
             .selected_commit_menu_choice()
             .and_then(|commit| {
                 self.filtered_commits()
@@ -5296,16 +4905,14 @@ impl DiffApp {
 
         self.branch_menu_open = Some(menu);
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.close_review_input();
         self.options_menu_open = false;
         self.close_color_scheme_picker();
         self.close_commit_menu();
-        self.branch_menu_input.clear();
-        self.branch_menu_input_cursor = 0;
-        self.branch_menu_selected = self
+        self.branch_menu.reset_input();
+        self.branch_menu.selected = self
             .branch_ref(menu)
             .and_then(|branch| {
                 self.filtered_branches()
@@ -5374,24 +4981,23 @@ impl DiffApp {
 
     pub(crate) fn filtered_branch(&self, row_index: usize) -> Option<&str> {
         self.filtered_branches()
-            .get(self.branch_menu_scroll.saturating_add(row_index))
+            .get(self.branch_menu.scroll.saturating_add(row_index))
             .copied()
     }
 
     pub(crate) fn move_branch_selection(&mut self, delta: isize) {
-        let next = if delta < 0 {
-            self.branch_menu_selected
-                .saturating_sub(delta.unsigned_abs())
-        } else {
-            self.branch_menu_selected.saturating_add(delta as usize)
-        };
-        self.set_branch_selection(next);
+        let len = self.filtered_branches().len();
+        if self.branch_menu.move_saturating(len, delta) {
+            self.ensure_branch_selection_visible();
+            self.dirty = true;
+        }
     }
 
     pub(crate) fn set_branch_selection(&mut self, selected: usize) {
-        let selected = selected.min(self.max_branch_menu_selection());
-        if self.branch_menu_selected != selected {
-            self.branch_menu_selected = selected;
+        if self
+            .branch_menu
+            .set_selected(selected, self.filtered_branches().len())
+        {
             self.ensure_branch_selection_visible();
             self.dirty = true;
         }
@@ -5403,14 +5009,9 @@ impl DiffApp {
             return;
         }
 
-        let next = if delta < 0 {
-            self.branch_menu_selected
-                .checked_sub(1)
-                .unwrap_or(len.saturating_sub(1))
-        } else {
-            (self.branch_menu_selected + 1) % len
-        };
-        self.set_branch_selection(next);
+        self.branch_menu.move_wrapping(len, delta);
+        self.ensure_branch_selection_visible();
+        self.dirty = true;
     }
 
     pub(crate) fn ensure_branch_selection_visible(&mut self) {
@@ -5425,12 +5026,7 @@ impl DiffApp {
 
     pub(crate) fn ensure_branch_selection_visible_for_rows(&mut self, visible_rows: usize) {
         let len = self.filtered_branches().len();
-        ensure_selector_scroll(
-            &mut self.branch_menu_scroll,
-            self.branch_menu_selected,
-            len,
-            visible_rows,
-        );
+        self.branch_menu.ensure_selected_visible(len, visible_rows);
     }
 
     pub(crate) fn max_branch_menu_selection(&self) -> usize {
@@ -5468,7 +5064,7 @@ impl DiffApp {
 
     pub(crate) fn commit_menu_width(&self) -> u16 {
         let commit_width = commit_menu_width(&self.comparison_commits) as usize;
-        let input_width = self.commit_menu_input.width().saturating_add(4);
+        let input_width = self.commit_menu.input.width().saturating_add(4);
         commit_width.max(input_width).max(36).saturating_add(4) as u16
     }
 
@@ -5494,28 +5090,22 @@ impl DiffApp {
 
     pub(crate) fn ensure_commit_selection_visible_for_rows(&mut self, visible_rows: usize) {
         let len = self.filtered_commits().len();
-        ensure_selector_scroll(
-            &mut self.commit_menu_scroll,
-            self.commit_menu_selected,
-            len,
-            visible_rows,
-        );
+        self.commit_menu.ensure_selected_visible(len, visible_rows);
     }
 
     pub(crate) fn move_commit_selection(&mut self, delta: isize) {
-        let next = if delta < 0 {
-            self.commit_menu_selected
-                .saturating_sub(delta.unsigned_abs())
-        } else {
-            self.commit_menu_selected.saturating_add(delta as usize)
-        };
-        self.set_commit_selection(next);
+        let len = self.filtered_commits().len();
+        if self.commit_menu.move_saturating(len, delta) {
+            self.ensure_commit_selection_visible();
+            self.dirty = true;
+        }
     }
 
     pub(crate) fn set_commit_selection(&mut self, selected: usize) {
-        let selected = selected.min(self.max_commit_menu_selection());
-        if self.commit_menu_selected != selected {
-            self.commit_menu_selected = selected;
+        if self
+            .commit_menu
+            .set_selected(selected, self.filtered_commits().len())
+        {
             self.ensure_commit_selection_visible();
             self.dirty = true;
         }
@@ -5527,63 +5117,34 @@ impl DiffApp {
             return;
         }
 
-        let next = if delta < 0 {
-            self.commit_menu_selected
-                .checked_sub(1)
-                .unwrap_or(len.saturating_sub(1))
-        } else {
-            (self.commit_menu_selected + 1) % len
-        };
-        self.set_commit_selection(next);
+        self.commit_menu.move_wrapping(len, delta);
+        self.ensure_commit_selection_visible();
+        self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn push_commit_input(&mut self, character: char) {
-        self.commit_menu_input
-            .insert(self.commit_menu_input_cursor, character);
-        self.commit_menu_input_cursor += character.len_utf8();
-        self.commit_menu_scroll = 0;
-        self.commit_menu_selected = 0;
+        self.commit_menu.push_input(character);
         self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_commit_input(&mut self) {
-        let result = handle_text_input_key(
-            &mut self.commit_menu_input,
-            &mut self.commit_menu_input_cursor,
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        if matches!(result, TextInputKeyResult::Edited) {
-            self.commit_menu_scroll = 0;
-            self.commit_menu_selected = 0;
+        if matches!(self.commit_menu.pop_input(), TextInputKeyResult::Edited) {
             self.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn clear_commit_input(&mut self) {
-        if !self.commit_menu_input.is_empty()
-            || self.commit_menu_scroll != 0
-            || self.commit_menu_selected != 0
-        {
-            self.commit_menu_input.clear();
-            self.commit_menu_input_cursor = 0;
-            self.commit_menu_scroll = 0;
-            self.commit_menu_selected = 0;
+        if self.commit_menu.clear_input_and_selection() {
             self.dirty = true;
         }
     }
 
     fn apply_commit_input_key(&mut self, key: KeyEvent) -> bool {
-        match handle_text_input_key(
-            &mut self.commit_menu_input,
-            &mut self.commit_menu_input_cursor,
-            key,
-        ) {
+        match self.commit_menu.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.commit_menu_scroll = 0;
-                self.commit_menu_selected = 0;
                 self.dirty = true;
                 true
             }
@@ -5614,7 +5175,7 @@ impl DiffApp {
     }
 
     pub(crate) fn filtered_commits(&self) -> Vec<&GitCommit> {
-        let query = self.commit_menu_input.trim().to_ascii_lowercase();
+        let query = self.commit_menu.input.trim().to_ascii_lowercase();
         let selected = self.selected_commit_menu_choice();
         if query.is_empty() {
             return self
@@ -5644,14 +5205,14 @@ impl DiffApp {
 
     pub(crate) fn filtered_commit(&self, row_index: usize) -> Option<&GitCommit> {
         self.filtered_commits()
-            .get(self.commit_menu_scroll.saturating_add(row_index))
+            .get(self.commit_menu.scroll.saturating_add(row_index))
             .copied()
     }
 
     pub(crate) fn select_highlighted_commit_match(&mut self) {
         let Some(commit) = self
             .filtered_commits()
-            .get(self.commit_menu_selected)
+            .get(self.commit_menu.selected)
             .map(|commit| (*commit).clone())
         else {
             self.set_warning_notice("no matching commit");
@@ -5759,7 +5320,7 @@ impl DiffApp {
 
     pub(crate) fn filtered_branches(&self) -> Vec<&str> {
         let menu = self.branch_menu_open.unwrap_or(BranchMenu::Base);
-        let query = self.branch_menu_input.trim().to_ascii_lowercase();
+        let query = self.branch_menu.input.trim().to_ascii_lowercase();
         let selected = self.selected_branch_menu_choice(menu);
         if query.is_empty() {
             let mut matches: Vec<_> = self
@@ -5843,51 +5404,27 @@ impl DiffApp {
 
     #[allow(dead_code)]
     pub(crate) fn push_branch_input(&mut self, character: char) {
-        self.branch_menu_input
-            .insert(self.branch_menu_input_cursor, character);
-        self.branch_menu_input_cursor += character.len_utf8();
-        self.branch_menu_scroll = 0;
-        self.branch_menu_selected = 0;
+        self.branch_menu.push_input(character);
         self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_branch_input(&mut self) {
-        let result = handle_text_input_key(
-            &mut self.branch_menu_input,
-            &mut self.branch_menu_input_cursor,
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        if matches!(result, TextInputKeyResult::Edited) {
-            self.branch_menu_scroll = 0;
-            self.branch_menu_selected = 0;
+        if matches!(self.branch_menu.pop_input(), TextInputKeyResult::Edited) {
             self.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn clear_branch_input(&mut self) {
-        if !self.branch_menu_input.is_empty()
-            || self.branch_menu_scroll != 0
-            || self.branch_menu_selected != 0
-        {
-            self.branch_menu_input.clear();
-            self.branch_menu_input_cursor = 0;
-            self.branch_menu_scroll = 0;
-            self.branch_menu_selected = 0;
+        if self.branch_menu.clear_input_and_selection() {
             self.dirty = true;
         }
     }
 
     fn apply_branch_input_key(&mut self, key: KeyEvent) -> bool {
-        match handle_text_input_key(
-            &mut self.branch_menu_input,
-            &mut self.branch_menu_input_cursor,
-            key,
-        ) {
+        match self.branch_menu.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.branch_menu_scroll = 0;
-                self.branch_menu_selected = 0;
                 self.dirty = true;
                 true
             }
@@ -5906,7 +5443,7 @@ impl DiffApp {
         };
         let Some(branch) = self
             .filtered_branches()
-            .get(self.branch_menu_selected)
+            .get(self.branch_menu.selected)
             .map(|branch| (*branch).to_owned())
         else {
             self.set_warning_notice("no matching branch");
@@ -5975,7 +5512,7 @@ impl DiffApp {
 
     pub(crate) fn branch_menu_width(&self) -> u16 {
         let branch_width = branch_menu_width(&self.comparison_branches) as usize;
-        let input_width = self.branch_menu_input.width().saturating_add(4);
+        let input_width = self.branch_menu.input.width().saturating_add(4);
         branch_width.max(input_width).max(36).saturating_add(4) as u16
     }
 
@@ -6044,7 +5581,8 @@ impl DiffApp {
         }
 
         let choice_index = self
-            .color_scheme_scroll
+            .color_scheme_picker
+            .scroll
             .saturating_add(usize::from(row.saturating_sub(inner.y).saturating_sub(3)));
         choices.get(choice_index).map(|_| choice_index)
     }
@@ -6076,7 +5614,7 @@ impl DiffApp {
 
     pub(crate) fn filtered_diff_choices(&self) -> Vec<DiffChoice> {
         let choices = self.selectable_diff_choices();
-        let query = self.diff_menu_input.trim().to_ascii_lowercase();
+        let query = self.diff_menu.input.trim().to_ascii_lowercase();
         if query.is_empty() {
             return choices;
         }
@@ -6148,7 +5686,7 @@ impl DiffApp {
 
     pub(crate) fn highlighted_diff_choice(&self) -> Option<DiffChoice> {
         self.filtered_diff_choices()
-            .get(self.diff_menu_selected)
+            .get(self.diff_menu.selected)
             .copied()
     }
 
@@ -6158,59 +5696,42 @@ impl DiffApp {
             return;
         }
 
-        self.diff_menu_selected =
-            (self.diff_menu_selected as isize + delta).rem_euclid(choices.len() as isize) as usize;
+        self.diff_menu.move_wrapping(choices.len(), delta);
         self.dirty = true;
     }
 
     pub(crate) fn set_diff_menu_selection(&mut self, selected: usize) {
-        let selected = selected.min(self.filtered_diff_choices().len().saturating_sub(1));
-        if self.diff_menu_selected != selected {
-            self.diff_menu_selected = selected;
+        if self
+            .diff_menu
+            .set_selected(selected, self.filtered_diff_choices().len())
+        {
             self.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn push_diff_menu_input(&mut self, character: char) {
-        self.diff_menu_input
-            .insert(self.diff_menu_input_cursor, character);
-        self.diff_menu_input_cursor += character.len_utf8();
-        self.diff_menu_selected = 0;
+        self.diff_menu.push_input(character);
         self.dirty = true;
     }
 
     #[allow(dead_code)]
     pub(crate) fn pop_diff_menu_input(&mut self) {
-        let result = handle_text_input_key(
-            &mut self.diff_menu_input,
-            &mut self.diff_menu_input_cursor,
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-        );
-        if matches!(result, TextInputKeyResult::Edited) {
-            self.diff_menu_selected = 0;
+        if matches!(self.diff_menu.pop_input(), TextInputKeyResult::Edited) {
             self.dirty = true;
         }
     }
 
     #[allow(dead_code)]
     pub(crate) fn clear_diff_menu_input(&mut self) {
-        if !self.diff_menu_input.is_empty() || self.diff_menu_selected != 0 {
-            self.diff_menu_input.clear();
-            self.diff_menu_input_cursor = 0;
-            self.diff_menu_selected = 0;
+        if self.diff_menu.clear_input_and_selection() {
             self.dirty = true;
         }
     }
 
     fn apply_diff_menu_input_key(&mut self, key: KeyEvent) -> bool {
-        match handle_text_input_key(
-            &mut self.diff_menu_input,
-            &mut self.diff_menu_input_cursor,
-            key,
-        ) {
+        match self.diff_menu.apply_input_key(key) {
             TextInputKeyResult::Edited => {
-                self.diff_menu_selected = 0;
                 self.dirty = true;
                 true
             }
@@ -7045,8 +6566,7 @@ impl DiffApp {
     ) {
         let FocusedEditorLaunch { target, editor } = editor;
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -7476,8 +6996,7 @@ impl DiffApp {
         self.filter_input = Some(kind);
         self.clear_diff_mouse_hover();
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -8037,8 +7556,7 @@ impl DiffApp {
         self.file_sidebar_open = !self.file_sidebar_open;
         self.file_sidebar_resizing = false;
         self.diff_menu_open = false;
-        self.diff_menu_input.clear();
-        self.diff_menu_input_cursor = 0;
+        self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         self.options_menu_open = false;
         self.close_color_scheme_picker();
@@ -8329,12 +7847,13 @@ impl DiffApp {
                 ],
             );
         }
-        self.branch_menu_scroll = self.branch_menu_scroll.min(self.max_branch_menu_scroll());
+        self.branch_menu.scroll = self.branch_menu.scroll.min(self.max_branch_menu_scroll());
         self.show_rev = show_rev_from_options(&self.options);
         self.comparison_commits =
             comparison_commits(&self.changeset.repo, self.show_rev.as_deref());
-        self.commit_menu_scroll = self
-            .commit_menu_scroll
+        self.commit_menu.scroll = self
+            .commit_menu
+            .scroll
             .min(self.max_commit_menu_scroll_for_rows(self.commit_menu_rows()));
         self.total_stats = total_stats;
         self.base_changeset = changeset.clone();
@@ -8440,11 +7959,12 @@ impl DiffApp {
                 self.branch_base.as_deref(),
             ],
         );
-        self.branch_menu_scroll = self.branch_menu_scroll.min(self.max_branch_menu_scroll());
+        self.branch_menu.scroll = self.branch_menu.scroll.min(self.max_branch_menu_scroll());
         self.show_rev = show_rev_from_options(&self.options);
         self.comparison_commits = comparison_commits(&changeset.repo, self.show_rev.as_deref());
-        self.commit_menu_scroll = self
-            .commit_menu_scroll
+        self.commit_menu.scroll = self
+            .commit_menu
+            .scroll
             .min(self.max_commit_menu_scroll_for_rows(self.commit_menu_rows()));
         self.total_stats = changeset.stats();
         self.base_changeset = changeset.clone();

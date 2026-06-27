@@ -226,10 +226,10 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rec
 
     let block = diff_menu_block(app.theme);
     let inner = block.inner(menu_area);
-    let selected = app.diff_menu_selected.min(choices.len().saturating_sub(1));
+    let selected = app.diff_menu.selected.min(choices.len().saturating_sub(1));
     let mut lines = vec![selector_input_line(
-        &app.diff_menu_input,
-        app.diff_menu_input_cursor,
+        &app.diff_menu.input,
+        app.diff_menu.input_cursor,
         inner.width as usize,
         app.theme,
         choices.len(),
@@ -388,7 +388,7 @@ pub(crate) fn review_input_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn diff_menu_floating_width(app: &DiffApp, choices: &[DiffChoice]) -> u16 {
-    let input = app.diff_menu_input.width().saturating_add(12);
+    let input = app.diff_menu.input.width().saturating_add(12);
     let rows = choices
         .iter()
         .map(|choice| format!(" {}  {} ", choice.label(), app.diff_choice_detail(*choice),).width())
@@ -569,10 +569,10 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
     let list_visible_rows = selector_menu_list_rows(inner.height, 0);
     app.ensure_options_menu_selection_visible(list_visible_rows);
 
-    let selected = app.options_menu_selected.min(items.len().saturating_sub(1));
+    let selected = app.options_menu.selected.min(items.len().saturating_sub(1));
     let mut lines = vec![selector_input_line(
-        &app.options_menu_input,
-        app.options_menu_input_cursor,
+        &app.options_menu.input,
+        app.options_menu.input_cursor,
         inner.width as usize,
         app.theme,
         items.len(),
@@ -592,7 +592,7 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
             ));
         }
     } else {
-        let scroll = app.options_menu_scroll;
+        let scroll = app.options_menu.scroll;
         lines.extend(scrolled_selector_items(&items, scroll, remaining_rows).map(
             |(global_index, item)| {
                 selector_setting_line(
@@ -618,7 +618,7 @@ pub(crate) fn draw_options_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: 
         list_start_row,
         items.len(),
         remaining_rows,
-        app.options_menu_scroll,
+        app.options_menu.scroll,
         app.theme,
     );
 }
@@ -641,7 +641,7 @@ pub(crate) fn options_menu_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn options_menu_width(app: &DiffApp, items: &[OptionsMenuItem]) -> u16 {
-    let input = app.options_menu_input.width().saturating_add(12);
+    let input = app.options_menu.input.width().saturating_add(12);
     let rows = items
         .iter()
         .map(|item| format!(" › {}  {} ", option_label(*item), app.option_value(*item)).width())
@@ -701,8 +701,8 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
     let inner = block.inner(picker_area);
     let choices = app.filtered_color_schemes();
     let mut lines = vec![selector_input_line(
-        &app.color_scheme_input,
-        app.color_scheme_input_cursor,
+        &app.color_scheme_picker.input,
+        app.color_scheme_picker.input_cursor,
         inner.width as usize,
         app.theme,
         choices.len(),
@@ -720,12 +720,8 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
     let remaining_rows = inner.height.saturating_sub(lines.len() as u16) as usize;
     let has_scrollbar = selector_scrollbar_needed(choices.len(), remaining_rows);
     let list_width = selector_list_width(inner.width, has_scrollbar);
-    crate::app::ensure_selector_scroll(
-        &mut app.color_scheme_scroll,
-        app.color_scheme_selected,
-        choices.len(),
-        remaining_rows,
-    );
+    app.color_scheme_picker
+        .ensure_selected_visible(choices.len(), remaining_rows);
     if choices.is_empty() {
         if remaining_rows > 0 {
             lines.push(selector_empty_line(
@@ -735,8 +731,8 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
             ));
         }
     } else {
-        let scroll = app.color_scheme_scroll;
-        let selected = app.color_scheme_selected;
+        let scroll = app.color_scheme_picker.scroll;
+        let selected = app.color_scheme_picker.selected;
         lines.extend(
             scrolled_selector_items(&choices, scroll, remaining_rows).map(
                 |(global_index, choice)| {
@@ -760,7 +756,7 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &mut DiffApp,
         list_start_row,
         choices.len(),
         remaining_rows,
-        app.color_scheme_scroll,
+        app.color_scheme_picker.scroll,
         app.theme,
     );
 }
@@ -783,7 +779,7 @@ pub(crate) fn color_scheme_picker_block(theme: DiffTheme) -> Block<'static> {
 }
 
 fn color_scheme_picker_width(app: &DiffApp) -> u16 {
-    let input = app.color_scheme_input.width().saturating_add(12);
+    let input = app.color_scheme_picker.input.width().saturating_add(12);
     let rows = app
         .filtered_color_schemes()
         .iter()
@@ -831,8 +827,8 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let block = branch_menu_block(app.theme, menu);
     let inner = block.inner(menu_area);
     let mut lines = vec![selector_input_line(
-        &app.branch_menu_input,
-        app.branch_menu_input_cursor,
+        &app.branch_menu.input,
+        app.branch_menu.input_cursor,
         inner.width as usize,
         app.theme,
         match_count,
@@ -862,8 +858,8 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
             ));
         }
     } else {
-        let scroll = app.branch_menu_scroll;
-        let selected = app.branch_menu_selected;
+        let scroll = app.branch_menu.scroll;
+        let selected = app.branch_menu.selected;
         lines.extend(
             scrolled_selector_items(&matches, scroll, remaining_rows).map(
                 |(global_index, branch)| {
@@ -886,7 +882,7 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
         list_start_row,
         matches.len(),
         remaining_rows,
-        app.branch_menu_scroll,
+        app.branch_menu.scroll,
         app.theme,
     );
 }
@@ -1035,8 +1031,8 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
     let block = commit_menu_block(app.theme);
     let inner = block.inner(menu_area);
     let mut lines = vec![selector_input_line(
-        &app.commit_menu_input,
-        app.commit_menu_input_cursor,
+        &app.commit_menu.input,
+        app.commit_menu.input_cursor,
         inner.width as usize,
         app.theme,
         match_count,
@@ -1067,8 +1063,8 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
             ));
         }
     } else {
-        let scroll = app.commit_menu_scroll;
-        let selected = app.commit_menu_selected;
+        let scroll = app.commit_menu.scroll;
+        let selected = app.commit_menu.selected;
         lines.extend(
             scrolled_selector_items(&matches, scroll, remaining_rows).map(
                 |(global_index, commit)| {
@@ -1091,7 +1087,7 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &mut DiffApp, area: R
         list_start_row,
         matches.len(),
         remaining_rows,
-        app.commit_menu_scroll,
+        app.commit_menu.scroll,
         app.theme,
     );
 }

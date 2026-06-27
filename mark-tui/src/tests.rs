@@ -3250,7 +3250,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
 
     assert!(!should_quit);
     assert!(app.diff_menu_open);
-    assert_eq!(app.diff_menu_input, "j");
+    assert_eq!(app.diff_menu.input, "j");
     assert!(app.error_log.is_none());
 
     let mut app = DiffApp::new(
@@ -3292,7 +3292,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
 
     assert!(!should_quit);
     assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
-    assert_eq!(app.branch_menu_input, "j");
+    assert_eq!(app.branch_menu.input, "j");
     assert!(app.error_log.is_none());
 }
 
@@ -3313,7 +3313,7 @@ fn question_mark_key_filters_branch_menu() {
 
     assert!(!should_quit);
     assert!(!app.help_menu_open);
-    assert_eq!(app.branch_menu_input, "?");
+    assert_eq!(app.branch_menu.input, "?");
 }
 
 #[test]
@@ -3624,7 +3624,7 @@ fn copy_error_log_key_does_not_preempt_branch_menu_input() {
         .expect("copy key should be handled as branch input");
 
     assert!(!should_quit);
-    assert_eq!(app.branch_menu_input, "z");
+    assert_eq!(app.branch_menu.input, "z");
     assert!(app.toasts.is_empty());
 }
 
@@ -4914,18 +4914,18 @@ fn diff_menu_uses_configured_menu_keymap() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("configured down key should move menu selection");
-    assert_eq!(app.diff_menu_input, "");
+    assert_eq!(app.diff_menu.input, "");
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("configured up key should move menu selection");
-    assert_eq!(app.diff_menu_input, "");
+    assert_eq!(app.diff_menu.input, "");
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Branch));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         .expect("configured close key should close menu");
     assert!(!app.diff_menu_open);
-    assert_eq!(app.diff_menu_input, "");
+    assert_eq!(app.diff_menu.input, "");
 
     app.open_diff_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
@@ -4967,22 +4967,22 @@ fn branch_menu_uses_configured_menu_keymap() {
     .expect("keymap should parse");
 
     app.toggle_branch_menu(BranchMenu::Head);
-    assert_eq!(app.branch_menu_selected, 0);
+    assert_eq!(app.branch_menu.selected, 0);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("configured down key should move branch selection");
-    assert_eq!(app.branch_menu_input, "");
-    assert_eq!(app.branch_menu_selected, 1);
+    assert_eq!(app.branch_menu.input, "");
+    assert_eq!(app.branch_menu.selected, 1);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("configured up key should move branch selection");
-    assert_eq!(app.branch_menu_input, "");
-    assert_eq!(app.branch_menu_selected, 0);
+    assert_eq!(app.branch_menu.input, "");
+    assert_eq!(app.branch_menu.selected, 0);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         .expect("configured close key should close branch menu");
     assert!(app.branch_menu_open.is_none());
-    assert_eq!(app.branch_menu_input, "");
+    assert_eq!(app.branch_menu.input, "");
 
     app.toggle_branch_menu(BranchMenu::Head);
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
@@ -5038,7 +5038,7 @@ fn diff_menu_plain_letters_filter_input() {
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("plain j should filter menu input");
 
-    assert_eq!(app.diff_menu_input, "j");
+    assert_eq!(app.diff_menu.input, "j");
     assert!(app.diff_menu_open);
     assert_eq!(app.highlighted_diff_choice(), None);
 }
@@ -5057,7 +5057,7 @@ fn diff_menu_space_filters_without_entering_leader() {
 
     assert!(app.diff_menu_open);
     assert!(app.key_prefix_pending.is_none());
-    assert_eq!(app.diff_menu_input, " ");
+    assert_eq!(app.diff_menu.input, " ");
     assert!(app.pending_diff_load.is_none());
 }
 
@@ -5076,7 +5076,7 @@ fn diff_menu_q_filters_without_quitting() {
 
     assert!(!should_quit);
     assert!(app.diff_menu_open);
-    assert_eq!(app.diff_menu_input, "q");
+    assert_eq!(app.diff_menu.input, "q");
 }
 
 #[test]
@@ -5098,14 +5098,14 @@ fn diff_menu_branch_keys_do_not_open_branch_picker() {
 
     assert!(app.diff_menu_open);
     assert!(app.branch_menu_open.is_none());
-    assert_eq!(app.diff_menu_input, "b");
+    assert_eq!(app.diff_menu.input, "b");
 
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("h should filter diff menu");
 
     assert!(app.diff_menu_open);
     assert!(app.branch_menu_open.is_none());
-    assert_eq!(app.diff_menu_input, "bh");
+    assert_eq!(app.diff_menu.input, "bh");
 }
 
 #[test]
@@ -5124,7 +5124,7 @@ fn diff_menu_number_keys_filter_input() {
         .expect("2 should filter diff choices");
 
     assert!(app.diff_menu_open);
-    assert_eq!(app.diff_menu_input, "2");
+    assert_eq!(app.diff_menu.input, "2");
     assert!(app.pending_diff_load.is_none());
 }
 
@@ -5485,7 +5485,7 @@ fn options_menu_plain_letters_filter_input() {
         .expect("x should filter settings");
 
     assert!(app.options_menu_open);
-    assert_eq!(app.options_menu_input, "x");
+    assert_eq!(app.options_menu.input, "x");
     assert_eq!(app.layout, DiffLayoutMode::Unified);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
 }
@@ -5951,7 +5951,7 @@ fn options_menu_clamps_selection_after_toggle_leaves_filter() {
         app.filtered_options_menu_items(),
         vec![OptionsMenuItem::LiveReload]
     );
-    assert_eq!(app.options_menu_selected, 0);
+    assert_eq!(app.options_menu.selected, 0);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
@@ -6203,7 +6203,7 @@ fn options_menu_scrolls_selected_setting_into_short_terminal() {
         .expect("options menu draw should succeed");
 
     let rows = buffer_rows(terminal.backend().buffer());
-    assert!(app.options_menu_scroll > 0);
+    assert!(app.options_menu.scroll > 0);
     assert!(rows.iter().any(|row| row.contains("Colorscheme")));
     assert!(
         !rows
@@ -6381,8 +6381,8 @@ fn colorscheme_picker_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
 
     app.move_color_scheme_selection(9);
 
-    assert_eq!(app.color_scheme_selected, 9);
-    assert_eq!(app.color_scheme_scroll, 0);
+    assert_eq!(app.color_scheme_picker.selected, 9);
+    assert_eq!(app.color_scheme_picker.scroll, 0);
 }
 
 #[test]
@@ -6460,7 +6460,7 @@ fn colorscheme_picker_previews_first_hovered_theme() {
                 .map(|column| (row as u16, column as u16))
         })
         .expect("first colorscheme row should render");
-    assert_eq!(app.color_scheme_selected, 0);
+    assert_eq!(app.color_scheme_picker.selected, 0);
 
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::Moved,
@@ -6470,7 +6470,7 @@ fn colorscheme_picker_previews_first_hovered_theme() {
     })
     .expect("hover should preview first colorscheme");
 
-    assert_eq!(app.color_scheme_selected, 0);
+    assert_eq!(app.color_scheme_picker.selected, 0);
     assert_eq!(app.color_scheme, ColorSchemeChoice::CatppuccinLatte);
     assert_eq!(
         app.theme.background,
@@ -7045,7 +7045,7 @@ fn branch_menu_number_keys_filter_branch_names() {
         .expect("2 should filter branch names");
 
     assert_eq!(app.branch_menu_open, Some(BranchMenu::Head));
-    assert_eq!(app.branch_menu_input, "release/2");
+    assert_eq!(app.branch_menu.input, "release/2");
     assert_eq!(
         app.filtered_branches(),
         vec!["release/2026", "release/2025"]
@@ -7072,12 +7072,12 @@ fn branch_menu_ctrl_n_and_ctrl_p_cycle_selection_from_input() {
     app.toggle_branch_menu(BranchMenu::Base);
     app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))
         .expect("ctrl-n should move branch selection");
-    assert_eq!(app.branch_menu_selected, 1);
+    assert_eq!(app.branch_menu.selected, 1);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
         .expect("ctrl-p should move branch selection");
-    assert_eq!(app.branch_menu_selected, 0);
-    assert!(app.branch_menu_input.is_empty());
+    assert_eq!(app.branch_menu.selected, 0);
+    assert!(app.branch_menu.input.is_empty());
 }
 
 #[test]
@@ -7096,12 +7096,12 @@ fn branch_menu_scrolls_visible_branch_window() {
     assert_eq!(app.max_branch_menu_scroll(), 0);
 
     app.move_branch_selection(99);
-    assert_eq!(app.branch_menu_selected, 10);
-    assert_eq!(app.branch_menu_scroll, 0);
+    assert_eq!(app.branch_menu.selected, 10);
+    assert_eq!(app.branch_menu.scroll, 0);
 
     app.move_branch_selection(-1);
-    assert_eq!(app.branch_menu_selected, 9);
-    assert_eq!(app.branch_menu_scroll, 0);
+    assert_eq!(app.branch_menu.selected, 9);
+    assert_eq!(app.branch_menu.scroll, 0);
 }
 
 #[test]
@@ -7149,7 +7149,7 @@ fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
     app.comparison_branches = (0..12).map(|index| format!("branch-{index:02}")).collect();
     app.toggle_branch_menu(BranchMenu::Base);
     app.move_branch_selection(5);
-    assert_eq!(app.branch_menu_scroll, 0);
+    assert_eq!(app.branch_menu.scroll, 0);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 8))
         .expect("test terminal should be created");
@@ -7157,8 +7157,8 @@ fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("branch menu draw should succeed");
 
-    assert_eq!(app.branch_menu_selected, 5);
-    assert_eq!(app.branch_menu_scroll, 3);
+    assert_eq!(app.branch_menu.selected, 5);
+    assert_eq!(app.branch_menu.scroll, 3);
     let rows = buffer_rows(terminal.backend().buffer());
     assert!(rows.iter().any(|row| row.contains("branch-06")));
     assert!(
@@ -7192,8 +7192,8 @@ fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     app.toggle_branch_menu(BranchMenu::Base);
 
     app.move_branch_selection(20);
-    assert_eq!(app.branch_menu_selected, 20);
-    assert_eq!(app.branch_menu_scroll, 0);
+    assert_eq!(app.branch_menu.selected, 20);
+    assert_eq!(app.branch_menu.scroll, 0);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 60))
         .expect("test terminal should be created");
@@ -7201,7 +7201,7 @@ fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("branch menu draw should succeed");
 
-    assert_eq!(app.branch_menu_scroll, 0);
+    assert_eq!(app.branch_menu.scroll, 0);
     let rows = buffer_rows(terminal.backend().buffer());
     assert!(rows.iter().any(|row| row.contains("branch-01")));
 }
@@ -7226,7 +7226,7 @@ fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
         .collect();
     app.toggle_commit_menu();
     app.set_commit_selection(5);
-    assert_eq!(app.commit_menu_scroll, 0);
+    assert_eq!(app.commit_menu.scroll, 0);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 8))
         .expect("test terminal should be created");
@@ -7234,8 +7234,8 @@ fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("commit menu draw should succeed");
 
-    assert_eq!(app.commit_menu_selected, 5);
-    assert!(app.commit_menu_scroll > 0);
+    assert_eq!(app.commit_menu.selected, 5);
+    assert!(app.commit_menu.scroll > 0);
     let rows = buffer_rows(terminal.backend().buffer());
     assert!(
         rows.iter()
@@ -7275,8 +7275,8 @@ fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     app.toggle_commit_menu();
 
     app.move_commit_selection(20);
-    assert_eq!(app.commit_menu_selected, 20);
-    assert_eq!(app.commit_menu_scroll, 0);
+    assert_eq!(app.commit_menu.selected, 20);
+    assert_eq!(app.commit_menu.scroll, 0);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 60))
         .expect("test terminal should be created");
@@ -7284,7 +7284,7 @@ fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
         .draw(|frame| crate::render::draw(frame, &mut app))
         .expect("commit menu draw should succeed");
 
-    assert_eq!(app.commit_menu_scroll, 0);
+    assert_eq!(app.commit_menu.scroll, 0);
     let rows = buffer_rows(terminal.backend().buffer());
     assert!(
         rows.iter()
@@ -7322,7 +7322,7 @@ fn mouse_wheel_over_commit_menu_scrolls_menu_not_diff() {
     .expect("mouse wheel should be handled");
 
     assert_eq!(app.scroll, 0);
-    assert_eq!(app.commit_menu_selected, 1);
+    assert_eq!(app.commit_menu.selected, 1);
 }
 
 #[test]
@@ -7352,8 +7352,8 @@ fn branch_combo_input_filters_and_completes() {
 
     app.branch_menu_open = Some(BranchMenu::Head);
     app.cycle_branch_completion(1);
-    assert_eq!(app.branch_menu_selected, 0);
-    assert_eq!(app.branch_menu_input, "fh");
+    assert_eq!(app.branch_menu.selected, 0);
+    assert_eq!(app.branch_menu.input, "fh");
 
     app.clear_branch_input();
     app.push_branch_input('f');
@@ -7362,12 +7362,12 @@ fn branch_combo_input_filters_and_completes() {
         vec!["fix/footer", "feature/header"]
     );
     app.cycle_branch_completion(1);
-    assert_eq!(app.branch_menu_selected, 1);
+    assert_eq!(app.branch_menu.selected, 1);
     app.cycle_branch_completion(-1);
-    assert_eq!(app.branch_menu_selected, 0);
+    assert_eq!(app.branch_menu.selected, 0);
 
     app.clear_branch_input();
-    assert!(app.branch_menu_input.is_empty());
+    assert!(app.branch_menu.input.is_empty());
 }
 
 #[test]
@@ -7425,7 +7425,7 @@ fn branch_combo_close_clears_input_without_changing_selection() {
     app.close_branch_menu();
 
     assert!(app.branch_menu_open.is_none());
-    assert!(app.branch_menu_input.is_empty());
+    assert!(app.branch_menu.input.is_empty());
     assert_eq!(app.branch_base.as_deref(), Some("main"));
     assert_eq!(app.branch_head.as_deref(), Some("feature/header"));
     assert_eq!(app.options.source, DiffSource::Base("main".to_owned()));

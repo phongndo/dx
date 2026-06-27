@@ -10,10 +10,12 @@ mod render;
 mod run;
 mod runtime;
 mod search;
+mod selector;
 mod static_pager;
 mod syntax;
 #[cfg(test)]
 mod tests;
+mod text_input;
 mod theme;
 mod toast;
 
