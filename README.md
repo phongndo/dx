@@ -130,15 +130,15 @@ cargo test --workspace --all-targets --all-features --locked
 ## Workspace layout
 
 ```text
-mark-cli       command parsing, update, and CLI UX
-mark-command   command facade shared by CLI and future integrations
-mark-core      shared errors and path helpers
-mark-git       low-level Git process boundary
-mark-diff      diff loading, parsing, and plain rendering
-mark-syntax    Tree-sitter highlighting and parser cache management
-mark-tui       ratatui/crossterm diff review UI
-mark-bench     local benchmark fixture generation
-pi-mark        Pi extension package published to npm
+crates/mark-cli       command parsing, update, and CLI UX
+crates/mark-command   command facade shared by CLI and future integrations
+crates/mark-core      shared errors and path helpers
+crates/mark-git       low-level Git process boundary
+crates/mark-diff      diff loading, parsing, and plain rendering
+crates/mark-syntax    Tree-sitter highlighting and parser cache management
+crates/mark-tui       ratatui/crossterm diff review UI
+crates/mark-bench     local benchmark fixture generation
+pi-mark               Pi extension package published to npm
 ```
 
 ## License

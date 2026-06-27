@@ -16,13 +16,13 @@ check_absent() {
   rm -f /tmp/mark-architecture-rg.$$
 }
 
-check_absent 'mod prelude|super::prelude|prelude::\*' mark-tui/src/app mark-tui/src/controls.rs mark-tui/src/render mark-diff/src mark-cli/src
-check_absent '\bEventCtx\b|EventLayer' mark-tui/src
-check_absent 'ctx\.app\(' mark-tui/src
-check_absent 'DiffApp' mark-tui/src/render/compositor.rs
-check_absent '&mut DiffApp' mark-tui/src/render/menus mark-tui/src/render/sidebar.rs mark-tui/src/render/statusline mark-tui/src/render/toast.rs
-check_absent 'settings_write_path\(' -g '!effect.rs' -g '!options.rs' mark-tui/src/app
-check_absent 'persist_options_menu_draft_to_path\(' -g '!effect.rs' -g '!options.rs' mark-tui/src/app
+check_absent 'mod prelude|super::prelude|prelude::\*' crates/mark-tui/src/app crates/mark-tui/src/controls.rs crates/mark-tui/src/render crates/mark-diff/src crates/mark-cli/src
+check_absent '\bEventCtx\b|EventLayer' crates/mark-tui/src
+check_absent 'ctx\.app\(' crates/mark-tui/src
+check_absent 'DiffApp' crates/mark-tui/src/render/compositor.rs
+check_absent '&mut DiffApp' crates/mark-tui/src/render/menus crates/mark-tui/src/render/sidebar.rs crates/mark-tui/src/render/statusline crates/mark-tui/src/render/toast.rs
+check_absent 'settings_write_path\(' -g '!effect.rs' -g '!options.rs' crates/mark-tui/src/app
+check_absent 'persist_options_menu_draft_to_path\(' -g '!effect.rs' -g '!options.rs' crates/mark-tui/src/app
 
 python3 - <<'PY'
 from pathlib import Path
@@ -32,62 +32,62 @@ import sys
 # parser tests, and rendering algorithms may have their own split plans, but these
 # files should stay small enough to make boundary violations obvious in review.
 budgets = {
-    'mark-tui/src/app.rs': 120,
-    'mark-tui/src/app/input.rs': 260,
-    'mark-tui/src/app/input/layers.rs': 520,
-    'mark-tui/src/app/input/layers/tests.rs': 240,
-    'mark-tui/src/app/input/event_context.rs': 240,
-    'mark-tui/src/app/controllers.rs': 20,
-    'mark-tui/src/app/controllers/filter.rs': 80,
-    'mark-tui/src/app/controllers/menu.rs': 140,
-    'mark-tui/src/app/controllers/navigation.rs': 100,
-    'mark-tui/src/app/diff_load.rs': 180,
-    'mark-tui/src/app/diff_load/cache.rs': 180,
-    'mark-tui/src/app/diff_load/prefetch.rs': 180,
-    'mark-tui/src/app/diff_load/review.rs': 120,
-    'mark-tui/src/app/effect.rs': 180,
-    'mark-tui/src/app/mouse.rs': 260,
-    'mark-tui/src/app/mouse/event_context.rs': 230,
-    'mark-tui/src/app/navigation.rs': 20,
-    'mark-tui/src/render/compositor.rs': 180,
-    'mark-tui/src/render/diff.rs': 520,
-    'mark-tui/src/render/diff/context.rs': 360,
-    'mark-tui/src/render/diff/unified.rs': 260,
-    'mark-tui/src/render/grep.rs': 40,
-    'mark-tui/src/render/grep/highlight.rs': 180,
-    'mark-tui/src/render/grep/mouse.rs': 120,
-    'mark-tui/src/render/grep/target.rs': 340,
-    'mark-tui/src/render/grep/types.rs': 60,
-    'mark-tui/src/render/headers.rs': 40,
-    'mark-tui/src/render/headers/delta.rs': 140,
-    'mark-tui/src/render/headers/file.rs': 100,
-    'mark-tui/src/render/headers/fit.rs': 320,
-    'mark-tui/src/render/headers/hunk.rs': 200,
-    'mark-tui/src/render/headers/types.rs': 80,
-    'mark-tui/src/render/statusline.rs': 40,
-    'mark-tui/src/render/statusline/error_log.rs': 140,
-    'mark-tui/src/render/statusline/filter_bar.rs': 300,
-    'mark-tui/src/render/statusline/header.rs': 300,
-    'mark-diff/src/tests.rs': 120,
-    'mark-diff/src/tests/branch_review.rs': 220,
-    'mark-diff/src/tests/difftool.rs': 320,
-    'mark-diff/src/tests/parser.rs': 320,
-    'mark-diff/src/tests/patch_sources.rs': 180,
-    'mark-diff/src/tests/range.rs': 280,
-    'mark-diff/src/tests/repo_infra.rs': 120,
-    'mark-diff/src/tests/show.rs': 260,
-    'mark-diff/src/tests/worktree.rs': 220,
-    'mark-cli/src/syntax.rs': 140,
-    'mark-cli/src/syntax/commands.rs': 160,
-    'mark-cli/src/syntax/options.rs': 160,
-    'mark-cli/src/syntax/output.rs': 180,
-    'mark-cli/src/syntax/table.rs': 360,
-    'mark-cli/src/pager.rs': 100,
-    'mark-cli/src/pager/tests.rs': 100,
-    'mark-cli/src/pager/tests/patch.rs': 220,
-    'mark-cli/src/pager/tests/routing.rs': 180,
-    'mark-cli/src/pager/tests/streaming.rs': 220,
-    'mark-cli/src/pager/tests/terminal.rs': 80,
+    'crates/mark-tui/src/app.rs': 120,
+    'crates/mark-tui/src/app/input.rs': 260,
+    'crates/mark-tui/src/app/input/layers.rs': 520,
+    'crates/mark-tui/src/app/input/layers/tests.rs': 240,
+    'crates/mark-tui/src/app/input/event_context.rs': 240,
+    'crates/mark-tui/src/app/controllers.rs': 20,
+    'crates/mark-tui/src/app/controllers/filter.rs': 80,
+    'crates/mark-tui/src/app/controllers/menu.rs': 140,
+    'crates/mark-tui/src/app/controllers/navigation.rs': 100,
+    'crates/mark-tui/src/app/diff_load.rs': 180,
+    'crates/mark-tui/src/app/diff_load/cache.rs': 180,
+    'crates/mark-tui/src/app/diff_load/prefetch.rs': 180,
+    'crates/mark-tui/src/app/diff_load/review.rs': 120,
+    'crates/mark-tui/src/app/effect.rs': 180,
+    'crates/mark-tui/src/app/mouse.rs': 260,
+    'crates/mark-tui/src/app/mouse/event_context.rs': 230,
+    'crates/mark-tui/src/app/navigation.rs': 20,
+    'crates/mark-tui/src/render/compositor.rs': 180,
+    'crates/mark-tui/src/render/diff.rs': 520,
+    'crates/mark-tui/src/render/diff/context.rs': 360,
+    'crates/mark-tui/src/render/diff/unified.rs': 260,
+    'crates/mark-tui/src/render/grep.rs': 40,
+    'crates/mark-tui/src/render/grep/highlight.rs': 180,
+    'crates/mark-tui/src/render/grep/mouse.rs': 120,
+    'crates/mark-tui/src/render/grep/target.rs': 340,
+    'crates/mark-tui/src/render/grep/types.rs': 60,
+    'crates/mark-tui/src/render/headers.rs': 40,
+    'crates/mark-tui/src/render/headers/delta.rs': 140,
+    'crates/mark-tui/src/render/headers/file.rs': 100,
+    'crates/mark-tui/src/render/headers/fit.rs': 320,
+    'crates/mark-tui/src/render/headers/hunk.rs': 200,
+    'crates/mark-tui/src/render/headers/types.rs': 80,
+    'crates/mark-tui/src/render/statusline.rs': 40,
+    'crates/mark-tui/src/render/statusline/error_log.rs': 140,
+    'crates/mark-tui/src/render/statusline/filter_bar.rs': 300,
+    'crates/mark-tui/src/render/statusline/header.rs': 300,
+    'crates/mark-diff/src/tests.rs': 120,
+    'crates/mark-diff/src/tests/branch_review.rs': 220,
+    'crates/mark-diff/src/tests/difftool.rs': 320,
+    'crates/mark-diff/src/tests/parser.rs': 320,
+    'crates/mark-diff/src/tests/patch_sources.rs': 180,
+    'crates/mark-diff/src/tests/range.rs': 280,
+    'crates/mark-diff/src/tests/repo_infra.rs': 120,
+    'crates/mark-diff/src/tests/show.rs': 260,
+    'crates/mark-diff/src/tests/worktree.rs': 220,
+    'crates/mark-cli/src/syntax.rs': 140,
+    'crates/mark-cli/src/syntax/commands.rs': 160,
+    'crates/mark-cli/src/syntax/options.rs': 160,
+    'crates/mark-cli/src/syntax/output.rs': 180,
+    'crates/mark-cli/src/syntax/table.rs': 360,
+    'crates/mark-cli/src/pager.rs': 100,
+    'crates/mark-cli/src/pager/tests.rs': 100,
+    'crates/mark-cli/src/pager/tests/patch.rs': 220,
+    'crates/mark-cli/src/pager/tests/routing.rs': 180,
+    'crates/mark-cli/src/pager/tests/streaming.rs': 220,
+    'crates/mark-cli/src/pager/tests/terminal.rs': 80,
 }
 
 failed = False

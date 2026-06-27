@@ -36,7 +36,7 @@ examples:
   mark config
   mark syntax add ruby elixir";
 
-pub(crate) const INSTALL_SCRIPT: &str = include_str!("../../scripts/install.sh");
+pub(crate) const INSTALL_SCRIPT: &str = include_str!("../../../scripts/install.sh");
 pub(crate) const RELEASE_REPO: &str = "phongndo/mark";
 
 #[derive(Debug, Parser)]

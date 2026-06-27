@@ -1,14 +1,5 @@
 [workspace]
-members = [
-    "mark-cli",
-    "mark-command",
-    "mark-core",
-    "mark-diff",
-    "mark-bench",
-    "mark-git",
-    "mark-syntax",
-    "mark-tui",
-]
+members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -42,9 +33,9 @@ tree-sitter-language-pack = "1.9.0-rc.18"
 time = { version = "=0.3.45", default-features = false, features = ["local-offset", "std"] }
 unicode-width = "0.2"
 
-mark-core = { path = "mark-core" }
-mark-command = { path = "mark-command" }
-mark-diff = { path = "mark-diff" }
-mark-git = { path = "mark-git" }
-mark-syntax = { path = "mark-syntax" }
-mark-tui = { path = "mark-tui" }
+mark-core = { path = "crates/mark-core" }
+mark-command = { path = "crates/mark-command" }
+mark-diff = { path = "crates/mark-diff" }
+mark-git = { path = "crates/mark-git" }
+mark-syntax = { path = "crates/mark-syntax" }
+mark-tui = { path = "crates/mark-tui" }
