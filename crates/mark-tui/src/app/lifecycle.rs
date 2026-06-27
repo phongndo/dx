@@ -30,6 +30,9 @@ impl DiffApp {
     pub(crate) fn mark_live_reload_pending(&mut self) {
         self.invalidate_diff_cache();
         self.jobs.mark_live_reload_pending();
+        if self.debug_notifications_enabled() {
+            self.set_success_notice("refreshing");
+        }
         self.runtime.mark_dirty();
     }
 }

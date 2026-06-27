@@ -66,6 +66,7 @@ impl DiffApp {
                     refresh_branch_metadata: false,
                     rx: prefetch.rx,
                 });
+                self.set_success_notice("reloading");
                 self.runtime.dirty = true;
                 return;
             }
@@ -85,6 +86,7 @@ impl DiffApp {
             refresh_branch_metadata: !use_cache,
             rx,
         });
+        self.set_success_notice("reloading");
         self.runtime.dirty = true;
     }
 

@@ -138,32 +138,6 @@ pub(crate) fn push_statusline_left_spans(
         Style::default().bg(statusline_bg(app.config.theme)),
         remaining,
     );
-    let status_notice = if app.jobs.pending_review_load.is_some() {
-        Some("loading review")
-    } else if app.jobs.pending_diff_load.is_some() {
-        Some("loading diff")
-    } else if app.jobs.live_reload_pending {
-        Some("refreshing diff")
-    } else {
-        None
-    };
-    if let Some(label) = status_notice {
-        push_fitted_statusline_span(
-            spans,
-            label,
-            Style::default()
-                .fg(app.config.theme.notice)
-                .bg(statusline_bg(app.config.theme))
-                .add_modifier(Modifier::BOLD),
-            remaining,
-        );
-        push_fitted_statusline_span(
-            spans,
-            "  ",
-            Style::default().bg(statusline_bg(app.config.theme)),
-            remaining,
-        );
-    }
     push_fitted_statusline_span(
         spans,
         statusline_file_count_label(app),

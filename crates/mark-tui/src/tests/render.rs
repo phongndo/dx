@@ -811,7 +811,7 @@ fn statusline_header_uses_theme_statusline_colors() {
 }
 
 #[test]
-fn statusline_header_shows_pending_diff_load() {
+fn statusline_header_hides_pending_diff_load() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let options = DiffOptions {
@@ -824,7 +824,20 @@ fn statusline_header_shows_pending_diff_load() {
     let text = line_text(&line);
 
     assert_eq!(text.width(), 80);
-    assert!(text.contains("loading diff"));
+    assert!(!text.contains("loading diff"));
+}
+
+#[test]
+fn statusline_header_hides_pending_review_load() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.jobs.pending_review_load = Some(pending_review_load());
+
+    let line = statusline_header_line(&app, 80);
+    let text = line_text(&line);
+
+    assert_eq!(text.width(), 80);
+    assert!(!text.contains("loading review"));
 }
 
 #[test]
@@ -852,7 +865,7 @@ fn notice_toasts_render_as_overlay() {
 }
 
 #[test]
-fn statusline_header_shows_pending_live_reload() {
+fn statusline_header_hides_pending_live_reload() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.mark_live_reload_pending();
@@ -861,8 +874,36 @@ fn statusline_header_shows_pending_live_reload() {
     let text = line_text(&line);
 
     assert_eq!(text.width(), 80);
-    assert!(text.contains("refreshing diff"));
+    assert!(!text.contains("refreshing diff"));
     assert!(!text.contains("loading diff"));
+}
+
+#[test]
+fn live_reload_suppresses_toast_in_default_notification_mode() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+
+    app.mark_live_reload_pending();
+
+    assert!(app.notifications.toasts.is_empty());
+}
+
+#[test]
+fn live_reload_emits_success_toast_in_debug_notification_mode() {
+    let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.notifications.toasts = Toasts::new(NotificationSettings {
+        mode: NotificationMode::Debug,
+        corner: ToastCorner::TopRight,
+        timeout_ms: 1_500,
+        max_visible: 3,
+    });
+
+    app.mark_live_reload_pending();
+
+    let toast = app.notifications.toasts.visible().next().unwrap();
+    assert_eq!(toast.text, "refreshing");
+    assert_eq!(toast.level, ToastLevel::Success);
 }
 
 #[test]

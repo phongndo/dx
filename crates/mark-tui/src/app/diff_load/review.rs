@@ -25,6 +25,7 @@ impl DiffApp {
             rx,
         });
         self.jobs.pending_diff_load = None;
+        self.set_success_notice("loading review");
         self.runtime.dirty = true;
     }
 
