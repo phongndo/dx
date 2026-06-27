@@ -48,79 +48,155 @@ pub(crate) enum MenuAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Keymap {
-    help: Vec<KeySequence>,
-    reload: Vec<KeySequence>,
-    file_filter: Vec<KeySequence>,
-    grep: Vec<KeySequence>,
-    diff_menu: Vec<KeySequence>,
-    head_branch: Vec<KeySequence>,
-    base_branch: Vec<KeySequence>,
-    commit_picker: Vec<KeySequence>,
-    options_menu: Vec<KeySequence>,
-    file_browser: Vec<KeySequence>,
-    previous_file: Vec<KeySequence>,
-    next_file: Vec<KeySequence>,
-    previous_hunk: Vec<KeySequence>,
-    next_hunk: Vec<KeySequence>,
-    expand_context_up: Vec<KeySequence>,
-    expand_context_down: Vec<KeySequence>,
-    collapse_context_all: Vec<KeySequence>,
-    quit: Vec<KeySequence>,
-    layout: Vec<KeySequence>,
-    edit_hunk: Vec<KeySequence>,
-    save_mark: Vec<KeySequence>,
-    cancel_mark: Vec<KeySequence>,
-    copy_marks: Vec<KeySequence>,
-    copy_error_log: Vec<KeySequence>,
-    clear_filters: Vec<KeySequence>,
-    next_diff_type: Vec<KeySequence>,
-    previous_diff_type: Vec<KeySequence>,
-    next_annotation: Vec<KeySequence>,
-    previous_annotation: Vec<KeySequence>,
-    menu_up: Vec<KeySequence>,
-    menu_down: Vec<KeySequence>,
-    menu_select: Vec<KeySequence>,
-    menu_confirm: Vec<KeySequence>,
-    menu_close: Vec<KeySequence>,
+    global: Vec<Vec<KeySequence>>,
+    menu: Vec<Vec<KeySequence>>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GlobalConflictGroup {
+    Normal,
+    MarkDraft,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GlobalActionSpec {
+    action: GlobalAction,
+    name: &'static str,
+    defaults: &'static [&'static str],
+    max_keys: usize,
+    conflict_group: GlobalConflictGroup,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MenuActionSpec {
+    action: MenuAction,
+    name: &'static str,
+    defaults: &'static [&'static str],
+}
+
+macro_rules! global_action_spec {
+    ($action:expr, $name:expr, [$($default:expr),* $(,)?]) => {
+        GlobalActionSpec {
+            action: $action,
+            name: $name,
+            defaults: &[$($default),*],
+            max_keys: 2,
+            conflict_group: GlobalConflictGroup::Normal,
+        }
+    };
+    ($action:expr, $name:expr, [$($default:expr),* $(,)?], $max_keys:expr) => {
+        GlobalActionSpec {
+            action: $action,
+            name: $name,
+            defaults: &[$($default),*],
+            max_keys: $max_keys,
+            conflict_group: GlobalConflictGroup::Normal,
+        }
+    };
+    ($action:expr, $name:expr, [$($default:expr),* $(,)?], $max_keys:expr, $conflict_group:expr) => {
+        GlobalActionSpec {
+            action: $action,
+            name: $name,
+            defaults: &[$($default),*],
+            max_keys: $max_keys,
+            conflict_group: $conflict_group,
+        }
+    };
+}
+
+macro_rules! menu_action_spec {
+    ($action:expr, $name:expr, [$($default:expr),* $(,)?]) => {
+        MenuActionSpec {
+            action: $action,
+            name: $name,
+            defaults: &[$($default),*],
+        }
+    };
+}
+
+const GLOBAL_ACTION_SPECS: &[GlobalActionSpec] = &[
+    global_action_spec!(GlobalAction::Help, "help", ["?"]),
+    global_action_spec!(GlobalAction::Reload, "reload", ["r"]),
+    global_action_spec!(GlobalAction::FileFilter, "file_filter", ["f"]),
+    global_action_spec!(GlobalAction::Grep, "grep", ["/"]),
+    global_action_spec!(GlobalAction::DiffMenu, "diff_menu", ["m m"]),
+    global_action_spec!(GlobalAction::HeadBranch, "head_branch", ["m h"]),
+    global_action_spec!(GlobalAction::BaseBranch, "base_branch", ["m b"]),
+    global_action_spec!(GlobalAction::CommitPicker, "commit_picker", ["m c"]),
+    global_action_spec!(GlobalAction::OptionsMenu, "options_menu", ["o"]),
+    global_action_spec!(GlobalAction::FileBrowser, "file_browser", ["b"]),
+    global_action_spec!(GlobalAction::PreviousFile, "previous_file", ["("]),
+    global_action_spec!(GlobalAction::NextFile, "next_file", [")"]),
+    global_action_spec!(GlobalAction::PreviousHunk, "previous_hunk", ["["]),
+    global_action_spec!(GlobalAction::NextHunk, "next_hunk", ["]"]),
+    global_action_spec!(GlobalAction::ExpandContextUp, "expand_context_up", [","]),
+    global_action_spec!(
+        GlobalAction::ExpandContextDown,
+        "expand_context_down",
+        ["."]
+    ),
+    global_action_spec!(
+        GlobalAction::CollapseContextAll,
+        "collapse_context_all",
+        ["c"]
+    ),
+    global_action_spec!(GlobalAction::Quit, "quit", ["q"]),
+    global_action_spec!(GlobalAction::Layout, "layout", ["s"]),
+    global_action_spec!(GlobalAction::EditHunk, "edit_hunk", ["ctrl-g"], 1),
+    global_action_spec!(
+        GlobalAction::SaveMark,
+        "save_mark",
+        ["ctrl-s"],
+        1,
+        GlobalConflictGroup::MarkDraft
+    ),
+    global_action_spec!(
+        GlobalAction::CancelMark,
+        "cancel_mark",
+        ["esc"],
+        1,
+        GlobalConflictGroup::MarkDraft
+    ),
+    global_action_spec!(GlobalAction::CopyMarks, "copy_marks", ["y"]),
+    global_action_spec!(
+        GlobalAction::CopyErrorLog,
+        "copy_error_log",
+        ["ctrl-shift-c"]
+    ),
+    global_action_spec!(GlobalAction::ClearFilters, "clear_filters", ["ctrl-u"]),
+    global_action_spec!(GlobalAction::NextDiffType, "next_diff_type", ["tab"]),
+    global_action_spec!(
+        GlobalAction::PreviousDiffType,
+        "previous_diff_type",
+        ["shift-tab"]
+    ),
+    global_action_spec!(GlobalAction::NextAnnotation, "next_annotation", ["}"]),
+    global_action_spec!(
+        GlobalAction::PreviousAnnotation,
+        "previous_annotation",
+        ["{"]
+    ),
+];
+
+const MENU_ACTION_SPECS: &[MenuActionSpec] = &[
+    menu_action_spec!(MenuAction::Up, "up", ["up", "shift-tab", "ctrl-p"]),
+    menu_action_spec!(MenuAction::Down, "down", ["down", "tab", "ctrl-n"]),
+    menu_action_spec!(MenuAction::Select, "select", []),
+    menu_action_spec!(MenuAction::Confirm, "confirm", ["enter"]),
+    menu_action_spec!(MenuAction::Close, "close", ["esc"]),
+];
 
 impl Default for Keymap {
     fn default() -> Self {
         Self {
-            help: key_sequences(&["?"]),
-            reload: key_sequences(&["r"]),
-            file_filter: key_sequences(&["f"]),
-            grep: key_sequences(&["/"]),
-            diff_menu: key_sequences(&["m m"]),
-            head_branch: key_sequences(&["m h"]),
-            base_branch: key_sequences(&["m b"]),
-            commit_picker: key_sequences(&["m c"]),
-            options_menu: key_sequences(&["o"]),
-            file_browser: key_sequences(&["b"]),
-            previous_file: key_sequences(&["("]),
-            next_file: key_sequences(&[")"]),
-            previous_hunk: key_sequences(&["["]),
-            next_hunk: key_sequences(&["]"]),
-            expand_context_up: key_sequences(&[","]),
-            expand_context_down: key_sequences(&["."]),
-            collapse_context_all: key_sequences(&["c"]),
-            quit: key_sequences(&["q"]),
-            layout: key_sequences(&["s"]),
-            edit_hunk: key_sequences(&["ctrl-g"]),
-            save_mark: key_sequences(&["ctrl-s"]),
-            cancel_mark: key_sequences(&["esc"]),
-            copy_marks: key_sequences(&["y"]),
-            copy_error_log: key_sequences(&["ctrl-shift-c"]),
-            clear_filters: key_sequences(&["ctrl-u"]),
-            next_diff_type: key_sequences(&["tab"]),
-            previous_diff_type: key_sequences(&["shift-tab"]),
-            next_annotation: key_sequences(&["}"]),
-            previous_annotation: key_sequences(&["{"]),
-            menu_up: key_sequences(&["up", "shift-tab", "ctrl-p"]),
-            menu_down: key_sequences(&["down", "tab", "ctrl-n"]),
-            menu_select: Vec::new(),
-            menu_confirm: key_sequences(&["enter"]),
-            menu_close: key_sequences(&["esc"]),
+            global: GLOBAL_ACTION_SPECS
+                .iter()
+                .map(|spec| key_sequences(spec.defaults))
+                .collect(),
+            menu: MENU_ACTION_SPECS
+                .iter()
+                .map(|spec| key_sequences(spec.defaults))
+                .collect(),
         }
     }
 }
@@ -148,124 +224,49 @@ impl Keymap {
 
     fn from_stored(stored: StoredKeymap) -> Result<Self, String> {
         let mut keymap = Self::default();
-        let copy_marks_configured = stored.global.copy_marks.is_some();
+        let mut stored_global = stored.global;
+        let mut stored_menu = stored.menu;
+        let copy_marks_configured = stored_global.copy_marks.is_some();
 
-        if let Some(leader) = stored.global.leader {
+        if let Some(leader) = stored_global.leader.take() {
             parse_key_press(&leader)?;
         }
 
-        set_sequences(&mut keymap.help, stored.global.help)?;
-        set_sequences(&mut keymap.reload, stored.global.reload)?;
-        set_sequences(&mut keymap.file_filter, stored.global.file_filter)?;
-        set_sequences(&mut keymap.grep, stored.global.grep)?;
-        set_sequences(&mut keymap.diff_menu, stored.global.diff_menu)?;
-        set_sequences(&mut keymap.head_branch, stored.global.head_branch)?;
-        set_sequences(&mut keymap.base_branch, stored.global.base_branch)?;
-        set_sequences(&mut keymap.commit_picker, stored.global.commit_picker)?;
-        set_sequences(&mut keymap.options_menu, stored.global.options_menu)?;
-        set_sequences(&mut keymap.file_browser, stored.global.file_browser)?;
-        set_sequences(&mut keymap.previous_file, stored.global.previous_file)?;
-        set_sequences(&mut keymap.next_file, stored.global.next_file)?;
-        set_sequences(&mut keymap.previous_hunk, stored.global.previous_hunk)?;
-        set_sequences(&mut keymap.next_hunk, stored.global.next_hunk)?;
-        set_sequences(
-            &mut keymap.expand_context_up,
-            stored.global.expand_context_up,
-        )?;
-        set_sequences(
-            &mut keymap.expand_context_down,
-            stored.global.expand_context_down,
-        )?;
-        set_sequences(
-            &mut keymap.collapse_context_all,
-            stored.global.collapse_context_all,
-        )?;
-        set_sequences(&mut keymap.quit, stored.global.quit)?;
-        set_sequences(&mut keymap.layout, stored.global.layout)?;
-        set_sequences(&mut keymap.edit_hunk, stored.global.edit_hunk)?;
-        set_sequences(&mut keymap.save_mark, stored.global.save_mark)?;
-        set_sequences(&mut keymap.cancel_mark, stored.global.cancel_mark)?;
-        set_sequences(&mut keymap.copy_marks, stored.global.copy_marks)?;
-        set_sequences(&mut keymap.copy_error_log, stored.global.copy_error_log)?;
-        set_sequences(&mut keymap.clear_filters, stored.global.clear_filters)?;
-        set_sequences(&mut keymap.next_diff_type, stored.global.next_diff_type)?;
-        set_sequences(
-            &mut keymap.previous_diff_type,
-            stored.global.previous_diff_type,
-        )?;
-        set_sequences(&mut keymap.next_annotation, stored.global.next_annotation)?;
-        set_sequences(
-            &mut keymap.previous_annotation,
-            stored.global.previous_annotation,
-        )?;
+        for spec in GLOBAL_ACTION_SPECS {
+            let configured = stored_global.take(spec.action);
+            set_sequences(keymap.global_sequences_mut(spec.action), configured)?;
+        }
         if !copy_marks_configured {
             keymap.clear_default_copy_marks_on_conflict();
         }
 
-        set_sequences(&mut keymap.menu_up, stored.menu.up)?;
-        set_sequences(&mut keymap.menu_down, stored.menu.down)?;
-        set_sequences(&mut keymap.menu_select, stored.menu.select)?;
-        set_sequences(&mut keymap.menu_confirm, stored.menu.confirm)?;
-        set_sequences(&mut keymap.menu_close, stored.menu.close)?;
+        for spec in MENU_ACTION_SPECS {
+            let configured = stored_menu.take(spec.action);
+            set_sequences(keymap.menu_sequences_mut(spec.action), configured)?;
+        }
 
         keymap.validate()?;
         Ok(keymap)
     }
 
     fn validate(&self) -> Result<(), String> {
-        for (name, bindings) in [
-            ("help", &self.help),
-            ("reload", &self.reload),
-            ("file_filter", &self.file_filter),
-            ("grep", &self.grep),
-            ("diff_menu", &self.diff_menu),
-            ("head_branch", &self.head_branch),
-            ("base_branch", &self.base_branch),
-            ("commit_picker", &self.commit_picker),
-            ("options_menu", &self.options_menu),
-            ("file_browser", &self.file_browser),
-            ("previous_file", &self.previous_file),
-            ("next_file", &self.next_file),
-            ("previous_hunk", &self.previous_hunk),
-            ("next_hunk", &self.next_hunk),
-            ("expand_context_up", &self.expand_context_up),
-            ("expand_context_down", &self.expand_context_down),
-            ("collapse_context_all", &self.collapse_context_all),
-            ("quit", &self.quit),
-            ("layout", &self.layout),
-            ("edit_hunk", &self.edit_hunk),
-            ("save_mark", &self.save_mark),
-            ("cancel_mark", &self.cancel_mark),
-            ("copy_marks", &self.copy_marks),
-            ("copy_error_log", &self.copy_error_log),
-            ("clear_filters", &self.clear_filters),
-            ("next_diff_type", &self.next_diff_type),
-            ("previous_diff_type", &self.previous_diff_type),
-            ("next_annotation", &self.next_annotation),
-            ("previous_annotation", &self.previous_annotation),
-        ] {
-            for sequence in bindings {
-                if sequence.0.is_empty() || sequence.0.len() > 2 {
-                    return Err(format!("keymap.global.{name} must be one or two keys"));
-                }
-                if matches!(name, "edit_hunk" | "save_mark" | "cancel_mark")
-                    && sequence.0.len() != 1
-                {
-                    return Err(format!("keymap.global.{name} must be a single key"));
+        for spec in GLOBAL_ACTION_SPECS {
+            for sequence in self.global_sequences(spec.action) {
+                if sequence.0.is_empty() || sequence.0.len() > spec.max_keys {
+                    let keys = if spec.max_keys == 1 {
+                        "a single key"
+                    } else {
+                        "one or two keys"
+                    };
+                    return Err(format!("keymap.global.{} must be {keys}", spec.name));
                 }
             }
         }
 
-        for (name, bindings) in [
-            ("up", &self.menu_up),
-            ("down", &self.menu_down),
-            ("select", &self.menu_select),
-            ("confirm", &self.menu_confirm),
-            ("close", &self.menu_close),
-        ] {
-            for sequence in bindings {
+        for spec in MENU_ACTION_SPECS {
+            for sequence in self.menu_sequences(spec.action) {
                 if sequence.0.len() != 1 {
-                    return Err(format!("keymap.menu.{name} must be a single key"));
+                    return Err(format!("keymap.menu.{} must be a single key", spec.name));
                 }
             }
         }
@@ -280,140 +281,65 @@ impl Keymap {
     fn validate_global_conflicts(&self) -> Result<(), String> {
         // Save/cancel are draft-only: they run before normal global actions only
         // while composing an annotation, so they may share keys with globals.
-        let bindings = [
-            ("help", &self.help),
-            ("reload", &self.reload),
-            ("file_filter", &self.file_filter),
-            ("grep", &self.grep),
-            ("diff_menu", &self.diff_menu),
-            ("head_branch", &self.head_branch),
-            ("base_branch", &self.base_branch),
-            ("commit_picker", &self.commit_picker),
-            ("options_menu", &self.options_menu),
-            ("file_browser", &self.file_browser),
-            ("previous_file", &self.previous_file),
-            ("next_file", &self.next_file),
-            ("previous_hunk", &self.previous_hunk),
-            ("next_hunk", &self.next_hunk),
-            ("expand_context_up", &self.expand_context_up),
-            ("expand_context_down", &self.expand_context_down),
-            ("collapse_context_all", &self.collapse_context_all),
-            ("quit", &self.quit),
-            ("layout", &self.layout),
-            ("edit_hunk", &self.edit_hunk),
-            ("copy_marks", &self.copy_marks),
-            ("copy_error_log", &self.copy_error_log),
-            ("clear_filters", &self.clear_filters),
-            ("next_diff_type", &self.next_diff_type),
-            ("previous_diff_type", &self.previous_diff_type),
-            ("next_annotation", &self.next_annotation),
-            ("previous_annotation", &self.previous_annotation),
-        ];
+        let bindings = GLOBAL_ACTION_SPECS
+            .iter()
+            .filter(|spec| spec.conflict_group == GlobalConflictGroup::Normal)
+            .filter(|spec| {
+                !matches!(
+                    spec.action,
+                    GlobalAction::SaveMark | GlobalAction::CancelMark
+                )
+            })
+            .map(|spec| (spec.name, self.global_sequences(spec.action)))
+            .collect::<Vec<_>>();
         validate_conflicts("keymap.global", &bindings)?;
         validate_prefix_conflicts("keymap.global", &bindings)
     }
 
     fn validate_mark_draft_conflicts(&self) -> Result<(), String> {
-        let bindings = [
-            ("save_mark", &self.save_mark),
-            ("cancel_mark", &self.cancel_mark),
-        ];
+        let bindings = GLOBAL_ACTION_SPECS
+            .iter()
+            .filter(|spec| spec.conflict_group == GlobalConflictGroup::MarkDraft)
+            .map(|spec| (spec.name, self.global_sequences(spec.action)))
+            .collect::<Vec<_>>();
         validate_conflicts("keymap.global", &bindings)
     }
 
     fn validate_menu_conflicts(&self) -> Result<(), String> {
-        let bindings = [
-            ("up", &self.menu_up),
-            ("down", &self.menu_down),
-            ("select", &self.menu_select),
-            ("confirm", &self.menu_confirm),
-            ("close", &self.menu_close),
-        ];
+        let bindings = MENU_ACTION_SPECS
+            .iter()
+            .map(|spec| (spec.name, self.menu_sequences(spec.action)))
+            .collect::<Vec<_>>();
         validate_conflicts("keymap.menu", &bindings)
     }
 
     fn clear_default_copy_marks_on_conflict(&mut self) {
-        let conflicts = [
-            &self.help,
-            &self.reload,
-            &self.file_filter,
-            &self.grep,
-            &self.diff_menu,
-            &self.head_branch,
-            &self.base_branch,
-            &self.commit_picker,
-            &self.options_menu,
-            &self.file_browser,
-            &self.previous_file,
-            &self.next_file,
-            &self.previous_hunk,
-            &self.next_hunk,
-            &self.expand_context_up,
-            &self.expand_context_down,
-            &self.collapse_context_all,
-            &self.quit,
-            &self.layout,
-            &self.edit_hunk,
-            &self.save_mark,
-            &self.cancel_mark,
-            &self.copy_error_log,
-            &self.clear_filters,
-            &self.next_diff_type,
-            &self.previous_diff_type,
-            &self.next_annotation,
-            &self.previous_annotation,
-        ]
-        .into_iter()
-        .any(|bindings| {
-            bindings.iter().any(|sequence| {
-                self.copy_marks
-                    .iter()
-                    .any(|copy| sequences_conflict(copy, sequence))
-            })
-        });
+        let copy_marks = self.global_sequences(GlobalAction::CopyMarks);
+        let conflicts = GLOBAL_ACTION_SPECS
+            .iter()
+            .filter(|spec| spec.action != GlobalAction::CopyMarks)
+            .map(|spec| self.global_sequences(spec.action))
+            .any(|bindings| {
+                bindings.iter().any(|sequence| {
+                    copy_marks
+                        .iter()
+                        .any(|copy| sequences_conflict(copy, sequence))
+                })
+            });
         if conflicts {
-            self.copy_marks.clear();
+            self.global_sequences_mut(GlobalAction::CopyMarks).clear();
         }
     }
 
     fn has_sequence_starting_with(&self, prefix: KeyPress) -> bool {
-        [
-            &self.help,
-            &self.reload,
-            &self.file_filter,
-            &self.grep,
-            &self.diff_menu,
-            &self.head_branch,
-            &self.base_branch,
-            &self.commit_picker,
-            &self.options_menu,
-            &self.file_browser,
-            &self.previous_file,
-            &self.next_file,
-            &self.previous_hunk,
-            &self.next_hunk,
-            &self.expand_context_up,
-            &self.expand_context_down,
-            &self.collapse_context_all,
-            &self.quit,
-            &self.layout,
-            &self.edit_hunk,
-            &self.save_mark,
-            &self.cancel_mark,
-            &self.copy_marks,
-            &self.copy_error_log,
-            &self.clear_filters,
-            &self.next_diff_type,
-            &self.previous_diff_type,
-            &self.next_annotation,
-            &self.previous_annotation,
-        ]
-        .into_iter()
-        .any(|bindings| {
-            bindings
-                .iter()
-                .any(|sequence| sequence.0.len() == 2 && sequence.0.first() == Some(&prefix))
-        })
+        GLOBAL_ACTION_SPECS
+            .iter()
+            .map(|spec| self.global_sequences(spec.action))
+            .any(|bindings| {
+                bindings
+                    .iter()
+                    .any(|sequence| sequence.0.len() == 2 && sequence.0.first() == Some(&prefix))
+            })
     }
 
     pub(crate) fn is_prefix(&self, key: KeyEvent) -> bool {
@@ -458,49 +384,35 @@ impl Keymap {
         self.matches_menu(action, key)
     }
 
-    fn global_sequences(&self, action: GlobalAction) -> &[KeySequence] {
-        match action {
-            GlobalAction::Help => &self.help,
-            GlobalAction::Reload => &self.reload,
-            GlobalAction::FileFilter => &self.file_filter,
-            GlobalAction::Grep => &self.grep,
-            GlobalAction::DiffMenu => &self.diff_menu,
-            GlobalAction::HeadBranch => &self.head_branch,
-            GlobalAction::BaseBranch => &self.base_branch,
-            GlobalAction::CommitPicker => &self.commit_picker,
-            GlobalAction::OptionsMenu => &self.options_menu,
-            GlobalAction::FileBrowser => &self.file_browser,
-            GlobalAction::PreviousFile => &self.previous_file,
-            GlobalAction::NextFile => &self.next_file,
-            GlobalAction::PreviousHunk => &self.previous_hunk,
-            GlobalAction::NextHunk => &self.next_hunk,
-            GlobalAction::ExpandContextUp => &self.expand_context_up,
-            GlobalAction::ExpandContextDown => &self.expand_context_down,
-            GlobalAction::CollapseContextAll => &self.collapse_context_all,
-            GlobalAction::Quit => &self.quit,
-            GlobalAction::Layout => &self.layout,
-            GlobalAction::EditHunk => &self.edit_hunk,
-            GlobalAction::SaveMark => &self.save_mark,
-            GlobalAction::CancelMark => &self.cancel_mark,
-            GlobalAction::CopyMarks => &self.copy_marks,
-            GlobalAction::CopyErrorLog => &self.copy_error_log,
-            GlobalAction::ClearFilters => &self.clear_filters,
-            GlobalAction::NextDiffType => &self.next_diff_type,
-            GlobalAction::PreviousDiffType => &self.previous_diff_type,
-            GlobalAction::NextAnnotation => &self.next_annotation,
-            GlobalAction::PreviousAnnotation => &self.previous_annotation,
-        }
+    fn global_sequences(&self, action: GlobalAction) -> &Vec<KeySequence> {
+        &self.global[global_action_index(action)]
     }
 
-    fn menu_sequences(&self, action: MenuAction) -> &[KeySequence] {
-        match action {
-            MenuAction::Up => &self.menu_up,
-            MenuAction::Down => &self.menu_down,
-            MenuAction::Select => &self.menu_select,
-            MenuAction::Confirm => &self.menu_confirm,
-            MenuAction::Close => &self.menu_close,
-        }
+    fn global_sequences_mut(&mut self, action: GlobalAction) -> &mut Vec<KeySequence> {
+        &mut self.global[global_action_index(action)]
     }
+
+    fn menu_sequences(&self, action: MenuAction) -> &Vec<KeySequence> {
+        &self.menu[menu_action_index(action)]
+    }
+
+    fn menu_sequences_mut(&mut self, action: MenuAction) -> &mut Vec<KeySequence> {
+        &mut self.menu[menu_action_index(action)]
+    }
+}
+
+fn global_action_index(action: GlobalAction) -> usize {
+    GLOBAL_ACTION_SPECS
+        .iter()
+        .position(|spec| spec.action == action)
+        .expect("global action should have a spec")
+}
+
+fn menu_action_index(action: MenuAction) -> usize {
+    MENU_ACTION_SPECS
+        .iter()
+        .position(|spec| spec.action == action)
+        .expect("menu action should have a spec")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -584,6 +496,42 @@ struct StoredGlobalKeymap {
     previous_annotation: Option<KeySpec>,
 }
 
+impl StoredGlobalKeymap {
+    fn take(&mut self, action: GlobalAction) -> Option<KeySpec> {
+        match action {
+            GlobalAction::Help => self.help.take(),
+            GlobalAction::Reload => self.reload.take(),
+            GlobalAction::FileFilter => self.file_filter.take(),
+            GlobalAction::Grep => self.grep.take(),
+            GlobalAction::DiffMenu => self.diff_menu.take(),
+            GlobalAction::HeadBranch => self.head_branch.take(),
+            GlobalAction::BaseBranch => self.base_branch.take(),
+            GlobalAction::CommitPicker => self.commit_picker.take(),
+            GlobalAction::OptionsMenu => self.options_menu.take(),
+            GlobalAction::FileBrowser => self.file_browser.take(),
+            GlobalAction::PreviousFile => self.previous_file.take(),
+            GlobalAction::NextFile => self.next_file.take(),
+            GlobalAction::PreviousHunk => self.previous_hunk.take(),
+            GlobalAction::NextHunk => self.next_hunk.take(),
+            GlobalAction::ExpandContextUp => self.expand_context_up.take(),
+            GlobalAction::ExpandContextDown => self.expand_context_down.take(),
+            GlobalAction::CollapseContextAll => self.collapse_context_all.take(),
+            GlobalAction::Quit => self.quit.take(),
+            GlobalAction::Layout => self.layout.take(),
+            GlobalAction::EditHunk => self.edit_hunk.take(),
+            GlobalAction::SaveMark => self.save_mark.take(),
+            GlobalAction::CancelMark => self.cancel_mark.take(),
+            GlobalAction::CopyMarks => self.copy_marks.take(),
+            GlobalAction::CopyErrorLog => self.copy_error_log.take(),
+            GlobalAction::ClearFilters => self.clear_filters.take(),
+            GlobalAction::NextDiffType => self.next_diff_type.take(),
+            GlobalAction::PreviousDiffType => self.previous_diff_type.take(),
+            GlobalAction::NextAnnotation => self.next_annotation.take(),
+            GlobalAction::PreviousAnnotation => self.previous_annotation.take(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct StoredMenuKeymap {
     up: Option<KeySpec>,
@@ -591,6 +539,18 @@ struct StoredMenuKeymap {
     select: Option<KeySpec>,
     confirm: Option<KeySpec>,
     close: Option<KeySpec>,
+}
+
+impl StoredMenuKeymap {
+    fn take(&mut self, action: MenuAction) -> Option<KeySpec> {
+        match action {
+            MenuAction::Up => self.up.take(),
+            MenuAction::Down => self.down.take(),
+            MenuAction::Select => self.select.take(),
+            MenuAction::Confirm => self.confirm.take(),
+            MenuAction::Close => self.close.take(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

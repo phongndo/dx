@@ -21,7 +21,7 @@ use crate::{
 pub(crate) fn draw_header(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
     let line = statusline_header_line(app, area.width as usize);
     frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(statusline_bg(app.theme))),
+        Paragraph::new(line).style(Style::default().bg(statusline_bg(app.config.theme))),
         area,
     );
 }
@@ -29,20 +29,20 @@ pub(crate) fn draw_header(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
 pub(crate) fn draw_filter_bar(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
     let line = filter_bar_line(app, area.width as usize);
     frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(statusline_bg(app.theme))),
+        Paragraph::new(line).style(Style::default().bg(statusline_bg(app.config.theme))),
         area,
     );
 }
 
 pub(crate) fn draw_error_log(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
-    let Some(error_log) = app.error_log.as_deref() else {
+    let Some(error_log) = app.notifications.error_log.as_deref() else {
         return;
     };
     if area.height == 0 || area.width == 0 {
         return;
     }
 
-    let bg = base_bg(app.theme);
+    let bg = base_bg(app.config.theme);
     frame.render_widget(
         Paragraph::new(error_log_header_line(app, area.width as usize))
             .style(Style::default().bg(bg)),
@@ -66,7 +66,7 @@ pub(crate) fn draw_error_log(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(Text::from(error_log.to_owned()))
-            .style(Style::default().fg(app.theme.foreground).bg(bg))
+            .style(Style::default().fg(app.config.theme.foreground).bg(bg))
             .wrap(Wrap { trim: false }),
         body_area,
     );
@@ -77,11 +77,11 @@ pub(crate) fn error_log_header_line(app: &DiffApp, width: usize) -> Line<'static
         return Line::default();
     }
 
-    let bg = base_bg(app.theme);
+    let bg = base_bg(app.config.theme);
     let title = "error ";
     let title_width = title.width();
     let rule_style = Style::default()
-        .fg(app.theme.deletion_fg)
+        .fg(app.config.theme.deletion_fg)
         .bg(bg)
         .add_modifier(Modifier::BOLD);
     if width <= title_width {
@@ -101,7 +101,7 @@ pub(crate) fn error_log_header_line(app: &DiffApp, width: usize) -> Line<'static
         Span::styled(
             copy_label,
             Style::default()
-                .fg(app.theme.deletion_fg)
+                .fg(app.config.theme.deletion_fg)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -109,7 +109,10 @@ pub(crate) fn error_log_header_line(app: &DiffApp, width: usize) -> Line<'static
 }
 
 fn error_log_copy_label(app: &DiffApp) -> String {
-    let key = app.keymap.global_action_label(GlobalAction::CopyErrorLog);
+    let key = app
+        .config
+        .keymap
+        .global_action_label(GlobalAction::CopyErrorLog);
     if key == "unbound" {
         String::new()
     } else {
@@ -129,12 +132,14 @@ pub(crate) fn error_log_separator(width: usize) -> String {
     format!("{title}{}", "─".repeat(right))
 }
 
+#[cfg(test)]
 pub(crate) fn error_log_height(app: &DiffApp, available_height: u16) -> u16 {
-    if app.error_log.is_none() || available_height == 0 {
+    if app.notifications.error_log.is_none() || available_height == 0 {
         return 0;
     }
 
-    app.error_log_height
+    app.notifications
+        .error_log_height
         .clamp(
             crate::app::ERROR_LOG_MIN_HEIGHT,
             crate::app::ERROR_LOG_MAX_HEIGHT,
@@ -143,7 +148,7 @@ pub(crate) fn error_log_height(app: &DiffApp, available_height: u16) -> u16 {
 }
 
 pub(crate) fn filter_bar_visible(app: &DiffApp) -> bool {
-    app.filter_input.is_some() || app.filters_active()
+    app.filters.filter_input.is_some() || app.filters_active()
 }
 
 pub(crate) fn filter_bar_line(app: &DiffApp, width: usize) -> Line<'static> {
@@ -159,17 +164,19 @@ pub(crate) fn filter_bar_line(app: &DiffApp, width: usize) -> Line<'static> {
 }
 
 pub(crate) fn filter_status_line(app: &DiffApp, width: usize) -> Line<'static> {
-    let bg = statusline_bg(app.theme);
+    let bg = statusline_bg(app.config.theme);
     let right = filter_status_right_label(app);
     let right_width = right.as_deref().map(str::width).unwrap_or_default();
     let mut left_width = width.saturating_sub(right_width);
     let mut spans = Vec::new();
 
-    if app.filter_input == Some(DiffFilterKind::File) || !app.file_filter.is_empty() {
+    if app.filters.filter_input == Some(DiffFilterKind::File) || !app.filters.file_filter.is_empty()
+    {
         push_file_filter_bar_spans(app, &mut spans, &mut left_width);
     }
 
-    if app.filter_input == Some(DiffFilterKind::Grep) || !app.grep_filter.is_empty() {
+    if app.filters.filter_input == Some(DiffFilterKind::Grep) || !app.filters.grep_filter.is_empty()
+    {
         if !spans.is_empty() {
             push_filter_bar_span(&mut spans, "  ", Style::default().bg(bg), &mut left_width);
         }
@@ -186,7 +193,7 @@ pub(crate) fn filter_status_line(app: &DiffApp, width: usize) -> Line<'static> {
     {
         spans.push(Span::styled(
             right,
-            Style::default().fg(app.theme.muted).bg(bg),
+            Style::default().fg(app.config.theme.muted).bg(bg),
         ));
     }
 
@@ -196,7 +203,7 @@ pub(crate) fn filter_status_line(app: &DiffApp, width: usize) -> Line<'static> {
 pub(crate) fn blank_filter_bar_line(app: &DiffApp, width: usize) -> Line<'static> {
     Line::from(Span::styled(
         " ".repeat(width),
-        Style::default().bg(statusline_bg(app.theme)),
+        Style::default().bg(statusline_bg(app.config.theme)),
     ))
 }
 
@@ -205,16 +212,17 @@ pub(crate) fn filter_status_right_label(app: &DiffApp) -> Option<String> {
         return Some("…".to_owned());
     }
 
-    if !app.grep_filter.is_empty() {
-        let total = app.grep_matches.len();
+    if !app.filters.grep_filter.is_empty() {
+        let total = app.filters.grep_matches.len();
         if total == 0 {
             return Some("0".to_owned());
         }
         let current = app
+            .filters
             .selected_grep_match
             .map(|index| index.saturating_add(1).min(total))
             .unwrap_or(1);
-        let total = if app.grep_matches_truncated {
+        let total = if app.filters.grep_matches_truncated {
             "10k+".to_owned()
         } else {
             format_count(total)
@@ -222,11 +230,11 @@ pub(crate) fn filter_status_right_label(app: &DiffApp) -> Option<String> {
         return Some(format!("{}/{total}", format_count(current)));
     }
 
-    (!app.file_filter.is_empty()).then(|| {
+    (!app.filters.file_filter.is_empty()).then(|| {
         format!(
             "{}/{} files",
-            format_count(app.stats.files),
-            format_count(app.total_stats.files)
+            format_count(app.document.stats.files),
+            format_count(app.document.total_stats.files)
         )
     })
 }
@@ -236,14 +244,14 @@ pub(crate) fn push_file_filter_bar_spans(
     spans: &mut Vec<Span<'static>>,
     remaining: &mut usize,
 ) {
-    let bg = statusline_bg(app.theme);
+    let bg = statusline_bg(app.config.theme);
     let query = filter_bar_query(app, DiffFilterKind::File);
-    let active = app.filter_input == Some(DiffFilterKind::File);
+    let active = app.filters.filter_input == Some(DiffFilterKind::File);
     push_filter_bar_span(
         spans,
         "@",
         Style::default()
-            .fg(app.theme.statusline_fg)
+            .fg(app.config.theme.statusline_fg)
             .bg(bg)
             .add_modifier(Modifier::BOLD),
         remaining,
@@ -256,7 +264,7 @@ pub(crate) fn push_file_filter_bar_spans(
         push_filter_bar_span(
             spans,
             query,
-            Style::default().fg(app.theme.statusline_fg).bg(bg),
+            Style::default().fg(app.config.theme.statusline_fg).bg(bg),
             remaining,
         );
     }
@@ -267,14 +275,14 @@ pub(crate) fn push_grep_filter_bar_spans(
     spans: &mut Vec<Span<'static>>,
     remaining: &mut usize,
 ) {
-    let bg = statusline_bg(app.theme);
+    let bg = statusline_bg(app.config.theme);
     let query = filter_bar_query(app, DiffFilterKind::Grep);
-    let active = app.filter_input == Some(DiffFilterKind::Grep);
+    let active = app.filters.filter_input == Some(DiffFilterKind::Grep);
     push_filter_bar_span(
         spans,
         "/",
         Style::default()
-            .fg(app.theme.statusline_fg)
+            .fg(app.config.theme.statusline_fg)
             .bg(bg)
             .add_modifier(Modifier::BOLD),
         remaining,
@@ -287,7 +295,7 @@ pub(crate) fn push_grep_filter_bar_spans(
         push_filter_bar_span(
             spans,
             query,
-            Style::default().fg(app.theme.statusline_fg).bg(bg),
+            Style::default().fg(app.config.theme.statusline_fg).bg(bg),
             remaining,
         );
     }
@@ -304,8 +312,8 @@ fn push_active_filter_query_spans(
         spans,
         prefix,
         Style::default()
-            .fg(app.theme.statusline_fg)
-            .bg(statusline_bg(app.theme)),
+            .fg(app.config.theme.statusline_fg)
+            .bg(statusline_bg(app.config.theme)),
         remaining,
     );
 }
@@ -321,8 +329,8 @@ fn push_active_filter_query_suffix_spans(
         spans,
         suffix,
         Style::default()
-            .fg(app.theme.statusline_fg)
-            .bg(statusline_bg(app.theme)),
+            .fg(app.config.theme.statusline_fg)
+            .bg(statusline_bg(app.config.theme)),
         remaining,
     );
 }
@@ -345,13 +353,13 @@ pub(crate) fn push_filter_bar_cursor_span(
     push_filter_bar_span(
         spans,
         INPUT_CURSOR,
-        crate::render::style::input_cursor_style(app.theme, statusline_bg(app.theme)),
+        crate::render::style::input_cursor_style(app.config.theme, statusline_bg(app.config.theme)),
         remaining,
     );
 }
 
 pub(crate) fn filter_bar_query(app: &DiffApp, kind: DiffFilterKind) -> &str {
-    if app.filter_input == Some(kind) {
+    if app.filters.filter_input == Some(kind) {
         app.filter_input_query(kind)
     } else {
         app.filter_query(kind)
@@ -394,15 +402,15 @@ pub(crate) fn statusline_header_line(app: &DiffApp, width: usize) -> Line<'stati
     if gap > 0 {
         spans.push(Span::styled(
             " ".repeat(gap),
-            Style::default().bg(statusline_bg(app.theme)),
+            Style::default().bg(statusline_bg(app.config.theme)),
         ));
     }
     if right_width > 0 {
         spans.push(Span::styled(
             right,
             Style::default()
-                .fg(app.theme.statusline_info_fg)
-                .bg(app.theme.statusline_info_bg)
+                .fg(app.config.theme.statusline_info_fg)
+                .bg(app.config.theme.statusline_info_bg)
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -417,17 +425,17 @@ pub(crate) fn push_statusline_left_spans(
 ) {
     push_fitted_statusline_span(
         spans,
-        diff_selector_text(&app.options),
+        diff_selector_text(&app.document.options),
         Style::default()
-            .fg(app.theme.statusline_accent_fg)
-            .bg(app.theme.statusline_accent_bg)
+            .fg(app.config.theme.statusline_accent_fg)
+            .bg(app.config.theme.statusline_accent_bg)
             .add_modifier(Modifier::BOLD),
         remaining,
     );
     push_fitted_statusline_span(
         spans,
         STATUSLINE_SELECTOR_GAP,
-        Style::default().bg(statusline_bg(app.theme)),
+        Style::default().bg(statusline_bg(app.config.theme)),
         remaining,
     );
     if app.is_show_diff()
@@ -437,8 +445,8 @@ pub(crate) fn push_statusline_left_spans(
             spans,
             commit,
             Style::default()
-                .fg(app.theme.header)
-                .bg(statusline_bg(app.theme))
+                .fg(app.config.theme.header)
+                .bg(statusline_bg(app.config.theme))
                 .add_modifier(Modifier::BOLD),
             remaining,
         );
@@ -452,8 +460,8 @@ pub(crate) fn push_statusline_left_spans(
             spans,
             head,
             Style::default()
-                .fg(app.theme.header)
-                .bg(statusline_bg(app.theme))
+                .fg(app.config.theme.header)
+                .bg(statusline_bg(app.config.theme))
                 .add_modifier(Modifier::BOLD),
             remaining,
         );
@@ -461,40 +469,40 @@ pub(crate) fn push_statusline_left_spans(
             spans,
             BRANCH_COMPARISON_SEPARATOR,
             Style::default()
-                .fg(app.theme.muted)
-                .bg(statusline_bg(app.theme)),
+                .fg(app.config.theme.muted)
+                .bg(statusline_bg(app.config.theme)),
             remaining,
         );
         push_fitted_statusline_span(
             spans,
             base,
             Style::default()
-                .fg(app.theme.header)
-                .bg(statusline_bg(app.theme))
+                .fg(app.config.theme.header)
+                .bg(statusline_bg(app.config.theme))
                 .add_modifier(Modifier::BOLD),
             remaining,
         );
     } else {
         push_fitted_statusline_span(
             spans,
-            diff_comparison_label(&app.options),
+            diff_comparison_label(&app.document.options),
             Style::default()
-                .fg(app.theme.muted)
-                .bg(statusline_bg(app.theme)),
+                .fg(app.config.theme.muted)
+                .bg(statusline_bg(app.config.theme)),
             remaining,
         );
     }
     push_fitted_statusline_span(
         spans,
         "  ",
-        Style::default().bg(statusline_bg(app.theme)),
+        Style::default().bg(statusline_bg(app.config.theme)),
         remaining,
     );
-    let status_notice = if app.pending_review_load.is_some() {
+    let status_notice = if app.jobs.pending_review_load.is_some() {
         Some("loading review")
-    } else if app.pending_diff_load.is_some() {
+    } else if app.jobs.pending_diff_load.is_some() {
         Some("loading diff")
-    } else if app.live_reload_pending {
+    } else if app.jobs.live_reload_pending {
         Some("refreshing diff")
     } else {
         None
@@ -504,15 +512,15 @@ pub(crate) fn push_statusline_left_spans(
             spans,
             label,
             Style::default()
-                .fg(app.theme.notice)
-                .bg(statusline_bg(app.theme))
+                .fg(app.config.theme.notice)
+                .bg(statusline_bg(app.config.theme))
                 .add_modifier(Modifier::BOLD),
             remaining,
         );
         push_fitted_statusline_span(
             spans,
             "  ",
-            Style::default().bg(statusline_bg(app.theme)),
+            Style::default().bg(statusline_bg(app.config.theme)),
             remaining,
         );
     }
@@ -520,37 +528,37 @@ pub(crate) fn push_statusline_left_spans(
         spans,
         statusline_file_count_label(app),
         Style::default()
-            .fg(app.theme.foreground)
-            .bg(statusline_bg(app.theme)),
+            .fg(app.config.theme.foreground)
+            .bg(statusline_bg(app.config.theme)),
         remaining,
     );
     push_fitted_statusline_span(
         spans,
         "  ",
-        Style::default().bg(statusline_bg(app.theme)),
+        Style::default().bg(statusline_bg(app.config.theme)),
         remaining,
     );
     push_fitted_statusline_span(
         spans,
-        format!("+{}", format_count(app.stats.additions)),
+        format!("+{}", format_count(app.document.stats.additions)),
         Style::default()
-            .fg(app.theme.addition_fg)
-            .bg(statusline_bg(app.theme))
+            .fg(app.config.theme.addition_fg)
+            .bg(statusline_bg(app.config.theme))
             .add_modifier(Modifier::BOLD),
         remaining,
     );
     push_fitted_statusline_span(
         spans,
         " ",
-        Style::default().bg(statusline_bg(app.theme)),
+        Style::default().bg(statusline_bg(app.config.theme)),
         remaining,
     );
     push_fitted_statusline_span(
         spans,
-        format!("-{}", format_count(app.stats.deletions)),
+        format!("-{}", format_count(app.document.stats.deletions)),
         Style::default()
-            .fg(app.theme.deletion_fg)
-            .bg(statusline_bg(app.theme))
+            .fg(app.config.theme.deletion_fg)
+            .bg(statusline_bg(app.config.theme))
             .add_modifier(Modifier::BOLD),
         remaining,
     );
@@ -560,11 +568,11 @@ pub(crate) fn statusline_file_count_label(app: &DiffApp) -> String {
     if app.filters_active() {
         format!(
             "{}/{} files",
-            format_count(app.stats.files),
-            format_count(app.total_stats.files)
+            format_count(app.document.stats.files),
+            format_count(app.document.total_stats.files)
         )
     } else {
-        format!("{} files", format_count(app.stats.files))
+        format!("{} files", format_count(app.document.stats.files))
     }
 }
 
@@ -600,19 +608,21 @@ pub(crate) fn statusline_file_label(app: &DiffApp, max_width: usize) -> String {
         return String::new();
     }
 
-    let progress = progress_label(app.scroll, app.max_scroll());
-    let file_count = app.model.visible_files().len();
+    let progress = progress_label(app.viewport.scroll, app.max_scroll());
+    let file_count = app.document.model.visible_files().len();
     let file_number = app
+        .document
         .model
-        .visible_file_position(app.selected_file)
+        .visible_file_position(app.sidebar.selected_file)
         .map(|position| position + 1)
         .unwrap_or_default();
     let position = format!("{file_number}/{file_count} {progress}");
     let fallback = "No file";
     let path = app
+        .document
         .changeset
         .files
-        .get(app.selected_file)
+        .get(app.sidebar.selected_file)
         .map(|file| file.display_path())
         .unwrap_or(fallback);
 

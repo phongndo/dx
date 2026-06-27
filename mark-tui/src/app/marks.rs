@@ -59,9 +59,14 @@ impl DiffApp {
         // Copy marks for the current diff, not stale annotations whose path still
         // exists after a reload. Build an unfiltered model so active file/grep
         // filters do not hide otherwise-current marks from export.
-        let export_model = UiModel::new(&self.changeset, self.layout, &self.context_expansions);
+        let export_model = UiModel::new(
+            &self.document.changeset,
+            self.viewport.layout,
+            &self.document.context_expansions,
+        );
         let exportable_keys = self.exportable_annotation_keys(&export_model);
-        self.annotations
+        self.annotations_state
+            .annotations
             .iter()
             .filter_map(|(key, body)| {
                 if !exportable_keys.contains(key)
@@ -79,7 +84,7 @@ impl DiffApp {
             .rows
             .iter()
             .copied()
-            .flat_map(|row| AnnotationKey::candidates_from_ui_row(&self.changeset, row))
+            .flat_map(|row| AnnotationKey::candidates_from_ui_row(&self.document.changeset, row))
             .collect()
     }
 
@@ -102,7 +107,7 @@ impl DiffApp {
             else {
                 return false;
             };
-            let Some(file) = self.changeset.files.get(file) else {
+            let Some(file) = self.document.changeset.files.get(file) else {
                 return false;
             };
             if AnnotationKey::path_for_side(file, AnnotationSide::New) != Some(key.path.as_str()) {
@@ -116,7 +121,8 @@ impl DiffApp {
     fn trailing_context_contains_annotation_key(&self, key: &AnnotationKey) -> bool {
         // Collapsed trailing context has no UiRow::Collapsed sentinel; derive
         // the hidden range from the final hunk and the available source lines.
-        self.changeset
+        self.document
+            .changeset
             .files
             .iter()
             .enumerate()
@@ -170,7 +176,7 @@ impl DiffApp {
     }
 
     fn paired_old_line_for_new_annotation(&self, key: &AnnotationKey) -> Option<usize> {
-        self.changeset.files.iter().find_map(|file| {
+        self.document.changeset.files.iter().find_map(|file| {
             if AnnotationKey::path_for_side(file, AnnotationSide::New) != Some(key.path.as_str()) {
                 return None;
             }

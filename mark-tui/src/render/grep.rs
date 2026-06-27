@@ -120,6 +120,7 @@ pub(crate) fn grep_highlight_targets_for_row(
     match row {
         UiRow::FileHeader(_) => Vec::new(),
         UiRow::BinaryFile(file) => app
+            .document
             .changeset
             .files
             .get(file)
@@ -140,6 +141,7 @@ pub(crate) fn grep_highlight_targets_for_row(
             .into_iter()
             .collect(),
         UiRow::HunkHeader { file, hunk } => app
+            .document
             .changeset
             .files
             .get(file)
@@ -165,6 +167,7 @@ pub(crate) fn grep_highlight_targets_for_row(
             hunk,
             line: line_index,
         } => app
+            .document
             .changeset
             .files
             .get(file)
@@ -177,7 +180,10 @@ pub(crate) fn grep_highlight_targets_for_row(
                     &line.spans,
                     content_start,
                     width,
-                    diff_line_grep_rendered_text_byte_start(diff_line, app.horizontal_scroll),
+                    diff_line_grep_rendered_text_byte_start(
+                        diff_line,
+                        app.viewport.horizontal_scroll,
+                    ),
                 )
             })
             .into_iter()
@@ -189,6 +195,7 @@ pub(crate) fn grep_highlight_targets_for_row(
             right,
         } => {
             let Some(hunk) = app
+                .document
                 .changeset
                 .files
                 .get(file)
@@ -208,7 +215,7 @@ pub(crate) fn grep_highlight_targets_for_row(
                             &line.spans,
                             0,
                             left_width,
-                            app.horizontal_scroll,
+                            app.viewport.horizontal_scroll,
                         )
                     })
             {
@@ -223,7 +230,7 @@ pub(crate) fn grep_highlight_targets_for_row(
                             &line.spans,
                             left_width,
                             right_width,
-                            app.horizontal_scroll,
+                            app.viewport.horizontal_scroll,
                         )
                     })
             {

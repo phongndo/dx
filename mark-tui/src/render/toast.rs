@@ -21,12 +21,12 @@ const TOAST_X_MARGIN: u16 = 2;
 const TOAST_Y_MARGIN: u16 = 1;
 
 pub(crate) fn draw_toasts(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
-    if area.width == 0 || area.height == 0 || app.toasts.is_empty() {
+    if area.width == 0 || area.height == 0 || app.notifications.toasts.is_empty() {
         return;
     }
 
-    let corner = app.toasts.corner();
-    for (index, toast) in app.toasts.visible().enumerate() {
+    let corner = app.notifications.toasts.corner();
+    for (index, toast) in app.notifications.toasts.visible().enumerate() {
         let Some(toast_area) = toast_area(toast, area, corner, index) else {
             break;
         };
@@ -95,7 +95,7 @@ fn toast_blank_line(app: &DiffApp, level: ToastLevel, width: usize) -> Line<'sta
         return Line::default();
     }
 
-    let bg = statusline_bg(app.theme);
+    let bg = statusline_bg(app.config.theme);
     let accent = toast_accent_color(app, level);
     let padding = width.saturating_sub(DIFF_INDICATOR.width());
 
@@ -116,7 +116,7 @@ fn toast_content_line(app: &DiffApp, toast: &Toast, width: usize) -> Line<'stati
         return Line::default();
     }
 
-    let bg = statusline_bg(app.theme);
+    let bg = statusline_bg(app.config.theme);
     let accent = toast_accent_color(app, toast.level);
     let message_width = width
         .saturating_sub(DIFF_INDICATOR.width())
@@ -140,7 +140,7 @@ fn toast_content_line(app: &DiffApp, toast: &Toast, width: usize) -> Line<'stati
         Span::styled(
             message,
             Style::default()
-                .fg(app.theme.foreground)
+                .fg(app.config.theme.foreground)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -150,10 +150,10 @@ fn toast_content_line(app: &DiffApp, toast: &Toast, width: usize) -> Line<'stati
 
 fn toast_accent_color(app: &DiffApp, level: ToastLevel) -> ratatui::prelude::Color {
     match level {
-        ToastLevel::Info => app.theme.foreground,
-        ToastLevel::Success => app.theme.addition_fg,
+        ToastLevel::Info => app.config.theme.foreground,
+        ToastLevel::Success => app.config.theme.addition_fg,
         ToastLevel::Warning => ratatui::prelude::Color::Yellow,
-        ToastLevel::Error => app.theme.deletion_fg,
-        ToastLevel::Debug => app.theme.muted,
+        ToastLevel::Error => app.config.theme.deletion_fg,
+        ToastLevel::Debug => app.config.theme.muted,
     }
 }

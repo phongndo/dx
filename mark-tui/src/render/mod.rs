@@ -1,9 +1,13 @@
 pub(crate) mod annotations;
+pub(crate) mod compositor;
 pub(crate) mod diff;
 pub(crate) mod grep;
 pub(crate) mod headers;
 pub(crate) mod menus;
+pub(crate) mod screen_layout;
+pub(crate) mod selector_menu;
 pub(crate) mod sidebar;
+pub(crate) mod snapshot;
 pub(crate) mod statusline;
 pub(crate) mod style;
 pub(crate) mod text;
@@ -14,17 +18,32 @@ use crate::app::DiffApp;
 use ratatui::{Frame, layout::Rect};
 
 use self::{
+    compositor::{Compositor, RectComponent},
     diff::draw_diff,
     menus::{
         draw_branch_menu, draw_color_scheme_picker, draw_commit_menu, draw_diff_menu,
         draw_help_menu, draw_options_menu, draw_review_input,
     },
-    sidebar::{draw_file_sidebar, file_sidebar_width},
-    statusline::{
-        draw_error_log, draw_filter_bar, draw_header, error_log_height, filter_bar_visible,
-    },
+    screen_layout::ScreenLayout,
+    sidebar::draw_file_sidebar,
+    snapshot::{OverlayLayer, RenderSnapshot},
+    statusline::{draw_error_log, draw_filter_bar, draw_header},
     toast::draw_toasts,
 };
+
+type LayerRenderer = fn(&mut Frame<'_>, &mut DiffApp, Rect);
+
+fn overlay_renderer(layer: OverlayLayer) -> LayerRenderer {
+    match layer {
+        OverlayLayer::DiffMenu => draw_diff_menu,
+        OverlayLayer::ReviewInput => draw_review_input,
+        OverlayLayer::OptionsMenu => draw_options_menu,
+        OverlayLayer::ColorSchemePicker => draw_color_scheme_picker,
+        OverlayLayer::BranchMenu => draw_branch_menu,
+        OverlayLayer::CommitMenu => draw_commit_menu,
+        OverlayLayer::HelpMenu => draw_help_menu,
+    }
+}
 
 pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut DiffApp) {
     let area = frame.area();
@@ -33,88 +52,51 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut DiffApp) {
         return;
     }
 
-    let header_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let filter_bar_height = u16::from(area.height > 1 && filter_bar_visible(app));
-    let error_log_height = error_log_height(
-        app,
-        area.height
-            .saturating_sub(1)
-            .saturating_sub(filter_bar_height),
-    );
-    let body_height = area
-        .height
-        .saturating_sub(1)
-        .saturating_sub(filter_bar_height)
-        .saturating_sub(error_log_height);
-    let body_area = Rect {
-        x: area.x,
-        y: area.y.saturating_add(1),
-        width: area.width,
-        height: body_height,
-    };
-    let filter_bar_area = (filter_bar_height > 0).then_some(Rect {
-        x: area.x,
-        y: body_area.y.saturating_add(body_area.height),
-        width: area.width,
-        height: 1,
-    });
-    let error_log_area = (error_log_height > 0).then_some(Rect {
-        x: area.x,
-        y: body_area
-            .y
-            .saturating_add(body_area.height)
-            .saturating_add(filter_bar_height),
-        width: area.width,
-        height: error_log_height,
-    });
+    let snapshot = RenderSnapshot::from_app(app);
+    let layout = ScreenLayout::build(app, &snapshot, area);
+    let layout_snapshot = layout.snapshot();
+    layout.apply_to_app(app);
 
-    let sidebar_width = file_sidebar_width(app, body_area.width);
-    app.file_sidebar_render_width = sidebar_width;
-    app.set_rendered_error_log_separator_row(error_log_area.map(|area| area.y));
-    let (sidebar_area, diff_area) = if sidebar_width > 0 {
-        (
-            Some(Rect {
-                x: body_area.x,
-                y: body_area.y,
-                width: sidebar_width,
-                height: body_area.height,
-            }),
-            Rect {
-                x: body_area.x.saturating_add(sidebar_width),
-                y: body_area.y,
-                width: body_area.width.saturating_sub(sidebar_width),
-                height: body_area.height,
-            },
-        )
-    } else {
-        (None, body_area)
-    };
+    let mut compositor = Compositor::new();
+    compositor.push(RectComponent::new(layout.header, draw_header_component));
+    if let Some(sidebar_area) = layout.sidebar {
+        compositor.push(RectComponent::new(sidebar_area, draw_file_sidebar));
+    }
+    compositor.push(RectComponent::new(layout.diff, draw_diff));
+    if let Some(filter_bar_area) = layout.filter_bar {
+        compositor.push(RectComponent::new(
+            filter_bar_area,
+            draw_filter_bar_component,
+        ));
+    }
+    if let Some(error_log_area) = layout.error_log {
+        compositor.push(RectComponent::new(error_log_area, draw_error_log_component));
+    }
+    compositor.push(RectComponent::new(
+        layout_snapshot.body,
+        draw_toasts_component,
+    ));
+    for layer in snapshot.overlay_layers {
+        compositor.push(RectComponent::new(
+            layout_snapshot.root,
+            overlay_renderer(layer),
+        ));
+    }
+    compositor.render(frame, app);
+}
 
-    app.set_rendered_diff_area(diff_area);
-    app.set_viewport_rows(diff_area.height as usize);
-    app.set_viewport_width(diff_area.width as usize);
-    draw_header(frame, app, header_area);
-    if let Some(sidebar_area) = sidebar_area {
-        draw_file_sidebar(frame, app, sidebar_area);
-    }
-    draw_diff(frame, app, diff_area);
-    if let Some(filter_bar_area) = filter_bar_area {
-        draw_filter_bar(frame, app, filter_bar_area);
-    }
-    if let Some(error_log_area) = error_log_area {
-        draw_error_log(frame, app, error_log_area);
-    }
-    draw_toasts(frame, app, body_area);
-    draw_diff_menu(frame, app, area);
-    draw_review_input(frame, app, area);
-    draw_options_menu(frame, app, area);
-    draw_color_scheme_picker(frame, app, area);
-    draw_branch_menu(frame, app, area);
-    draw_commit_menu(frame, app, area);
-    draw_help_menu(frame, app, area);
+fn draw_header_component(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+    draw_header(frame, app, area);
+}
+
+fn draw_filter_bar_component(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+    draw_filter_bar(frame, app, area);
+}
+
+fn draw_error_log_component(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+    draw_error_log(frame, app, area);
+}
+
+fn draw_toasts_component(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+    draw_toasts(frame, app, area);
 }

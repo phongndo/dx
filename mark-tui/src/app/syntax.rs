@@ -2,7 +2,7 @@ use super::*;
 
 impl DiffApp {
     pub(crate) fn prepare_syntax_for_viewport(&mut self, visible_rows: usize) {
-        if visible_rows == 0 || self.syntax.is_none() {
+        if visible_rows == 0 || self.config.syntax.is_none() {
             return;
         }
         let mut requested = HashSet::new();
@@ -25,10 +25,11 @@ impl DiffApp {
             return;
         }
 
-        let prefetch_rows = visible_rows.saturating_mul(self.syntax_limits.prefetch_viewports);
+        let prefetch_rows =
+            visible_rows.saturating_mul(self.config.syntax_limits.prefetch_viewports);
         let ahead_end = visible_end
             .saturating_add(prefetch_rows)
-            .min(self.model.len());
+            .min(self.document.model.len());
         self.prepare_syntax_for_range(
             visible_end,
             ahead_end,
@@ -56,7 +57,7 @@ impl DiffApp {
         requested_files: &mut HashSet<ContextSourceKey>,
     ) {
         for row_index in start..end {
-            let Some(row) = self.model.row(row_index) else {
+            let Some(row) = self.document.model.row(row_index) else {
                 continue;
             };
             self.prepare_syntax_for_row(row, priority, requested, requested_files);
@@ -74,6 +75,7 @@ impl DiffApp {
             UiRow::FileSeparator => {}
             UiRow::UnifiedLine { file, hunk, line } => {
                 let Some(diff_line) = self
+                    .document
                     .changeset
                     .files
                     .get(file)
@@ -122,7 +124,7 @@ impl DiffApp {
         requested: &mut HashSet<SyntaxPosition>,
     ) {
         let position = SyntaxPosition {
-            generation: self.generation,
+            generation: self.document.generation,
             file,
             hunk,
             side,
@@ -130,8 +132,13 @@ impl DiffApp {
         if !requested.insert(position) {
             return;
         }
-        if let Some(syntax) = self.syntax.as_mut() {
-            syntax.queue_hunk(&self.options, &self.changeset, position, priority);
+        if let Some(syntax) = self.config.syntax.as_mut() {
+            syntax.queue_hunk(
+                &self.document.options,
+                &self.document.changeset,
+                position,
+                priority,
+            );
         }
     }
 
@@ -145,11 +152,11 @@ impl DiffApp {
         if !requested.insert(ContextSourceKey { file, side }) {
             return;
         }
-        if let Some(syntax) = self.syntax.as_mut() {
+        if let Some(syntax) = self.config.syntax.as_mut() {
             syntax.queue_full_file(
-                &self.options,
-                &self.changeset,
-                self.generation,
+                &self.document.options,
+                &self.document.changeset,
+                self.document.generation,
                 file,
                 side,
                 priority,
@@ -158,22 +165,23 @@ impl DiffApp {
     }
 
     pub(crate) fn drain_syntax(&mut self) {
-        if let Some(syntax) = self.syntax.as_mut()
-            && syntax.drain(self.generation, MAX_SYNTAX_RESULTS_PER_FRAME)
+        if let Some(syntax) = self.config.syntax.as_mut()
+            && syntax.drain(self.document.generation, MAX_SYNTAX_RESULTS_PER_FRAME)
         {
-            self.dirty = true;
+            self.runtime.dirty = true;
         }
     }
 
     pub(crate) fn syntax_stats(&self) -> SyntaxBenchmarkReport {
-        self.syntax
+        self.config
+            .syntax
             .as_ref()
             .map(SyntaxRuntime::stats)
             .unwrap_or_default()
     }
 
     pub(crate) fn syntax_prefetch_paused(&self) -> bool {
-        self.filter_input.is_some()
+        self.filters.filter_input.is_some()
     }
 
     pub(crate) fn syntax_line(
@@ -183,10 +191,10 @@ impl DiffApp {
         line: usize,
         side: DiffSide,
     ) -> Option<HighlightedLine> {
-        self.syntax.as_mut().and_then(|syntax| {
+        self.config.syntax.as_mut().and_then(|syntax| {
             syntax.line(
                 SyntaxPosition {
-                    generation: self.generation,
+                    generation: self.document.generation,
                     file,
                     hunk,
                     side,
@@ -202,8 +210,8 @@ impl DiffApp {
         side: DiffSide,
         line_number: usize,
     ) -> Option<HighlightedLine> {
-        self.syntax
-            .as_mut()
-            .and_then(|syntax| syntax.full_file_line(self.generation, file, side, line_number))
+        self.config.syntax.as_mut().and_then(|syntax| {
+            syntax.full_file_line(self.document.generation, file, side, line_number)
+        })
     }
 }
