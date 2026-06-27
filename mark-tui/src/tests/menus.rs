@@ -1754,6 +1754,57 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
 }
 
 #[test]
+fn colorscheme_picker_mouse_selection_persists_draft() {
+    let changeset = changeset_with_context_lines(1);
+    let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
+    app.config.color_scheme = ColorSchemeChoice::System;
+    app.config.theme = DiffTheme::system();
+
+    app.open_options_menu();
+    app.move_options_menu_selection(4);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        .expect("enter should open colorscheme picker");
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 20))
+        .expect("test terminal should be created");
+
+    terminal
+        .draw(|frame| crate::render::draw(frame, &mut app))
+        .expect("colorscheme picker draw should succeed");
+
+    let rows = buffer_rows(terminal.backend().buffer());
+    let (row, column) = rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| {
+            text.find("gruvbox-dark")
+                .map(|column| (row as u16, column as u16))
+        })
+        .expect("target colorscheme row should render");
+    app.config.last_persisted_options_menu_draft = None;
+
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
+    .expect("mouse click should select colorscheme");
+
+    assert!(!app.overlays.color_scheme_picker_open);
+    assert_eq!(app.config.color_scheme, ColorSchemeChoice::GruvboxDark);
+    assert_eq!(
+        app.overlays.options_menu_draft.color_scheme,
+        ColorSchemeChoice::GruvboxDark
+    );
+    let (draft, changed_item) = app
+        .config
+        .last_persisted_options_menu_draft
+        .expect("mouse-selected colorscheme should be persisted");
+    assert_eq!(changed_item, OptionsMenuItem::ColorScheme);
+    assert_eq!(draft.color_scheme, ColorSchemeChoice::GruvboxDark);
+}
+
+#[test]
 fn colorscheme_picker_mouse_dismiss_keeps_options_menu_open() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);

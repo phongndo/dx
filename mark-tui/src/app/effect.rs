@@ -2,6 +2,7 @@ use super::{
     DiffApp, OptionsDraft, OptionsMenuItem, persist_options_menu_draft_to_path,
     write_osc52_clipboard,
 };
+use crate::render::compositor::ComponentEventResult;
 use crate::toast::ToastLevel;
 use mark_core::MarkResult;
 use std::io;
@@ -46,6 +47,15 @@ impl ActionOutcome {
         Self {
             consumed: true,
             effects: vec![effect],
+        }
+    }
+
+    pub(crate) fn from_component_event_result(result: ComponentEventResult) -> Self {
+        match result {
+            ComponentEventResult::Ignored => Self::ignored(),
+            ComponentEventResult::Consumed => Self::consumed(),
+            ComponentEventResult::Effect(effect) => Self::effect(effect),
+            ComponentEventResult::Quit => Self::effect(AppEffect::Quit),
         }
     }
 

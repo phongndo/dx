@@ -169,8 +169,10 @@ pub(crate) fn handle_event(
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
         Event::Key(key) => handle_key_event(app, key, live_diff, events),
         Event::Mouse(mouse) => {
-            app.handle_mouse(mouse)?;
-            Ok(false)
+            let outcome = app.handle_mouse_with_effects(mouse)?;
+            let should_quit = outcome.clone().into_legacy_quit().unwrap_or(false);
+            run_event_effects(app, outcome.effects, live_diff, events)?;
+            Ok(should_quit)
         }
         Event::FocusLost => {
             app.clear_diff_mouse_hover();

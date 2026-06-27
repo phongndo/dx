@@ -1,11 +1,9 @@
 use crossterm::event::MouseEvent;
 use mark_core::MarkResult;
 
-use crate::{
-    app::DiffApp,
-    render::compositor::{
-        ComponentEventResult, ComponentId, EventComponent, route_event_through_layers,
-    },
+use super::{ActionOutcome, DiffApp};
+use crate::render::compositor::{
+    ComponentEventResult, ComponentId, EventComponent, route_event_through_layers,
 };
 
 mod annotation_clicks;
@@ -142,8 +140,20 @@ fn handle_diff_mouse_layer(
 }
 
 impl DiffApp {
+    pub(crate) fn handle_mouse_with_effects(
+        &mut self,
+        mouse: MouseEvent,
+    ) -> MarkResult<ActionOutcome> {
+        let mut outcome =
+            ActionOutcome::from_component_event_result(route_mouse_through_layers(self, mouse)?);
+        outcome.effects.extend(self.take_queued_effects());
+        Ok(outcome)
+    }
+
+    #[cfg(test)]
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> MarkResult<()> {
-        route_mouse_through_layers(self, mouse).map(|_| ())
+        let outcome = self.handle_mouse_with_effects(mouse)?;
+        self.run_effects(outcome.effects)
     }
 }
 

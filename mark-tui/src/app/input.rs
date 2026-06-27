@@ -1,15 +1,13 @@
 mod event_context;
 mod layers;
 
-use super::{ActionOutcome, AppAction, AppEffect, DiffApp, NORMAL_GLOBAL_ACTIONS};
+use super::{ActionOutcome, AppAction, DiffApp, NORMAL_GLOBAL_ACTIONS};
 use crate::keymap::{GlobalAction, KeyPress, MenuAction};
 use crate::text_input::{TextInputKeyResult, handle_text_input_key};
 use crossterm::event::{KeyCode, KeyEvent};
 use mark_core::MarkResult;
 
 use layers::route_key_through_layers;
-
-use crate::render::compositor::ComponentEventResult;
 
 impl DiffApp {
     #[cfg(test)]
@@ -21,12 +19,8 @@ impl DiffApp {
     }
 
     pub(crate) fn handle_key_with_effects(&mut self, key: KeyEvent) -> MarkResult<ActionOutcome> {
-        let mut outcome = match route_key_through_layers(self, key)? {
-            ComponentEventResult::Ignored => ActionOutcome::ignored(),
-            ComponentEventResult::Consumed => ActionOutcome::consumed(),
-            ComponentEventResult::Effect(effect) => ActionOutcome::effect(effect),
-            ComponentEventResult::Quit => ActionOutcome::effect(AppEffect::Quit),
-        };
+        let mut outcome =
+            ActionOutcome::from_component_event_result(route_key_through_layers(self, key)?);
         outcome.effects.extend(self.take_queued_effects());
         Ok(outcome)
     }
