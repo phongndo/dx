@@ -12,15 +12,23 @@ use std::{
     },
 };
 
-#[cfg(unix)]
-use std::os::fd::OwnedFd;
-
 use mark_core::MarkError;
 
 use crate::{
     CliResult,
     args::{PagerArgs, PagerLayoutArg},
     write_stderr, write_stdout_bytes,
+};
+
+mod env_state;
+mod terminal;
+
+use env_state::PagerEnv;
+#[cfg(test)]
+use terminal::strip_terminal_escapes;
+use terminal::{
+    attach_controlling_terminal_to_stdin, controlling_terminal_available, csi_escape_end,
+    sanitized_terminal_bytes,
 };
 
 const DEFAULT_TEXT_PAGER: &str = "less -R";
@@ -936,163 +944,6 @@ fn sgr_escape_is_reset(escape: &[u8]) -> bool {
         || parameters
             .split(|byte| *byte == b';')
             .all(|parameter| parameter.is_empty() || parameter.iter().all(|byte| *byte == b'0'))
-}
-
-fn sanitized_terminal_bytes(input: &[u8]) -> Vec<u8> {
-    let stripped = strip_terminal_escapes(input);
-    let text = String::from_utf8_lossy(&stripped);
-    let mut output = String::with_capacity(text.len());
-    for character in text.chars() {
-        if character.is_control() && !matches!(character, '\n' | '\t') {
-            output.extend(character.escape_default());
-        } else {
-            output.push(character);
-        }
-    }
-    output.into_bytes()
-}
-
-fn strip_terminal_escapes(input: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(input.len());
-    let mut index = 0;
-    while index < input.len() {
-        match input[index] {
-            0x1b => {
-                if let Some(end) = escape_end(input, index) {
-                    index = end;
-                } else {
-                    output.push(input[index]);
-                    index += 1;
-                }
-            }
-            byte => {
-                output.push(byte);
-                index += 1;
-            }
-        }
-    }
-    output
-}
-
-fn escape_end(input: &[u8], index: usize) -> Option<usize> {
-    let introducer = input.get(index + 1).copied()?;
-    let payload = index + 2;
-    match introducer {
-        b'[' => csi_escape_end(input, payload),
-        b']' | b'P' | b'^' | b'_' | b'X' => string_escape_end(input, payload),
-        0x20..=0x2f => input
-            .get(payload)
-            .filter(|byte| (0x30..=0x7e).contains(*byte))
-            .map(|_| payload + 1),
-        0x30..=0x7e => Some(payload),
-        _ => None,
-    }
-}
-
-fn csi_escape_end(input: &[u8], mut index: usize) -> Option<usize> {
-    let mut seen_intermediate = false;
-    while let Some(byte) = input.get(index).copied() {
-        match byte {
-            0x30..=0x3f if !seen_intermediate => index += 1,
-            0x20..=0x2f => {
-                seen_intermediate = true;
-                index += 1;
-            }
-            0x40..=0x7e => return Some(index + 1),
-            _ => return None,
-        }
-    }
-    None
-}
-
-fn string_escape_end(input: &[u8], mut index: usize) -> Option<usize> {
-    while let Some(byte) = input.get(index).copied() {
-        match byte {
-            0x07 => return Some(index + 1),
-            b'\n' | b'\r' => return None,
-            0x1b if input.get(index + 1) == Some(&b'\\') => return Some(index + 2),
-            0x1b => return None,
-            _ => index += 1,
-        }
-    }
-    None
-}
-
-#[cfg(unix)]
-fn controlling_terminal_available() -> bool {
-    OpenOptions::new().read(true).open("/dev/tty").is_ok()
-}
-
-#[cfg(not(unix))]
-fn controlling_terminal_available() -> bool {
-    false
-}
-
-#[cfg(unix)]
-fn attach_controlling_terminal_to_stdin() -> io::Result<Option<StdinOverride>> {
-    if io::stdin().is_terminal() {
-        return Ok(None);
-    }
-
-    let stdin = io::stdin();
-    let original = rustix::io::dup(&stdin).map_err(io::Error::from)?;
-    let tty = OpenOptions::new().read(true).write(true).open("/dev/tty")?;
-    rustix::stdio::dup2_stdin(&tty).map_err(io::Error::from)?;
-    Ok(Some(StdinOverride { original }))
-}
-
-#[cfg(not(unix))]
-fn attach_controlling_terminal_to_stdin() -> io::Result<Option<StdinOverride>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "attaching redirected pager stdin to the controlling terminal is unsupported on this platform",
-    ))
-}
-
-#[cfg(unix)]
-struct StdinOverride {
-    original: OwnedFd,
-}
-
-#[cfg(unix)]
-impl Drop for StdinOverride {
-    fn drop(&mut self) {
-        let _ = rustix::stdio::dup2_stdin(&self.original);
-    }
-}
-
-#[cfg(not(unix))]
-struct StdinOverride;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PagerEnv {
-    term: Option<OsString>,
-    lv: Option<OsString>,
-    git_pager: Option<OsString>,
-    has_lazygit_env: bool,
-}
-
-impl PagerEnv {
-    fn current() -> Self {
-        Self {
-            term: env::var_os("TERM"),
-            lv: env::var_os("LV"),
-            git_pager: env::var_os("GIT_PAGER"),
-            has_lazygit_env: env::vars_os()
-                .any(|(key, _)| key.to_string_lossy().starts_with("LAZYGIT")),
-        }
-    }
-
-    fn term_is_dumb(&self) -> bool {
-        self.term.as_deref() == Some(std::ffi::OsStr::new("dumb"))
-    }
-
-    fn is_captured_pager_host(&self) -> bool {
-        self.term_is_dumb()
-            && (self.lv.as_deref() == Some(std::ffi::OsStr::new("-c"))
-                || self.git_pager.is_some()
-                || self.has_lazygit_env)
-    }
 }
 
 #[cfg(test)]
