@@ -1,4 +1,30 @@
-use super::*;
+use super::{
+    AnnotationState, AppConfigState, ColorSchemeChoice, DiffApp, DocumentState,
+    ERROR_LOG_DEFAULT_HEIGHT, FileSidebarState, FilterState, InputState, JobState, MouseScroll,
+    NotificationState, OptionsDraft, OverlayState, ReferenceState, RuntimeState, SyntaxStartupMode,
+    ViewportState, color_scheme_from_config, layout_override_from_setting,
+    layout_setting_from_override, show_rev_from_options,
+};
+use crate::annotation::AnnotationStore;
+use crate::controls::{
+    DiffLayoutMode, branch_head_from_options, comparison_branches, comparison_commits,
+    current_head_label, default_branch_base,
+};
+use crate::keymap::Keymap;
+use crate::model::{UiModel, UiRow};
+use crate::render::snapshot::HitMap;
+use crate::search::DiffSearchIndex;
+use crate::selector::SelectorState;
+use crate::syntax::{LruCache, SyntaxRuntime};
+use crate::theme::{DiffTheme, MAX_INLINE_DIFF_CACHE_ENTRIES, diff_theme_from_config};
+use crate::toast::Toasts;
+use mark_core::MarkResult;
+use mark_diff::{Changeset, DiffOptions};
+use mark_syntax::SyntaxSettings;
+use ratatui::layout::Rect;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 pub(crate) fn load_syntax_settings_for_diff(
     load_user_settings: bool,
@@ -326,6 +352,7 @@ impl DiffApp {
                 terminal_clear_requested: false,
                 dirty: true,
                 hit_map: HitMap::default(),
+                pending_effects: Vec::new(),
             },
         }
     }

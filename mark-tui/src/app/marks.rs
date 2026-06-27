@@ -1,4 +1,13 @@
-use super::*;
+use super::{DiffApp, MarkExport, json_string};
+use crate::annotation::{AnnotationKey, AnnotationSide, paired_old_line_for_addition};
+use crate::model::{UiModel, UiRow};
+use crate::syntax::{DiffSide, available_context_lines};
+use std::collections::HashSet;
+
+#[cfg(test)]
+use super::write_osc52_clipboard;
+#[cfg(test)]
+use std::io::Write;
 
 impl DiffApp {
     #[cfg(test)]

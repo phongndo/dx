@@ -1,4 +1,9 @@
-use super::*;
+use super::DiffApp;
+use crate::model::{ContextSourceKey, UiRow};
+use crate::syntax::{DiffSide, SyntaxPosition, SyntaxPriority, SyntaxRuntime, unified_syntax_side};
+use crate::theme::{MAX_SYNTAX_RESULTS_PER_FRAME, SyntaxBenchmarkReport};
+use mark_syntax::HighlightedLine;
+use std::collections::HashSet;
 
 impl DiffApp {
     pub(crate) fn prepare_syntax_for_viewport(&mut self, visible_rows: usize) {
@@ -181,7 +186,7 @@ impl DiffApp {
     }
 
     pub(crate) fn syntax_prefetch_paused(&self) -> bool {
-        self.filters.filter_input.is_some()
+        self.filters.input_open()
     }
 
     pub(crate) fn syntax_line(

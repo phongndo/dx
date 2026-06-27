@@ -1,21 +1,9 @@
-#[cfg(test)]
-use std::io::BufReader;
-#[cfg(test)]
-use std::sync::Arc;
+use mark_core::{MarkError, MarkResult};
 use std::{
     borrow::Cow,
-    env, fs,
-    io::{self, ErrorKind, Read, Write},
+    fs,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{self, Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-use mark_core::{MarkError, MarkResult};
-use mark_git::{
-    existing_commitish_revision, existing_object_revision, merge_base_revision,
-    range_right_operand_is_pathspec, revision_expression_exists, show_target,
-    worktree_base_revision,
 };
 
 const STREAM_BUFFER_BYTES: usize = 1024 * 1024;
@@ -38,7 +26,7 @@ use git_io::{
 pub use parser::parse_patch;
 #[cfg(test)]
 use stats::parse_patch_stats;
-use stats::{PatchFileStat, PatchStats, patch_stats, render_patch_stats, terminal_safe_text};
+use stats::{patch_stats, render_patch_stats, terminal_safe_text};
 pub use types::{
     Changeset, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffOptions, DiffRowRef, DiffScope,
     DiffSource, DiffStats, DiffViewModel, FileStatus, PatchSource,

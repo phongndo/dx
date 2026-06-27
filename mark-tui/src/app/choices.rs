@@ -1,4 +1,12 @@
-use super::*;
+use super::{DiffApp, diff_choice_for_options, rect_contains};
+use crate::controls::{
+    BranchMenu, DiffChoice, branch_match_score, current_head_label, default_branch_base,
+    is_review_options,
+};
+use crate::render::menus::{color_scheme_picker_block, diff_menu_block};
+use crate::selector::{SelectorController, SelectorMovement};
+use crossterm::event::KeyEvent;
+use mark_diff::{DiffOptions, DiffScope, DiffSource};
 
 impl DiffApp {
     pub(crate) fn diff_choice_at(&self, column: u16, row: u16) -> Option<DiffChoice> {

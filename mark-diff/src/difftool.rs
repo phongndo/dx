@@ -1,6 +1,12 @@
-use super::*;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-use crate::git_io::git_error;
+use mark_core::{MarkError, MarkResult};
+
+use crate::{DiffOptions, git_io::git_error};
 
 pub(super) fn difftool_workdir(options: &DiffOptions) -> MarkResult<PathBuf> {
     options

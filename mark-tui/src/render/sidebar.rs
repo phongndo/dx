@@ -69,12 +69,11 @@ pub(crate) fn file_sidebar_desired_width(app: &DiffApp) -> u16 {
     desired.clamp(FILE_SIDEBAR_MIN_WIDTH, FILE_SIDEBAR_MAX_WIDTH)
 }
 
-pub(crate) fn draw_file_sidebar(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
+pub(crate) fn draw_file_sidebar(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    app.clamp_file_sidebar_scroll(area.height as usize);
     frame.render_widget(
         Paragraph::new(Text::from(file_sidebar_lines(
             app,

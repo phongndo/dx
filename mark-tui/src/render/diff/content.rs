@@ -1,4 +1,20 @@
-use super::*;
+use mark_diff::DiffLineKind;
+use mark_syntax::{DiffBackground, HighlightedLine, SyntaxClass};
+use ratatui::prelude::{Color, Modifier, Span, Style};
+
+use crate::{
+    render::{
+        style::{diff_indicator_span, diff_sign_style, focused_diff_indicator_span},
+        text::{fit, fit_padded, fit_padded_from, fit_with_width, skip_display_prefix, spaces},
+    },
+    syntax::InlineRange,
+    theme::{
+        DiffTheme, EMPTY_DIFF_FILL, EMPTY_DIFF_FILL_SPACING, GUTTER_WIDTH, UNIFIED_GUTTER_WIDTH,
+        line_gutter_bg, line_gutter_fg,
+    },
+};
+
+use super::line_style;
 
 pub(crate) fn diff_indicator_span_for_focus(
     kind: DiffLineKind,

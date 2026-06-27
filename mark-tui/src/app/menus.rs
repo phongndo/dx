@@ -1,4 +1,4 @@
-use super::*;
+use super::DiffApp;
 
 impl DiffApp {
     pub(crate) fn toggle_diff_menu(&mut self) {
@@ -26,21 +26,14 @@ impl DiffApp {
     }
 
     pub(crate) fn close_diff_menu(&mut self) {
-        if self.overlays.diff_menu_open
-            || !self.overlays.diff_menu.input.is_empty()
-            || self.overlays.rendered_diff_menu_area.is_some()
-        {
-            self.overlays.diff_menu_open = false;
-            self.overlays.diff_menu.reset_input();
-            self.set_rendered_diff_menu_area(None);
+        if self.overlays.close_diff_menu() {
+            self.runtime.hit_map.diff_menu_area = None;
             self.runtime.dirty = true;
         }
     }
 
     pub(crate) fn open_review_input(&mut self) {
-        self.overlays.review_input.clear();
-        self.overlays.review_input_cursor = 0;
-        self.overlays.review_input_open = true;
+        self.overlays.open_review_input();
         self.overlays.diff_menu_open = false;
         self.overlays.diff_menu.reset_input();
         self.set_rendered_diff_menu_area(None);
@@ -53,14 +46,8 @@ impl DiffApp {
     }
 
     pub(crate) fn close_review_input(&mut self) {
-        if self.overlays.review_input_open
-            || !self.overlays.review_input.is_empty()
-            || self.overlays.rendered_review_input_area.is_some()
-        {
-            self.overlays.review_input_open = false;
-            self.overlays.review_input.clear();
-            self.overlays.review_input_cursor = 0;
-            self.set_rendered_review_input_area(None);
+        if self.overlays.close_review_input() {
+            self.runtime.hit_map.review_input_area = None;
             self.runtime.dirty = true;
         }
     }

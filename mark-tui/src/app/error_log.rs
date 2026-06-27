@@ -1,4 +1,9 @@
-use super::*;
+use super::{DiffApp, ERROR_LOG_DEFAULT_HEIGHT, ERROR_LOG_MAX_HEIGHT, ERROR_LOG_MIN_HEIGHT};
+
+#[cfg(test)]
+use super::write_osc52_clipboard;
+#[cfg(test)]
+use std::io::Write;
 
 impl DiffApp {
     pub(crate) fn set_error_log(&mut self, text: impl Into<String>) {
@@ -9,7 +14,7 @@ impl DiffApp {
 
     pub(crate) fn close_error_log(&mut self) -> bool {
         if self.notifications.error_log.take().is_some() {
-            self.input.key_prefix_pending = None;
+            self.input.clear_key_prefix();
             self.notifications.error_log_resizing = false;
             self.set_rendered_error_log_separator_row(None);
             self.runtime.dirty = true;

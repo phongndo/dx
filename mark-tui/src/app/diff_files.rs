@@ -1,4 +1,8 @@
-use super::*;
+use super::EditorReloadRequest;
+use crate::controls::DiffLayoutMode;
+use crate::theme::{GUTTER_WIDTH, UNIFIED_GUTTER_WIDTH};
+use std::path::{Path, PathBuf};
+use unicode_width::UnicodeWidthChar;
 
 pub(crate) fn repo_relative_path(repo: &Path, path: &Path) -> Option<PathBuf> {
     path.strip_prefix(repo).ok().map(Path::to_path_buf)

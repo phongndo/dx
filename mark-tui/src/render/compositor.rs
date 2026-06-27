@@ -1,37 +1,33 @@
 use mark_core::MarkResult;
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::DiffApp;
+use crate::app::AppEffect;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ComponentEventResult {
     Ignored,
     Consumed,
+    Effect(AppEffect),
     Quit,
 }
 
-pub(crate) type EventHandler<E> = fn(E, &mut DiffApp) -> MarkResult<ComponentEventResult>;
+pub(crate) trait EventComponent<E, Ctx: ?Sized>: Sync {
+    fn id(&self) -> ComponentId;
 
-#[derive(Clone, Copy)]
-pub(crate) struct EventLayer<E> {
-    id: ComponentId,
-    handle: EventHandler<E>,
+    fn handle_event(&self, event: E, ctx: &mut Ctx) -> MarkResult<ComponentEventResult>;
 }
 
-impl<E> EventLayer<E> {
-    pub(crate) const fn new(id: ComponentId, handle: EventHandler<E>) -> Self {
-        Self { id, handle }
-    }
-}
-
-pub(crate) fn route_event_through_layers<E: Copy>(
-    layers: &[EventLayer<E>],
+pub(crate) fn route_event_through_layers<E: Copy, Ctx: ?Sized, C>(
+    layers: &[C],
     event: E,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
+    ctx: &mut Ctx,
+) -> MarkResult<ComponentEventResult>
+where
+    C: EventComponent<E, Ctx>,
+{
     for layer in layers.iter().rev() {
-        let _component_id = layer.id;
-        let result = (layer.handle)(event, app)?;
+        let _component_id = layer.id();
+        let result = layer.handle_event(event, ctx)?;
         if !matches!(result, ComponentEventResult::Ignored) {
             return Ok(result);
         }
@@ -48,6 +44,7 @@ pub(crate) enum ComponentId {
     Toasts,
     AnnotationDraftBindings,
     QuitKey,
+    EditorShortcut,
     MouseScrollReset,
     FilterInput,
     AnnotationInput,
@@ -61,6 +58,7 @@ pub(crate) enum ComponentId {
     ErrorLog,
     Prefix,
     GlobalAction,
+    OpenMenuKey,
     ErrorLogResize,
     Navigation,
     OpenMenuScroll,
@@ -68,44 +66,33 @@ pub(crate) enum ComponentId {
     DiffView,
 }
 
-pub(crate) struct AppCtx<'a> {
-    app: &'a mut DiffApp,
+pub(crate) trait RenderContext {
+    fn render_rect_component(&mut self, frame: &mut Frame<'_>, id: ComponentId, area: Rect);
 }
 
-impl<'a> AppCtx<'a> {
-    pub(crate) fn new(app: &'a mut DiffApp) -> Self {
-        Self { app }
-    }
-
-    pub(crate) fn app(&mut self) -> &mut DiffApp {
-        self.app
-    }
-}
-
-pub(crate) trait UiComponent {
+pub(crate) trait UiComponent<Ctx: ?Sized> {
     fn id(&self) -> ComponentId;
 
-    fn render(&mut self, _frame: &mut Frame<'_>, _ctx: &mut AppCtx<'_>) {}
+    fn render(&mut self, _frame: &mut Frame<'_>, _ctx: &mut Ctx) {}
 }
 
-pub(crate) struct Compositor<'a> {
-    layers: Vec<Box<dyn UiComponent + 'a>>,
+pub(crate) struct Compositor<'a, Ctx: ?Sized> {
+    layers: Vec<Box<dyn UiComponent<Ctx> + 'a>>,
 }
 
-impl<'a> Compositor<'a> {
+impl<'a, Ctx: ?Sized> Compositor<'a, Ctx> {
     pub(crate) fn new() -> Self {
         Self { layers: Vec::new() }
     }
 
-    pub(crate) fn push(&mut self, layer: impl UiComponent + 'a) {
+    pub(crate) fn push(&mut self, layer: impl UiComponent<Ctx> + 'a) {
         self.layers.push(Box::new(layer));
     }
 
-    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, app: &mut DiffApp) {
+    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, ctx: &mut Ctx) {
         for layer in &mut self.layers {
             let _component_id = layer.id();
-            let mut ctx = AppCtx::new(app);
-            layer.render(frame, &mut ctx);
+            layer.render(frame, ctx);
         }
     }
 }
@@ -113,25 +100,20 @@ impl<'a> Compositor<'a> {
 pub(crate) struct RectComponent {
     id: ComponentId,
     area: Rect,
-    render: fn(&mut Frame<'_>, &mut DiffApp, Rect),
 }
 
 impl RectComponent {
-    pub(crate) fn new(
-        id: ComponentId,
-        area: Rect,
-        render: fn(&mut Frame<'_>, &mut DiffApp, Rect),
-    ) -> Self {
-        Self { id, area, render }
+    pub(crate) fn new(id: ComponentId, area: Rect) -> Self {
+        Self { id, area }
     }
 }
 
-impl UiComponent for RectComponent {
+impl<Ctx: RenderContext + ?Sized> UiComponent<Ctx> for RectComponent {
     fn id(&self) -> ComponentId {
         self.id
     }
 
-    fn render(&mut self, frame: &mut Frame<'_>, ctx: &mut AppCtx<'_>) {
-        (self.render)(frame, ctx.app(), self.area);
+    fn render(&mut self, frame: &mut Frame<'_>, ctx: &mut Ctx) {
+        ctx.render_rect_component(frame, self.id, self.area);
     }
 }

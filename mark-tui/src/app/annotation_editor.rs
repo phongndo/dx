@@ -1,4 +1,10 @@
-use super::*;
+use super::AnnotationScratchFile;
+use mark_core::MarkResult;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::Path;
+use std::{fs, io, process};
 
 pub(crate) fn normalize_annotation_editor_contents(contents: &str) -> String {
     contents
@@ -41,7 +47,7 @@ fn write_annotation_scratch_file(path: &Path, contents: &str) -> io::Result<()> 
 
 #[cfg(test)]
 mod annotation_editor_tests {
-    use super::*;
+    use super::normalize_annotation_editor_contents;
 
     #[test]
     fn annotation_editor_contents_normalize_crlf_line_endings() {
@@ -66,9 +72,10 @@ mod annotation_editor_tests {
 
 #[cfg(all(test, unix))]
 mod annotation_scratch_tests {
+    use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
 
-    use super::*;
+    use super::create_annotation_scratch_file;
 
     #[test]
     fn annotation_scratch_file_is_private_and_removed_on_drop() {

@@ -1,286 +1,28 @@
-use super::*;
-use crate::render::compositor::{
-    ComponentEventResult, ComponentId, EventLayer, route_event_through_layers,
-};
+mod event_context;
+mod layers;
 
-type KeyLayer = EventLayer<KeyEvent>;
+use super::{ActionOutcome, AppAction, DiffApp, NORMAL_GLOBAL_ACTIONS};
+use crate::keymap::{GlobalAction, KeyPress, MenuAction};
+use crate::text_input::{TextInputKeyResult, handle_text_input_key};
+use crossterm::event::{KeyCode, KeyEvent};
+use mark_core::MarkResult;
 
-const KEY_LAYERS: &[KeyLayer] = &[
-    KeyLayer::new(ComponentId::Navigation, handle_navigation_key_layer),
-    KeyLayer::new(
-        ComponentId::ErrorLogResize,
-        handle_error_log_resize_key_layer,
-    ),
-    KeyLayer::new(ComponentId::Prefix, handle_prefix_start_key_layer),
-    KeyLayer::new(ComponentId::GlobalAction, handle_single_global_key_layer),
-    KeyLayer::new(ComponentId::Prefix, handle_pending_prefix_key_layer),
-    KeyLayer::new(ComponentId::ErrorLog, handle_error_log_close_key_layer),
-    KeyLayer::new(ComponentId::OptionsMenu, handle_options_menu_key_layer),
-    KeyLayer::new(
-        ComponentId::ColorSchemePicker,
-        handle_color_scheme_picker_key_layer,
-    ),
-    KeyLayer::new(ComponentId::DiffMenu, handle_diff_menu_key_layer),
-    KeyLayer::new(ComponentId::ReviewInput, handle_review_input_key_layer),
-    KeyLayer::new(ComponentId::CommitMenu, handle_commit_menu_key_layer),
-    KeyLayer::new(ComponentId::BranchMenu, handle_branch_menu_key_layer),
-    KeyLayer::new(ComponentId::HelpMenu, handle_help_menu_key_layer),
-    KeyLayer::new(
-        ComponentId::AnnotationInput,
-        handle_annotation_input_key_layer,
-    ),
-    KeyLayer::new(ComponentId::FilterInput, handle_filter_input_key_layer),
-    KeyLayer::new(
-        ComponentId::MouseScrollReset,
-        handle_mouse_scroll_reset_key_layer,
-    ),
-    KeyLayer::new(ComponentId::QuitKey, handle_quit_key_layer),
-    KeyLayer::new(
-        ComponentId::AnnotationDraftBindings,
-        handle_annotation_save_or_cancel_key_layer,
-    ),
-];
-
-fn key_route_result(should_quit: bool) -> ComponentEventResult {
-    if should_quit {
-        ComponentEventResult::Quit
-    } else {
-        ComponentEventResult::Consumed
-    }
-}
-
-fn route_key_through_layers(app: &mut DiffApp, key: KeyEvent) -> MarkResult<ComponentEventResult> {
-    route_event_through_layers(KEY_LAYERS, key, app)
-}
-
-fn handle_annotation_save_or_cancel_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    Ok(if app.handle_annotation_save_or_cancel_key(key) {
-        ComponentEventResult::Consumed
-    } else {
-        ComponentEventResult::Ignored
-    })
-}
-
-fn handle_quit_key_layer(key: KeyEvent, _app: &mut DiffApp) -> MarkResult<ComponentEventResult> {
-    Ok(if is_quit_key(key) {
-        ComponentEventResult::Quit
-    } else {
-        ComponentEventResult::Ignored
-    })
-}
-
-fn handle_mouse_scroll_reset_key_layer(
-    _key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    app.input.mouse_scroll.reset();
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_filter_input_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    Ok(
-        if app.filters.filter_input.is_some() && app.handle_filter_input_key(key) {
-            ComponentEventResult::Consumed
-        } else {
-            ComponentEventResult::Ignored
-        },
-    )
-}
-
-fn handle_annotation_input_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    Ok(
-        if app.annotations_state.annotation_draft.is_some() && app.handle_annotation_input_key(key)
-        {
-            ComponentEventResult::Consumed
-        } else {
-            ComponentEventResult::Ignored
-        },
-    )
-}
-
-fn handle_help_menu_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.overlays.help_menu_open {
-        return app.handle_help_menu_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_branch_menu_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.refs.branch_menu_open.is_some() {
-        return app.handle_branch_menu_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_commit_menu_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.refs.commit_menu_open {
-        return app.handle_commit_menu_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_review_input_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.overlays.review_input_open {
-        return app.handle_review_input_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_diff_menu_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.overlays.diff_menu_open {
-        return app.handle_diff_menu_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_color_scheme_picker_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.overlays.color_scheme_picker_open {
-        return app
-            .handle_color_scheme_picker_key(key)
-            .map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_options_menu_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.overlays.options_menu_open && !app.overlays.color_scheme_picker_open {
-        return app.handle_options_menu_key(key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_error_log_close_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    Ok(if key.code == KeyCode::Esc && app.close_error_log() {
-        ComponentEventResult::Consumed
-    } else {
-        ComponentEventResult::Ignored
-    })
-}
-
-fn handle_pending_prefix_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if let Some(prefix) = app.input.key_prefix_pending.take() {
-        return app.handle_prefix_key(prefix, key).map(key_route_result);
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_single_global_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    match app.handle_single_global_key(key)? {
-        Some(should_quit) => Ok(key_route_result(should_quit)),
-        None => Ok(ComponentEventResult::Ignored),
-    }
-}
-
-fn handle_prefix_start_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    Ok(if app.config.keymap.is_prefix(key) {
-        app.input.key_prefix_pending = Some(KeyPress::from(key));
-        app.runtime.dirty = true;
-        ComponentEventResult::Consumed
-    } else {
-        ComponentEventResult::Ignored
-    })
-}
-
-fn handle_error_log_resize_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    if app.notifications.error_log.is_some() {
-        match key.code {
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                app.resize_error_log(1);
-                return Ok(ComponentEventResult::Consumed);
-            }
-            KeyCode::Char('-') => {
-                app.resize_error_log(-1);
-                return Ok(ComponentEventResult::Consumed);
-            }
-            _ => {}
-        }
-    }
-    Ok(ComponentEventResult::Ignored)
-}
-
-fn handle_navigation_key_layer(
-    key: KeyEvent,
-    app: &mut DiffApp,
-) -> MarkResult<ComponentEventResult> {
-    match key.code {
-        KeyCode::Esc if app.filters_active() => app.clear_all_filters(),
-        KeyCode::Down | KeyCode::Char('j') => app.scroll_or_focus_hunk(1),
-        KeyCode::Up | KeyCode::Char('k') => app.scroll_or_focus_hunk(-1),
-        KeyCode::Left | KeyCode::Char('h') => {
-            app.scroll_horizontally_by(-(HORIZONTAL_SCROLL_STEP as isize));
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            app.scroll_horizontally_by(HORIZONTAL_SCROLL_STEP as isize);
-        }
-        KeyCode::PageDown => app.scroll_or_focus_hunk(20),
-        KeyCode::Char('d') if is_plain_char_key(key, 'd') => app.scroll_or_focus_hunk(20),
-        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.scroll_or_focus_hunk(20);
-        }
-        KeyCode::PageUp | KeyCode::Char('u') => app.scroll_or_focus_hunk(-20),
-        KeyCode::Home => app.set_scroll(0),
-        KeyCode::Char('g') if is_plain_char_key(key, 'g') => app.set_scroll(0),
-        KeyCode::End | KeyCode::Char('G') => app.set_scroll(app.max_scroll()),
-        KeyCode::Char('n') if !app.filters.grep_filter.is_empty() => app.move_grep_match(1),
-        KeyCode::Char('p') | KeyCode::Char('N') if !app.filters.grep_filter.is_empty() => {
-            app.move_grep_match(-1);
-        }
-        KeyCode::Char('n') | KeyCode::Char('p') | KeyCode::Char('N') => {}
-        _ => return Ok(ComponentEventResult::Ignored),
-    }
-
-    Ok(ComponentEventResult::Consumed)
-}
+use layers::route_key_through_layers;
 
 impl DiffApp {
+    #[cfg(test)]
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
-        route_key_through_layers(self, key)
-            .map(|result| matches!(result, ComponentEventResult::Quit))
+        let outcome = self.handle_key_with_effects(key)?;
+        let legacy = outcome.clone().into_legacy_quit().unwrap_or(false);
+        self.run_effects(outcome.effects)?;
+        Ok(legacy)
+    }
+
+    pub(crate) fn handle_key_with_effects(&mut self, key: KeyEvent) -> MarkResult<ActionOutcome> {
+        let mut outcome =
+            ActionOutcome::from_component_event_result(route_key_through_layers(self, key)?);
+        outcome.effects.extend(self.take_queued_effects());
+        Ok(outcome)
     }
 
     pub(crate) fn handle_single_global_key(&mut self, key: KeyEvent) -> MarkResult<Option<bool>> {
@@ -298,7 +40,7 @@ impl DiffApp {
         prefix: KeyPress,
         key: KeyEvent,
     ) -> MarkResult<bool> {
-        self.input.key_prefix_pending = None;
+        self.input.clear_key_prefix();
 
         if key.code == KeyCode::Esc {
             self.runtime.dirty = true;
@@ -480,14 +222,14 @@ impl DiffApp {
     }
 
     pub(crate) fn editor_shortcut_available(&self) -> bool {
-        self.filters.filter_input.is_none()
-            && !self.overlays.help_menu_open
-            && self.refs.branch_menu_open.is_none()
-            && !self.overlays.diff_menu_open
-            && !self.overlays.review_input_open
-            && !self.overlays.options_menu_open
+        !self.filters.input_open()
+            && !self.overlays.help_menu_is_open()
+            && !self.refs.branch_menu_is_open()
+            && !self.overlays.diff_menu_is_open()
+            && !self.overlays.review_input_is_open()
+            && !self.overlays.options_menu_is_open()
             && self.input.key_prefix_pending.is_none()
-            && !self.overlays.color_scheme_picker_open
-            && !self.refs.commit_menu_open
+            && !self.overlays.color_scheme_picker_is_open()
+            && !self.refs.commit_menu_is_open()
     }
 }

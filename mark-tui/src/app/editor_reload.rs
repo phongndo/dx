@@ -1,4 +1,17 @@
-use super::*;
+use super::{
+    DiffApp, EditorReloadBehavior, EditorReloadRequest, EditorReloadWorker, EditorScopedReload,
+    FocusedEditorLaunch, POST_EDITOR_QUIT_KEY_IGNORE, editor_reload_request_for_file,
+    find_rendered_diff_row_outward, repo_relative_path,
+};
+use crate::editor::{EditorTarget, configured_editor, open_editor, repo_file_path};
+use crate::live_diff::LiveDiff;
+use crate::model::UiRow;
+use crate::runtime;
+use mark_diff::DiffSource;
+use std::fs;
+use std::path::Path;
+use std::time::{Instant, SystemTime};
+use tokio::sync::oneshot;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -116,6 +129,14 @@ impl DiffApp {
         }
     }
 
+    pub(crate) fn open_editor_shortcut(&mut self, live_diff: Option<&mut Option<LiveDiff>>) {
+        if self.annotations_state.annotation_draft.is_some() {
+            self.open_annotation_draft_in_editor();
+        } else if let Some(editor) = self.prepare_focused_hunk_editor() {
+            self.open_prepared_hunk_in_editor(editor, live_diff);
+        }
+    }
+
     pub(super) fn prepare_focused_hunk_editor(&mut self) -> Option<FocusedEditorLaunch> {
         self.prepare_focused_hunk_editor_with(configured_editor())
     }
@@ -157,7 +178,7 @@ impl DiffApp {
         self.close_color_scheme_picker();
         self.close_review_input();
         self.close_branch_menu();
-        self.runtime.terminal_clear_requested = true;
+        self.runtime.request_terminal_clear();
         let mut paused_live_diff = false;
         if matches!(self.document.options.source, DiffSource::Worktree)
             && let Some(live_diff) = live_diff.as_mut().and_then(|live_diff| live_diff.as_mut())

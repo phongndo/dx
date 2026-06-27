@@ -1,15 +1,27 @@
-use super::*;
+use super::{
+    DiffApp, OptionsDraft, OptionsMenuItem, persist_options_menu_draft_to_path,
+    write_osc52_clipboard,
+};
+use crate::render::compositor::ComponentEventResult;
+use crate::toast::ToastLevel;
+use mark_core::MarkResult;
+use std::io;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AppEffect {
     Quit,
     Reload,
+    OpenEditorShortcut,
     OpenFocusedHunkInEditor,
     Toast(ToastLevel, String),
     CopyToClipboard {
         text: String,
         success_message: String,
         error_prefix: String,
+    },
+    PersistOptionsMenuDraft {
+        draft: OptionsDraft,
+        changed_item: OptionsMenuItem,
     },
 }
 
@@ -38,6 +50,15 @@ impl ActionOutcome {
         }
     }
 
+    pub(crate) fn from_component_event_result(result: ComponentEventResult) -> Self {
+        match result {
+            ComponentEventResult::Ignored => Self::ignored(),
+            ComponentEventResult::Consumed => Self::consumed(),
+            ComponentEventResult::Effect(effect) => Self::effect(effect),
+            ComponentEventResult::Quit => Self::effect(AppEffect::Quit),
+        }
+    }
+
     pub(crate) fn into_legacy_quit(self) -> Option<bool> {
         if self
             .effects
@@ -54,6 +75,14 @@ impl ActionOutcome {
 }
 
 impl DiffApp {
+    pub(crate) fn queue_effect(&mut self, effect: AppEffect) {
+        self.runtime.push_effect(effect);
+    }
+
+    pub(crate) fn take_queued_effects(&mut self) -> Vec<AppEffect> {
+        self.runtime.take_effects()
+    }
+
     pub(crate) fn run_effects(&mut self, effects: Vec<AppEffect>) -> MarkResult<()> {
         for effect in effects {
             self.run_effect(effect)?;
@@ -65,13 +94,17 @@ impl DiffApp {
         match effect {
             AppEffect::Quit => Ok(()),
             AppEffect::Reload => self.reload(),
+            AppEffect::OpenEditorShortcut => {
+                self.open_editor_shortcut(None);
+                Ok(())
+            }
             AppEffect::OpenFocusedHunkInEditor => {
                 self.open_focused_hunk_in_editor();
                 Ok(())
             }
             AppEffect::Toast(level, text) => {
-                if self.notifications.toasts.push(level, text) {
-                    self.runtime.dirty = true;
+                if self.notifications.push_toast(level, text) {
+                    self.runtime.mark_dirty();
                 }
                 Ok(())
             }
@@ -84,6 +117,27 @@ impl DiffApp {
                 match write_osc52_clipboard(&mut stdout, &text) {
                     Ok(()) => self.set_success_notice(success_message),
                     Err(error) => self.set_error_log(format!("{error_prefix}: {error}")),
+                }
+                Ok(())
+            }
+            AppEffect::PersistOptionsMenuDraft {
+                draft,
+                changed_item,
+            } => {
+                #[cfg(test)]
+                {
+                    self.config.last_persisted_options_menu_draft = Some((draft, changed_item));
+                }
+
+                if !self.config.settings_persistence_enabled {
+                    return Ok(());
+                }
+
+                let result = mark_syntax::settings_write_path().and_then(|path| {
+                    persist_options_menu_draft_to_path(&path, draft, changed_item)
+                });
+                if let Err(error) = result {
+                    self.set_error_log(format!("settings not saved: {error}"));
                 }
                 Ok(())
             }

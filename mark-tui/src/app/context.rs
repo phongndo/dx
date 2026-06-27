@@ -1,4 +1,12 @@
-use super::*;
+use super::{DiffApp, HunkFocusModelBehavior, HunkFocusScrollBehavior, MAX_LIVE_GREP_MATCHES};
+use crate::model::{ContextKey, ContextSourceEntry, ContextSourceKey, UiRow, context_expands_up};
+use crate::search::grep_match_rows;
+use crate::syntax::{
+    DiffSide, available_context_lines, full_file_source, load_full_file_source,
+    split_context_source_lines,
+};
+use std::sync::Arc;
+use unicode_width::UnicodeWidthStr;
 
 impl DiffApp {
     pub(super) fn context_source_line_count(&self, file: usize) -> Option<(DiffSide, usize)> {

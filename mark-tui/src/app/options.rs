@@ -1,4 +1,11 @@
-use super::*;
+use crate::controls::DiffLayoutMode;
+use mark_core::{MarkError, MarkResult};
+use mark_syntax::{
+    DiffContextExpansion, LayoutSetting, NotificationMode, SyntaxThemeConfig, SyntaxThemeSource,
+    ToastCorner,
+};
+use std::fs;
+use std::path::Path;
 
 fn cycle_choice<T: Copy + PartialEq>(choices: &[T], current: T, delta: isize) -> T {
     let current = choices

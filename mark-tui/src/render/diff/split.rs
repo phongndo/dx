@@ -1,4 +1,23 @@
-use super::*;
+use mark_diff::{DiffLine, DiffLineKind};
+use mark_syntax::HighlightedLine;
+use ratatui::prelude::{Line, Span, Style};
+use unicode_width::UnicodeWidthStr;
+
+use crate::{
+    app::{DiffApp, split_cell_content_width, wrapped_line_start_columns},
+    render::{
+        grep::{highlighted_grep_text_line, split_diff_line_grep_highlight_target},
+        style::base_bg,
+        text::spaces,
+    },
+    syntax::{DiffSide, InlineRange},
+    theme::{DiffTheme, GUTTER_WIDTH, line_gutter_bg},
+};
+
+use super::{
+    content_spans_at_scroll, diff_indicator_span_for_focus, empty_diff_fill_from, gutter_spans,
+    split_gutter_text,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SplitLineRender {

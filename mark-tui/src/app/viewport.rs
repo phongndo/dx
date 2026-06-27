@@ -1,4 +1,6 @@
-use super::*;
+use super::RenderedDiffRow;
+use crate::model::{UiModel, UiRow};
+use std::ops::Range;
 
 pub(crate) fn max_scroll_for_viewport(row_count: usize, viewport_rows: usize) -> usize {
     row_count.saturating_sub(viewport_rows.max(1))

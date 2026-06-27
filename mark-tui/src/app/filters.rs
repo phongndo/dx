@@ -1,4 +1,18 @@
-use super::*;
+use super::{
+    DiffApp, FILTER_DEBOUNCE, FilterWorker, HunkFocusModelBehavior, HunkFocusScrollBehavior,
+    MAX_LIVE_GREP_MATCHES,
+};
+use crate::controls::{DiffFilterKind, diff_stats_for_files};
+use crate::runtime;
+use crate::search::{DiffSearchResult, grep_match_rows};
+use crate::text_input::TextInputKeyResult;
+use crossterm::event::{KeyCode, KeyEvent};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::oneshot;
+
+#[cfg(not(test))]
+use super::PendingFilterApply;
 
 impl DiffApp {
     pub(crate) fn open_filter_input(&mut self, kind: DiffFilterKind) {
@@ -13,10 +27,10 @@ impl DiffApp {
         self.close_branch_menu();
 
         let had_filter =
-            !self.filter_query(kind).is_empty() || !self.filter_input_query(kind).is_empty();
-        self.filter_query_mut(kind).clear();
-        self.filter_input_query_mut(kind).clear();
-        *self.filter_input_cursor_mut(kind) = 0;
+            !self.filters.query(kind).is_empty() || !self.filters.input_query(kind).is_empty();
+        self.filters.query_mut(kind).clear();
+        self.filters.input_query_mut(kind).clear();
+        *self.filters.input_cursor_mut(kind) = 0;
         if had_filter {
             self.schedule_filter_change(kind, Duration::ZERO);
         } else {
@@ -38,7 +52,7 @@ impl DiffApp {
                 self.commit_filter_input(kind);
                 self.filters.filter_input = None;
             }
-            _ => match self.apply_filter_input_key(kind, key) {
+            _ => match self.filters.apply_input_key(kind, key) {
                 TextInputKeyResult::Edited => self.sync_filter_input(kind),
                 TextInputKeyResult::Moved => self.runtime.dirty = true,
                 TextInputKeyResult::Ignored | TextInputKeyResult::Handled => {}
@@ -48,70 +62,9 @@ impl DiffApp {
         true
     }
 
-    pub(crate) fn filter_query(&self, kind: DiffFilterKind) -> &str {
-        match kind {
-            DiffFilterKind::File => &self.filters.file_filter,
-            DiffFilterKind::Grep => &self.filters.grep_filter,
-        }
-    }
-
-    pub(crate) fn filter_query_mut(&mut self, kind: DiffFilterKind) -> &mut String {
-        match kind {
-            DiffFilterKind::File => &mut self.filters.file_filter,
-            DiffFilterKind::Grep => &mut self.filters.grep_filter,
-        }
-    }
-
-    pub(crate) fn filter_input_query(&self, kind: DiffFilterKind) -> &str {
-        match kind {
-            DiffFilterKind::File => &self.filters.file_filter_input,
-            DiffFilterKind::Grep => &self.filters.grep_filter_input,
-        }
-    }
-
-    pub(crate) fn filter_input_query_mut(&mut self, kind: DiffFilterKind) -> &mut String {
-        match kind {
-            DiffFilterKind::File => &mut self.filters.file_filter_input,
-            DiffFilterKind::Grep => &mut self.filters.grep_filter_input,
-        }
-    }
-
-    pub(crate) fn filter_input_cursor(&self, kind: DiffFilterKind) -> usize {
-        match kind {
-            DiffFilterKind::File => self.filters.file_filter_input_cursor,
-            DiffFilterKind::Grep => self.filters.grep_filter_input_cursor,
-        }
-    }
-
-    pub(crate) fn filter_input_cursor_mut(&mut self, kind: DiffFilterKind) -> &mut usize {
-        match kind {
-            DiffFilterKind::File => &mut self.filters.file_filter_input_cursor,
-            DiffFilterKind::Grep => &mut self.filters.grep_filter_input_cursor,
-        }
-    }
-
-    pub(super) fn apply_filter_input_key(
-        &mut self,
-        kind: DiffFilterKind,
-        key: KeyEvent,
-    ) -> TextInputKeyResult {
-        match kind {
-            DiffFilterKind::File => handle_text_input_key(
-                &mut self.filters.file_filter_input,
-                &mut self.filters.file_filter_input_cursor,
-                key,
-            ),
-            DiffFilterKind::Grep => handle_text_input_key(
-                &mut self.filters.grep_filter_input,
-                &mut self.filters.grep_filter_input_cursor,
-                key,
-            ),
-        }
-    }
-
     pub(crate) fn commit_filter_input(&mut self, kind: DiffFilterKind) {
-        let next = self.filter_input_query(kind).to_owned();
-        if self.filter_query(kind) == next {
+        let next = self.filters.input_query(kind).to_owned();
+        if self.filters.query(kind) == next {
             if self.jobs.pending_filter_apply.is_some() {
                 self.schedule_filter_change(kind, Duration::ZERO);
             }
@@ -119,41 +72,26 @@ impl DiffApp {
             return;
         }
 
-        *self.filter_query_mut(kind) = next;
+        *self.filters.query_mut(kind) = next;
         self.schedule_filter_change(kind, Duration::ZERO);
     }
 
     pub(crate) fn sync_filter_input(&mut self, kind: DiffFilterKind) {
-        let next = self.filter_input_query(kind).to_owned();
-        if self.filter_query(kind) == next {
+        let next = self.filters.input_query(kind).to_owned();
+        if self.filters.query(kind) == next {
             self.runtime.dirty = true;
             return;
         }
 
-        *self.filter_query_mut(kind) = next;
+        *self.filters.query_mut(kind) = next;
         self.schedule_filter_change(kind, FILTER_DEBOUNCE);
     }
 
     pub(crate) fn clear_all_filters(&mut self) {
-        self.filters.grep_matches.clear();
-        self.filters.grep_matches_truncated = false;
-        self.filters.selected_grep_match = None;
-
-        if self.filters.file_filter.is_empty() && self.filters.grep_filter.is_empty() {
-            self.filters.file_filter_input.clear();
-            self.filters.file_filter_input_cursor = 0;
-            self.filters.grep_filter_input.clear();
-            self.filters.grep_filter_input_cursor = 0;
+        if !self.filters.clear_all() {
             self.runtime.dirty = true;
             return;
         }
-
-        self.filters.file_filter.clear();
-        self.filters.file_filter_input.clear();
-        self.filters.file_filter_input_cursor = 0;
-        self.filters.grep_filter.clear();
-        self.filters.grep_filter_input.clear();
-        self.filters.grep_filter_input_cursor = 0;
         self.schedule_filter_apply(Duration::ZERO, false);
     }
 
@@ -371,10 +309,6 @@ impl DiffApp {
 
         self.ensure_annotation_draft_visible();
         self.runtime.dirty = true;
-    }
-
-    pub(crate) fn filters_active(&self) -> bool {
-        !self.filters.file_filter.is_empty() || !self.filters.grep_filter.is_empty()
     }
 
     #[cfg(test)]

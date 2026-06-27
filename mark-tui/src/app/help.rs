@@ -1,4 +1,11 @@
-use super::*;
+use super::DiffApp;
+use crate::controls::branch_match_score;
+use crate::keymap::MenuAction;
+use crate::render::menus::help_menu_list_visible_rows;
+use crate::text_input::{TextInputKeyResult, handle_text_input_key};
+use crate::theme::{HELP_MENU_ROWS, HelpMenuKey, HelpMenuRow};
+use crossterm::event::{KeyCode, KeyEvent};
+use mark_core::MarkResult;
 
 impl DiffApp {
     fn help_menu_line_scroll_delta(&self, key: KeyEvent) -> Option<isize> {
@@ -74,7 +81,7 @@ impl DiffApp {
         self.overlays.help_menu_input.clear();
         self.overlays.help_menu_input_cursor = 0;
         self.overlays.help_menu_scroll = 0;
-        self.input.key_prefix_pending = None;
+        self.input.clear_key_prefix();
         if self.overlays.help_menu_open {
             self.sync_help_menu_visible_rows();
         }
@@ -90,7 +97,7 @@ impl DiffApp {
             self.overlays.help_menu_input.clear();
             self.overlays.help_menu_input_cursor = 0;
             self.overlays.help_menu_scroll = 0;
-            self.input.key_prefix_pending = None;
+            self.input.clear_key_prefix();
             self.runtime.dirty = true;
         }
     }

@@ -1,17 +1,13 @@
-use mark_diff::{DiffLine, DiffLineKind};
-use mark_syntax::{DiffBackground, HighlightedLine, SyntaxClass};
 use ratatui::{
     Frame,
     layout::Rect,
-    prelude::{Color, Line, Modifier, Span, Style, Text},
+    prelude::{Line, Span, Style, Text},
     widgets::Paragraph,
 };
-use unicode_width::UnicodeWidthStr;
 
 use crate::{
     annotation::AnnotationKey,
-    app::{DiffApp, split_cell_content_width, unified_content_width, wrapped_line_start_columns},
-    controls::DiffLayoutMode,
+    app::DiffApp,
     model::UiRow,
     render::{
         annotations::{
@@ -19,35 +15,48 @@ use crate::{
             render_annotation_saved_block,
         },
         grep::{
-            diff_line_grep_highlight_text, grep_highlight_target_for_columns,
             grep_highlight_targets_for_row, highlighted_grep_text_line,
-            highlighted_mouse_diff_content_line, scrolled_text_byte_start,
-            split_diff_line_grep_highlight_target, unified_content_start_column,
+            highlighted_mouse_diff_content_line,
         },
         headers::{
             file_header_line, file_separator_line, hunk_header_line, hunk_header_line_with_focus,
         },
-        style::{base_bg, diff_indicator_span, diff_sign_style, focused_diff_indicator_span},
-        text::{
-            fit, fit_padded, fit_padded_from, fit_with_width, format_count, skip_display_prefix,
-            spaces,
-        },
+        style::base_bg,
+        text::fit_padded,
     },
-    syntax::{DiffSide, InlineRange, unified_syntax_side},
-    theme::{
-        DiffTheme, EMPTY_DIFF_FILL, EMPTY_DIFF_FILL_SPACING, GUTTER_WIDTH, UNIFIED_GUTTER_WIDTH,
-        line_gutter_bg, line_gutter_fg,
-    },
+    syntax::unified_syntax_side,
 };
 
 mod content;
+mod context;
 mod split;
-pub(crate) use content::*;
-pub(crate) use split::*;
+mod unified;
+pub(crate) use content::{
+    content_spans_at_scroll, diff_indicator_span_for_focus, empty_diff_fill_from, gutter_spans,
+};
+#[cfg(test)]
+pub(crate) use content::{inline_bg, syntax_fg};
+use content::{split_gutter_text, unified_gutter_text};
+#[cfg(test)]
+pub(crate) use context::render_split_context_line_wrapped;
+pub(crate) use context::{
+    context_expand_marker, context_hide_line, context_hide_marker, context_show_line,
+    render_context_line, render_context_line_wrapped,
+};
+#[cfg(test)]
+pub(crate) use split::{SplitCellRender, SplitSide, split_cell_spans_at_scroll};
+pub(crate) use split::{
+    SplitLineRender, render_split_line_with_focus, render_split_line_wrapped_with_focus,
+};
+pub(crate) use unified::{
+    line_style, render_unified_line_at_scroll_with_focus, render_unified_line_wrapped_with_focus,
+};
+#[cfg(test)]
+pub(crate) use unified::{render_unified_line_at_scroll, row_bg};
 
 pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
     if app.document.model.is_empty() {
-        let message = if app.filters_active() && !app.document.base_changeset.files.is_empty() {
+        let message = if app.filters.active() && !app.document.base_changeset.files.is_empty() {
             "No files match filters."
         } else {
             "No changes."
@@ -441,476 +450,4 @@ pub(crate) fn render_row_with_focus(
         line = highlighted_grep_text_line(line, &app.filters.grep_filter, targets, theme);
     }
     line
-}
-
-pub(crate) fn context_show_line(
-    lines: usize,
-    more: bool,
-    marker: &str,
-    width: usize,
-    theme: DiffTheme,
-) -> Line<'static> {
-    if width == 0 {
-        return Line::default();
-    }
-
-    let suffix = if lines == 1 { "line" } else { "lines" };
-    let label = if more {
-        format!(
-            " {marker} show {} more unchanged {suffix}",
-            format_count(lines)
-        )
-    } else {
-        format!(" {marker} show {} unchanged {suffix}", format_count(lines))
-    };
-    context_action_line(&label, width, theme, theme.muted)
-}
-
-pub(crate) fn context_hide_line(
-    lines: usize,
-    marker: &str,
-    width: usize,
-    theme: DiffTheme,
-) -> Line<'static> {
-    let suffix = if lines == 1 { "line" } else { "lines" };
-    context_action_line(
-        &format!(" {marker} hide {} unchanged {suffix}", format_count(lines)),
-        width,
-        theme,
-        theme.muted,
-    )
-}
-
-pub(crate) fn context_expand_marker(hunk: usize) -> &'static str {
-    if hunk == 0 { "▴" } else { "▾" }
-}
-
-pub(crate) fn context_hide_marker(hunk: usize) -> &'static str {
-    if hunk == 0 { "▾" } else { "▴" }
-}
-
-pub(crate) fn context_action_line(
-    label: &str,
-    width: usize,
-    theme: DiffTheme,
-    text_color: Color,
-) -> Line<'static> {
-    if width == 0 {
-        return Line::default();
-    }
-
-    let bg = base_bg(theme);
-    let mut spans = Vec::new();
-    let indicator_width = 1.min(width);
-    if indicator_width > 0 {
-        spans.push(diff_indicator_span(DiffLineKind::Meta, theme));
-    }
-    let content_width = width.saturating_sub(indicator_width);
-    if content_width > 0 {
-        spans.push(Span::styled(
-            fit_padded(label, content_width),
-            Style::default().fg(text_color).bg(bg),
-        ));
-    }
-    Line::from(spans)
-}
-
-pub(crate) fn render_context_line(
-    app: &mut DiffApp,
-    file: usize,
-    old_line: usize,
-    new_line: usize,
-    row_index: usize,
-    width: usize,
-) -> Line<'static> {
-    let theme = app.config.theme;
-    let horizontal_scroll = app.viewport.horizontal_scroll;
-    let side = app.context_source_side(file);
-    let syntax = side.and_then(|side| {
-        let line_number = match side {
-            DiffSide::Old => old_line,
-            DiffSide::New => new_line,
-        };
-        app.syntax_file_line(file, side, line_number)
-    });
-    let diff_line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(old_line),
-        new_line: Some(new_line),
-        text: app.context_line_text(file, old_line, new_line),
-    };
-
-    match app.viewport.layout {
-        DiffLayoutMode::Unified => render_unified_line_at_scroll(
-            &diff_line,
-            syntax.as_ref(),
-            &[],
-            row_index,
-            width,
-            theme,
-            horizontal_scroll,
-        ),
-        DiffLayoutMode::Split => render_split_context_line(
-            &diff_line,
-            syntax.as_ref(),
-            row_index,
-            width,
-            theme,
-            horizontal_scroll,
-        ),
-    }
-}
-
-pub(crate) fn render_context_line_wrapped(
-    app: &mut DiffApp,
-    file: usize,
-    old_line: usize,
-    new_line: usize,
-    row_index: usize,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let theme = app.config.theme;
-    let side = app.context_source_side(file);
-    let syntax = side.and_then(|side| {
-        let line_number = match side {
-            DiffSide::Old => old_line,
-            DiffSide::New => new_line,
-        };
-        app.syntax_file_line(file, side, line_number)
-    });
-    let diff_line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(old_line),
-        new_line: Some(new_line),
-        text: app.context_line_text(file, old_line, new_line),
-    };
-
-    match app.viewport.layout {
-        DiffLayoutMode::Unified => render_unified_line_wrapped_with_focus(
-            &diff_line,
-            syntax.as_ref(),
-            &[],
-            width,
-            theme,
-            false,
-            &app.filters.grep_filter,
-        ),
-        DiffLayoutMode::Split => {
-            let visual_row_start = app.wrapped_visual_scroll_for_model_row(row_index);
-            render_split_context_line_wrapped(
-                &diff_line,
-                syntax.as_ref(),
-                visual_row_start,
-                width,
-                theme,
-                &app.filters.grep_filter,
-            )
-        }
-    }
-}
-
-pub(crate) fn render_split_context_line(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    row_index: usize,
-    width: usize,
-    theme: DiffTheme,
-    horizontal_scroll: usize,
-) -> Line<'static> {
-    if width == 0 {
-        return Line::default();
-    }
-
-    let left_width = width / 2;
-    let right_width = width.saturating_sub(left_width);
-    let mut spans = split_cell_spans_at_scroll(
-        Some(line),
-        syntax,
-        &[],
-        SplitCellRender {
-            side: SplitSide::Old,
-            row_index,
-            width: left_width,
-            theme,
-        },
-        horizontal_scroll,
-    );
-    spans.extend(split_cell_spans_at_scroll(
-        Some(line),
-        syntax,
-        &[],
-        SplitCellRender {
-            side: SplitSide::New,
-            row_index,
-            width: right_width,
-            theme,
-        },
-        horizontal_scroll,
-    ));
-    Line::from(spans)
-}
-
-pub(crate) fn render_split_context_line_wrapped(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    row_index: usize,
-    width: usize,
-    theme: DiffTheme,
-    grep_filter: &str,
-) -> Vec<Line<'static>> {
-    if width == 0 {
-        return vec![Line::default()];
-    }
-
-    let left_width = width / 2;
-    let right_width = width.saturating_sub(left_width);
-    let left_content_width = split_cell_content_width(left_width);
-    let right_content_width = split_cell_content_width(right_width);
-    let left_scrolls = wrapped_line_start_columns(&line.text, left_content_width);
-    let right_scrolls = wrapped_line_start_columns(&line.text, right_content_width);
-    let text_width = line.text.width();
-    let rows = left_scrolls.len().max(right_scrolls.len());
-    let mut lines = Vec::with_capacity(rows);
-    for wrap_index in 0..rows {
-        let left_scroll = wrapped_segment_scroll(&left_scrolls, text_width, wrap_index);
-        let right_scroll = wrapped_segment_scroll(&right_scrolls, text_width, wrap_index);
-        let visual_row = row_index.saturating_add(wrap_index);
-        let mut spans = split_cell_spans_at_scroll_with_focus_and_continuation(
-            Some(line),
-            syntax,
-            &[],
-            SplitCellRender {
-                side: SplitSide::Old,
-                row_index: visual_row,
-                width: left_width,
-                theme,
-            },
-            left_scroll,
-            false,
-            wrap_index > 0,
-        );
-        spans.extend(split_cell_spans_at_scroll_with_focus_and_continuation(
-            Some(line),
-            syntax,
-            &[],
-            SplitCellRender {
-                side: SplitSide::New,
-                row_index: visual_row,
-                width: right_width,
-                theme,
-            },
-            right_scroll,
-            false,
-            wrap_index > 0,
-        ));
-        lines.push(highlight_wrapped_split_grep_line(
-            Line::from(spans),
-            Some(line),
-            Some(line),
-            SplitGrepRender {
-                query: grep_filter,
-                width,
-                left_scroll,
-                right_scroll,
-                theme,
-            },
-        ));
-    }
-    lines
-}
-
-pub(crate) fn render_unified_line_at_scroll(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    inline: &[InlineRange],
-    _row_index: usize,
-    width: usize,
-    theme: DiffTheme,
-    horizontal_scroll: usize,
-) -> Line<'static> {
-    render_unified_line_at_scroll_with_focus(
-        line,
-        syntax,
-        inline,
-        width,
-        theme,
-        horizontal_scroll,
-        false,
-    )
-}
-
-pub(crate) fn render_unified_line_at_scroll_with_focus(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    inline: &[InlineRange],
-    width: usize,
-    theme: DiffTheme,
-    horizontal_scroll: usize,
-    focused: bool,
-) -> Line<'static> {
-    render_unified_line_segment_with_focus(
-        line,
-        syntax,
-        inline,
-        UnifiedLineRender {
-            width,
-            theme,
-            horizontal_scroll,
-            focused,
-            continuation: false,
-        },
-    )
-}
-
-pub(crate) fn render_unified_line_wrapped_with_focus(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    inline: &[InlineRange],
-    width: usize,
-    theme: DiffTheme,
-    focused: bool,
-    grep_filter: &str,
-) -> Vec<Line<'static>> {
-    let content_width = unified_content_width(width);
-    let scrolls = wrapped_line_start_columns(&line.text, content_width);
-    let mut lines = Vec::with_capacity(scrolls.len());
-    for (wrap_index, horizontal_scroll) in scrolls.iter().copied().enumerate() {
-        let rendered = render_unified_line_segment_with_focus(
-            line,
-            syntax,
-            inline,
-            UnifiedLineRender {
-                width,
-                theme,
-                horizontal_scroll,
-                focused,
-                continuation: wrap_index > 0,
-            },
-        );
-        lines.push(highlight_wrapped_unified_grep_line(
-            rendered,
-            line,
-            grep_filter,
-            width,
-            horizontal_scroll,
-            theme,
-        ));
-    }
-    lines
-}
-
-#[derive(Debug, Clone, Copy)]
-struct UnifiedLineRender {
-    width: usize,
-    theme: DiffTheme,
-    horizontal_scroll: usize,
-    focused: bool,
-    continuation: bool,
-}
-
-fn render_unified_line_segment_with_focus(
-    line: &DiffLine,
-    syntax: Option<&HighlightedLine>,
-    inline: &[InlineRange],
-    render: UnifiedLineRender,
-) -> Line<'static> {
-    let UnifiedLineRender {
-        width,
-        theme,
-        horizontal_scroll,
-        focused,
-        continuation,
-    } = render;
-
-    if width == 0 {
-        return Line::default();
-    }
-
-    let sign = if continuation {
-        " "
-    } else {
-        match line.kind {
-            DiffLineKind::Context => " ",
-            DiffLineKind::Addition => "+",
-            DiffLineKind::Deletion => "-",
-            DiffLineKind::Meta => " ",
-        }
-    };
-    let indicator_width = 1.min(width);
-    let gutter_width = UNIFIED_GUTTER_WIDTH.min(width.saturating_sub(indicator_width));
-    let content_width = unified_content_width(width);
-    let gutter = if continuation {
-        spaces(UNIFIED_GUTTER_WIDTH.saturating_sub(1)).into_owned()
-    } else {
-        unified_gutter_text(line.old_line, line.new_line)
-    };
-    let mut spans = Vec::new();
-    if indicator_width > 0 {
-        spans.push(diff_indicator_span_for_focus(line.kind, theme, focused));
-    }
-    if gutter_width > 0 {
-        spans.extend(gutter_spans(&gutter, sign, gutter_width, line.kind, theme));
-    }
-    spans.extend(content_spans_at_scroll(
-        &line.text,
-        syntax,
-        inline,
-        line.kind,
-        content_width,
-        theme,
-        horizontal_scroll,
-    ));
-    Line::from(spans)
-}
-
-fn highlight_wrapped_unified_grep_line(
-    rendered: Line<'static>,
-    line: &DiffLine,
-    query: &str,
-    width: usize,
-    horizontal_scroll: usize,
-    theme: DiffTheme,
-) -> Line<'static> {
-    if query.is_empty() {
-        return rendered;
-    }
-
-    let targets = grep_highlight_target_for_columns(
-        diff_line_grep_highlight_text(line),
-        &rendered.spans,
-        unified_content_start_column(width),
-        width,
-        1 + scrolled_text_byte_start(&line.text, horizontal_scroll),
-    )
-    .into_iter()
-    .collect();
-    highlighted_grep_text_line(rendered, query, targets, theme)
-}
-
-pub(crate) fn row_bg(kind: DiffLineKind, theme: DiffTheme) -> Color {
-    if theme.transparent_background {
-        return Color::Reset;
-    }
-
-    match (theme.diff.line_background, kind) {
-        (DiffBackground::None, _) => theme.background,
-        (DiffBackground::Subtle, DiffLineKind::Addition) => theme.addition_bg,
-        (DiffBackground::Subtle, DiffLineKind::Deletion) => theme.deletion_bg,
-        (DiffBackground::Strong, DiffLineKind::Addition) => theme.addition_inline_bg,
-        (DiffBackground::Strong, DiffLineKind::Deletion) => theme.deletion_inline_bg,
-        _ => theme.background,
-    }
-}
-
-pub(crate) fn line_style(kind: DiffLineKind, theme: DiffTheme) -> Style {
-    match kind {
-        DiffLineKind::Addition => Style::default()
-            .fg(theme.foreground)
-            .bg(row_bg(kind, theme)),
-        DiffLineKind::Deletion => Style::default()
-            .fg(theme.foreground)
-            .bg(row_bg(kind, theme)),
-        DiffLineKind::Meta => Style::default().fg(theme.muted).bg(base_bg(theme)),
-        DiffLineKind::Context => Style::default().fg(theme.foreground).bg(base_bg(theme)),
-    }
 }

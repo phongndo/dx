@@ -1,4 +1,32 @@
-use super::*;
+use super::{
+    AppEffect, ColorSchemeChoice, DIFF_PREFETCH_POLL, DiffCacheEntry, EDITOR_RELOAD_POLL,
+    EditorReloadRequest, EditorReloadWorker, FILTER_WORKER_POLL, FilterWorker, MouseScroll,
+    OptionsDraft, PendingDiffLoad, PendingDiffPrefetch, PendingFilterApply, PendingReviewLoad,
+    SyntaxStartupMode, WrappedVisualLayout,
+};
+use crate::annotation::{AnnotationDraft, AnnotationStore};
+use crate::controls::{BranchMenu, DiffFilterKind, DiffLayoutMode, GitCommit};
+use crate::keymap::{KeyPress, Keymap};
+use crate::live_diff::live_diff_supported;
+use crate::model::{ContextKey, ContextSourceEntry, ContextSourceKey, UiModel};
+use crate::render::snapshot::HitMap;
+use crate::search::DiffSearchIndex;
+use crate::selector::SelectorState;
+use crate::syntax::{InlineHunkEmphasisCache, InlineHunkKey, LruCache, SyntaxRuntime};
+use crate::text_input::{TextInputKeyResult, handle_text_input_key};
+use crate::theme::{DiffTheme, EVENT_POLL};
+use crate::toast::{ToastLevel, Toasts};
+use crossterm::event::KeyEvent;
+use mark_diff::{Changeset, DiffOptions, DiffStats};
+use mark_syntax::{ColorOverrides, SyntaxLimits, SyntaxSettings};
+use ratatui::layout::Rect;
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use super::OptionsMenuItem;
 
 #[derive(Debug)]
 pub(crate) struct DocumentState {
@@ -32,6 +60,26 @@ pub(crate) struct ViewportState {
     pub(crate) mouse_hover: Option<(u16, u16)>,
 }
 
+impl ViewportState {
+    pub(crate) fn set_terminal_area(&mut self, area: Rect) -> bool {
+        if self.terminal_area == area {
+            return false;
+        }
+
+        self.terminal_area = area;
+        true
+    }
+
+    pub(crate) fn set_rendered_diff_area(&mut self, area: Option<Rect>) -> bool {
+        if self.rendered_diff_area == area {
+            return false;
+        }
+
+        self.rendered_diff_area = area;
+        true
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FileSidebarState {
     pub(crate) selected_file: usize,
@@ -40,6 +88,29 @@ pub(crate) struct FileSidebarState {
     pub(crate) file_sidebar_width: Option<u16>,
     pub(crate) file_sidebar_render_width: u16,
     pub(crate) file_sidebar_resizing: bool,
+}
+
+impl FileSidebarState {
+    pub(crate) fn is_position(&self, column: u16, row: u16, visible_rows: usize) -> bool {
+        self.file_sidebar_open
+            && self.file_sidebar_render_width > 0
+            && column < self.file_sidebar_render_width
+            && row > 0
+            && usize::from(row - 1) < visible_rows
+    }
+
+    pub(crate) fn is_resize_handle(&self, column: u16, row: u16, visible_rows: usize) -> bool {
+        self.is_position(column, row, visible_rows)
+            && column.saturating_add(1) == self.file_sidebar_render_width
+    }
+
+    pub(crate) fn start_resize(&mut self) {
+        self.file_sidebar_resizing = true;
+    }
+
+    pub(crate) fn finish_resize(&mut self) {
+        self.file_sidebar_resizing = false;
+    }
 }
 
 #[derive(Debug)]
@@ -73,6 +144,89 @@ pub(crate) struct OverlayState {
     pub(crate) rendered_color_scheme_picker_area: Option<Rect>,
 }
 
+impl OverlayState {
+    pub(crate) fn help_menu_is_open(&self) -> bool {
+        self.help_menu_open
+    }
+
+    pub(crate) fn diff_menu_is_open(&self) -> bool {
+        self.diff_menu_open
+    }
+
+    pub(crate) fn review_input_is_open(&self) -> bool {
+        self.review_input_open
+    }
+
+    pub(crate) fn options_menu_is_open(&self) -> bool {
+        self.options_menu_open
+    }
+
+    pub(crate) fn color_scheme_picker_is_open(&self) -> bool {
+        self.color_scheme_picker_open
+    }
+
+    pub(crate) fn close_diff_menu(&mut self) -> bool {
+        if !self.diff_menu_open
+            && self.diff_menu.input.is_empty()
+            && self.rendered_diff_menu_area.is_none()
+        {
+            return false;
+        }
+
+        self.diff_menu_open = false;
+        self.diff_menu.reset_input();
+        self.rendered_diff_menu_area = None;
+        true
+    }
+
+    pub(crate) fn close_options_menu(&mut self) -> bool {
+        if !self.options_menu_open
+            && self.options_menu.input.is_empty()
+            && self.options_menu.scroll == 0
+        {
+            return false;
+        }
+
+        self.options_menu_open = false;
+        self.options_menu.reset();
+        true
+    }
+
+    pub(crate) fn open_review_input(&mut self) {
+        self.review_input.clear();
+        self.review_input_cursor = 0;
+        self.review_input_open = true;
+    }
+
+    pub(crate) fn close_review_input(&mut self) -> bool {
+        if !self.review_input_open
+            && self.review_input.is_empty()
+            && self.rendered_review_input_area.is_none()
+        {
+            return false;
+        }
+
+        self.review_input_open = false;
+        self.review_input.clear();
+        self.review_input_cursor = 0;
+        self.rendered_review_input_area = None;
+        true
+    }
+
+    pub(crate) fn close_color_scheme_picker(
+        &mut self,
+    ) -> (bool, Option<(ColorSchemeChoice, DiffTheme)>) {
+        if !self.color_scheme_picker_open {
+            return (false, None);
+        }
+
+        self.color_scheme_picker_open = false;
+        self.color_scheme_picker.reset_input_and_scroll();
+        self.rendered_color_scheme_picker_area = None;
+        (true, self.color_scheme_preview_original.take())
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct FilterState {
     pub(crate) filter_input: Option<DiffFilterKind>,
@@ -87,6 +241,96 @@ pub(crate) struct FilterState {
     pub(crate) selected_grep_match: Option<usize>,
 }
 
+impl FilterState {
+    pub(crate) fn input_open(&self) -> bool {
+        self.filter_input.is_some()
+    }
+
+    pub(crate) fn grep_active(&self) -> bool {
+        !self.grep_filter.is_empty()
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        !self.file_filter.is_empty() || !self.grep_filter.is_empty()
+    }
+
+    pub(crate) fn query(&self, kind: DiffFilterKind) -> &str {
+        match kind {
+            DiffFilterKind::File => &self.file_filter,
+            DiffFilterKind::Grep => &self.grep_filter,
+        }
+    }
+
+    pub(crate) fn query_mut(&mut self, kind: DiffFilterKind) -> &mut String {
+        match kind {
+            DiffFilterKind::File => &mut self.file_filter,
+            DiffFilterKind::Grep => &mut self.grep_filter,
+        }
+    }
+
+    pub(crate) fn input_query(&self, kind: DiffFilterKind) -> &str {
+        match kind {
+            DiffFilterKind::File => &self.file_filter_input,
+            DiffFilterKind::Grep => &self.grep_filter_input,
+        }
+    }
+
+    pub(crate) fn input_query_mut(&mut self, kind: DiffFilterKind) -> &mut String {
+        match kind {
+            DiffFilterKind::File => &mut self.file_filter_input,
+            DiffFilterKind::Grep => &mut self.grep_filter_input,
+        }
+    }
+
+    pub(crate) fn input_cursor(&self, kind: DiffFilterKind) -> usize {
+        match kind {
+            DiffFilterKind::File => self.file_filter_input_cursor,
+            DiffFilterKind::Grep => self.grep_filter_input_cursor,
+        }
+    }
+
+    pub(crate) fn input_cursor_mut(&mut self, kind: DiffFilterKind) -> &mut usize {
+        match kind {
+            DiffFilterKind::File => &mut self.file_filter_input_cursor,
+            DiffFilterKind::Grep => &mut self.grep_filter_input_cursor,
+        }
+    }
+
+    pub(crate) fn apply_input_key(
+        &mut self,
+        kind: DiffFilterKind,
+        key: KeyEvent,
+    ) -> TextInputKeyResult {
+        match kind {
+            DiffFilterKind::File => handle_text_input_key(
+                &mut self.file_filter_input,
+                &mut self.file_filter_input_cursor,
+                key,
+            ),
+            DiffFilterKind::Grep => handle_text_input_key(
+                &mut self.grep_filter_input,
+                &mut self.grep_filter_input_cursor,
+                key,
+            ),
+        }
+    }
+
+    pub(crate) fn clear_all(&mut self) -> bool {
+        self.grep_matches.clear();
+        self.grep_matches_truncated = false;
+        self.selected_grep_match = None;
+
+        let had_active_filter = !self.file_filter.is_empty() || !self.grep_filter.is_empty();
+        self.file_filter.clear();
+        self.file_filter_input.clear();
+        self.file_filter_input_cursor = 0;
+        self.grep_filter.clear();
+        self.grep_filter_input.clear();
+        self.grep_filter_input_cursor = 0;
+        had_active_filter
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ReferenceState {
     pub(crate) branch_menu_open: Option<BranchMenu>,
@@ -99,6 +343,46 @@ pub(crate) struct ReferenceState {
     pub(crate) commit_menu: SelectorState,
     pub(crate) show_rev: Option<String>,
     pub(crate) comparison_commits: Vec<GitCommit>,
+}
+
+impl ReferenceState {
+    pub(crate) fn branch_menu_is_open(&self) -> bool {
+        self.branch_menu_open.is_some()
+    }
+
+    pub(crate) fn commit_menu_is_open(&self) -> bool {
+        self.commit_menu_open
+    }
+
+    pub(crate) fn close_branch_menu(&mut self, overlays: &mut OverlayState) -> bool {
+        if self.branch_menu_open.is_none()
+            && self.branch_menu.input.is_empty()
+            && self.branch_menu.scroll == 0
+            && overlays.rendered_branch_menu_area.is_none()
+        {
+            return false;
+        }
+
+        self.branch_menu_open = None;
+        self.branch_menu.reset();
+        overlays.rendered_branch_menu_area = None;
+        true
+    }
+
+    pub(crate) fn close_commit_menu(&mut self, overlays: &mut OverlayState) -> bool {
+        if !self.commit_menu_open
+            && self.commit_menu.input.is_empty()
+            && self.commit_menu.scroll == 0
+            && overlays.rendered_commit_menu_area.is_none()
+        {
+            return false;
+        }
+
+        self.commit_menu_open = false;
+        self.commit_menu.reset();
+        overlays.rendered_commit_menu_area = None;
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -123,6 +407,50 @@ pub(crate) struct JobState {
     pub(crate) filter_searching: bool,
 }
 
+impl JobState {
+    pub(crate) fn diff_cache_invalidator_active(&self, options: &DiffOptions) -> bool {
+        self.live_updates_allowed
+            && self.live_updates_enabled
+            && !self.live_reload_invalidated
+            && !self.live_reload_pending
+            && live_diff_supported(options)
+            && self.live_diff_failed_options.as_ref() != Some(options)
+    }
+
+    pub(crate) fn clear_cached_diff_choices(&mut self) {
+        self.diff_cache.clear();
+        self.pending_diff_prefetch = None;
+        self.diff_prefetch_queue.clear();
+        self.diff_prefetch_started = false;
+    }
+
+    pub(crate) fn event_poll(&self, now: Instant) -> Duration {
+        let mut poll = EVENT_POLL;
+        if self.editor_reload.is_some() || self.pending_editor_reload.is_some() {
+            poll = poll.min(EDITOR_RELOAD_POLL);
+        }
+        if self.filter_worker.is_some() {
+            poll = poll.min(FILTER_WORKER_POLL);
+        }
+        if let Some(pending) = self.pending_filter_apply {
+            poll = poll.min(pending.due_at.saturating_duration_since(now));
+        }
+        if self.pending_diff_prefetch.is_some() {
+            poll = poll.min(DIFF_PREFETCH_POLL);
+        }
+        poll
+    }
+
+    pub(crate) fn mark_live_reload_invalidated(&mut self) {
+        self.live_reload_invalidated = true;
+    }
+
+    pub(crate) fn mark_live_reload_pending(&mut self) {
+        self.mark_live_reload_invalidated();
+        self.live_reload_pending = true;
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct NotificationState {
     pub(crate) error_log: Option<String>,
@@ -132,10 +460,38 @@ pub(crate) struct NotificationState {
     pub(crate) toasts: Toasts,
 }
 
+impl NotificationState {
+    pub(crate) fn push_toast(&mut self, level: ToastLevel, text: impl Into<String>) -> bool {
+        self.toasts.push(level, text)
+    }
+
+    pub(crate) fn expire_toasts(&mut self, now: Instant) -> bool {
+        self.toasts.expire(now)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct InputState {
     pub(crate) key_prefix_pending: Option<KeyPress>,
     pub(crate) mouse_scroll: MouseScroll,
+}
+
+impl InputState {
+    pub(crate) fn begin_key_prefix(&mut self, prefix: KeyPress) {
+        self.key_prefix_pending = Some(prefix);
+    }
+
+    pub(crate) fn clear_key_prefix(&mut self) {
+        self.key_prefix_pending = None;
+    }
+
+    pub(crate) fn take_key_prefix(&mut self) -> Option<KeyPress> {
+        self.key_prefix_pending.take()
+    }
+
+    pub(crate) fn reset_mouse_scroll(&mut self) {
+        self.mouse_scroll.reset();
+    }
 }
 
 #[derive(Debug)]
@@ -159,4 +515,24 @@ pub(crate) struct RuntimeState {
     pub(crate) terminal_clear_requested: bool,
     pub(crate) dirty: bool,
     pub(crate) hit_map: HitMap,
+    pub(crate) pending_effects: Vec<AppEffect>,
+}
+
+impl RuntimeState {
+    pub(crate) fn push_effect(&mut self, effect: AppEffect) {
+        self.pending_effects.push(effect);
+    }
+
+    pub(crate) fn take_effects(&mut self) -> Vec<AppEffect> {
+        std::mem::take(&mut self.pending_effects)
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    pub(crate) fn request_terminal_clear(&mut self) {
+        self.terminal_clear_requested = true;
+        self.mark_dirty();
+    }
 }

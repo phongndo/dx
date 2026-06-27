@@ -1,4 +1,6 @@
-use super::*;
+use super::DiffApp;
+use crate::render::sidebar::max_file_sidebar_width;
+use crate::theme::FILE_SIDEBAR_MIN_WIDTH;
 
 impl DiffApp {
     pub(crate) fn scroll_file_sidebar_by(&mut self, delta: isize) {
@@ -107,7 +109,7 @@ impl DiffApp {
 
     pub(crate) fn toggle_file_sidebar(&mut self) {
         self.sidebar.file_sidebar_open = !self.sidebar.file_sidebar_open;
-        self.sidebar.file_sidebar_resizing = false;
+        self.sidebar.finish_resize();
         self.overlays.diff_menu_open = false;
         self.overlays.diff_menu.reset_input();
         self.set_rendered_diff_menu_area(None);

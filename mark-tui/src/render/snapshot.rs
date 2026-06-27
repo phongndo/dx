@@ -42,25 +42,25 @@ pub(crate) struct RenderSnapshot {
 impl RenderSnapshot {
     pub(crate) fn from_app(app: &DiffApp) -> Self {
         let mut overlay_layers = Vec::new();
-        if app.overlays.diff_menu_open {
+        if app.overlays.diff_menu_is_open() {
             overlay_layers.push(OverlayLayer::DiffMenu);
         }
-        if app.overlays.review_input_open {
+        if app.overlays.review_input_is_open() {
             overlay_layers.push(OverlayLayer::ReviewInput);
         }
-        if app.overlays.options_menu_open {
+        if app.overlays.options_menu_is_open() {
             overlay_layers.push(OverlayLayer::OptionsMenu);
         }
-        if app.overlays.color_scheme_picker_open {
+        if app.overlays.color_scheme_picker_is_open() {
             overlay_layers.push(OverlayLayer::ColorSchemePicker);
         }
-        if app.refs.branch_menu_open.is_some() {
+        if app.refs.branch_menu_is_open() {
             overlay_layers.push(OverlayLayer::BranchMenu);
         }
-        if app.refs.commit_menu_open {
+        if app.refs.commit_menu_is_open() {
             overlay_layers.push(OverlayLayer::CommitMenu);
         }
-        if app.overlays.help_menu_open {
+        if app.overlays.help_menu_is_open() {
             overlay_layers.push(OverlayLayer::HelpMenu);
         }
 
@@ -75,7 +75,7 @@ impl RenderSnapshot {
                 viewport_width: app.viewport.viewport_width,
                 selected_file: app.sidebar.selected_file,
             },
-            filter_bar_visible: app.filters.filter_input.is_some() || app.filters_active(),
+            filter_bar_visible: app.filters.input_open() || app.filters.active(),
             error_log_visible: app.notifications.error_log.is_some(),
             requested_error_log_height: app.notifications.error_log_height,
             file_sidebar_open: app.sidebar.file_sidebar_open,
@@ -124,9 +124,11 @@ pub(crate) struct RenderPlan {
 pub(crate) struct RenderStatePlan {
     pub(crate) terminal_area: Rect,
     pub(crate) file_sidebar_render_width: u16,
+    pub(crate) file_sidebar_visible_rows: Option<usize>,
     pub(crate) viewport_rows: usize,
     pub(crate) viewport_width: usize,
     pub(crate) options_menu_visible_rows: Option<usize>,
+    pub(crate) color_scheme_picker_visible_rows: Option<usize>,
     pub(crate) branch_menu_visible_rows: Option<usize>,
     pub(crate) commit_menu_visible_rows: Option<usize>,
     pub(crate) help_menu_visible_rows: Option<usize>,

@@ -1,4 +1,15 @@
-use super::*;
+use super::{
+    DiffApp, HunkFocusScrollBehavior, POST_EDITOR_QUIT_KEY_IGNORE, create_annotation_scratch_file,
+    normalize_annotation_editor_contents, viewport_center_offset,
+};
+use crate::annotation::{AnnotationDraft, AnnotationKey};
+use crate::editor::{configured_editor, open_text_in_editor};
+use crate::keymap::GlobalAction;
+use crate::render::viewport_plan::{ViewportSlotKind, plan_diff_viewport_rows_at_scroll};
+use crate::text_input::{TextInputKeyResult, handle_text_input_key};
+use crossterm::event::{KeyCode, KeyEvent};
+use std::fs;
+use std::time::Instant;
 
 impl DiffApp {
     pub(super) fn annotation_model_row(&self, key: &AnnotationKey) -> Option<usize> {
@@ -217,7 +228,7 @@ impl DiffApp {
                 return;
             }
         };
-        self.runtime.terminal_clear_requested = true;
+        self.runtime.request_terminal_clear();
         let status_result = open_text_in_editor(&editor, &scratch.path);
         self.jobs.post_editor_quit_key_ignore_until =
             Some(Instant::now() + POST_EDITOR_QUIT_KEY_IGNORE);

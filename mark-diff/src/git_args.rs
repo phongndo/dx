@@ -1,6 +1,13 @@
-use super::*;
+use std::path::{Path, PathBuf};
 
-use crate::difftool::difftool_display_path;
+use mark_core::{MarkError, MarkResult};
+use mark_git::{
+    existing_commitish_revision, existing_object_revision, merge_base_revision,
+    range_right_operand_is_pathspec, revision_expression_exists, show_target,
+    worktree_base_revision,
+};
+
+use crate::{DiffOptions, DiffScope, DiffSource, PatchSource, difftool::difftool_display_path};
 
 pub(super) fn validate_options(options: &DiffOptions) -> MarkResult<()> {
     if matches!(options.source, DiffSource::Patch(_)) {

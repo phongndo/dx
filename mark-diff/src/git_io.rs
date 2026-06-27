@@ -1,4 +1,17 @@
-use super::*;
+use std::{
+    fs,
+    io::{self, ErrorKind, Read, Write},
+    path::{Path, PathBuf},
+    process::{self, Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use mark_core::{MarkError, MarkResult};
+
+use crate::{
+    copy_to_writer,
+    stats::{PatchFileStat, PatchStats},
+};
 
 pub(super) fn git_diff_bytes(repo: &Path, args: &[String]) -> MarkResult<Vec<u8>> {
     git_diff_bytes_with_index(repo, args, None)

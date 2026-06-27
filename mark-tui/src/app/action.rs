@@ -1,4 +1,8 @@
-use super::*;
+use super::{ActionOutcome, AppEffect, DiffApp};
+use crate::controls::{BranchMenu, DiffFilterKind};
+use crate::keymap::GlobalAction;
+use crate::toast::ToastLevel;
+use mark_core::MarkResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppAction {

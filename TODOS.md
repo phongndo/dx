@@ -22,4 +22,8 @@
 # Performance
 - [ ] Bench & optimizations 
 
+# Minor
+
+- [ ] Move the reloading and refreshing notifs to the new toast notif system
+
 ---

@@ -1,4 +1,14 @@
-use super::*;
+use super::{AppEffect, DiffApp};
+use crate::controls::CrosstermTerminal;
+use crate::event_reader::TerminalEventReader;
+use crate::live_diff::{LiveDiff, LiveDiffReload, live_diff_supported};
+use crate::render::draw;
+use crate::theme::MAX_READY_EVENTS_PER_FRAME;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use mark_core::MarkResult;
+use ratatui::layout::Rect;
+use std::time::Instant;
+use tokio::sync::mpsc::Receiver;
 
 pub(crate) async fn run_loop(
     terminal: &mut CrosstermTerminal,
@@ -157,30 +167,12 @@ pub(crate) fn handle_event(
 
     match event {
         Event::Key(key) if app.ignore_post_editor_quit_key(key, Instant::now()) => Ok(false),
-        Event::Key(key) if app.handle_annotation_save_or_cancel_key(key) => Ok(false),
-        Event::Key(key) if is_quit_key(key) => Ok(true),
-        Event::Key(key)
-            if app
-                .config
-                .keymap
-                .matches_single(GlobalAction::EditHunk, key)
-                && app.editor_shortcut_available() =>
-        {
-            if app.annotations_state.annotation_draft.is_some() {
-                let paused_events = events.pause();
-                app.open_annotation_draft_in_editor();
-                paused_events.resume()?;
-            } else if let Some(editor) = app.prepare_focused_hunk_editor() {
-                let paused_events = events.pause();
-                app.open_prepared_hunk_in_editor(editor, Some(live_diff));
-                paused_events.resume()?;
-            }
-            Ok(false)
-        }
-        Event::Key(key) if app.handle_key(key)? => Ok(true),
+        Event::Key(key) => handle_key_event(app, key, live_diff, events),
         Event::Mouse(mouse) => {
-            app.handle_mouse(mouse)?;
-            Ok(false)
+            let outcome = app.handle_mouse_with_effects(mouse)?;
+            let should_quit = outcome.clone().into_legacy_quit().unwrap_or(false);
+            run_event_effects(app, outcome.effects, live_diff, events)?;
+            Ok(should_quit)
         }
         Event::FocusLost => {
             app.clear_diff_mouse_hover();
@@ -199,6 +191,43 @@ pub(crate) fn handle_event(
         }
         _ => Ok(false),
     }
+}
+
+fn handle_key_event(
+    app: &mut DiffApp,
+    key: KeyEvent,
+    live_diff: &mut Option<LiveDiff>,
+    events: &mut TerminalEventReader,
+) -> MarkResult<bool> {
+    let outcome = app.handle_key_with_effects(key)?;
+    let should_quit = outcome.clone().into_legacy_quit().unwrap_or(false);
+    run_event_effects(app, outcome.effects, live_diff, events)?;
+    Ok(should_quit)
+}
+
+fn run_event_effects(
+    app: &mut DiffApp,
+    effects: Vec<AppEffect>,
+    live_diff: &mut Option<LiveDiff>,
+    events: &mut TerminalEventReader,
+) -> MarkResult<()> {
+    for effect in effects {
+        match effect {
+            AppEffect::OpenEditorShortcut => {
+                if app.annotations_state.annotation_draft.is_some() {
+                    let paused_events = events.pause();
+                    app.open_annotation_draft_in_editor();
+                    paused_events.resume()?;
+                } else if let Some(editor) = app.prepare_focused_hunk_editor() {
+                    let paused_events = events.pause();
+                    app.open_prepared_hunk_in_editor(editor, Some(live_diff));
+                    paused_events.resume()?;
+                }
+            }
+            effect => app.run_effect(effect)?,
+        }
+    }
+    Ok(())
 }
 
 fn event_label(event: &Event) -> String {
