@@ -16,6 +16,7 @@ pub(crate) enum AppAction {
     ToggleBaseBranchMenu,
     ToggleCommitMenu,
     OpenOptionsMenu,
+    OpenAnnotationMenu,
     ToggleFileSidebar,
     PreviousFile,
     NextFile,
@@ -48,6 +49,7 @@ impl AppAction {
             GlobalAction::BaseBranch => Self::ToggleBaseBranchMenu,
             GlobalAction::CommitPicker => Self::ToggleCommitMenu,
             GlobalAction::OptionsMenu => Self::OpenOptionsMenu,
+            GlobalAction::AnnotationMenu => Self::OpenAnnotationMenu,
             GlobalAction::FileBrowser => Self::ToggleFileSidebar,
             GlobalAction::PreviousFile => Self::PreviousFile,
             GlobalAction::NextFile => Self::NextFile,
@@ -115,6 +117,10 @@ impl DiffApp {
             }
             AppAction::OpenOptionsMenu => {
                 self.open_options_menu();
+                Ok(ActionOutcome::consumed())
+            }
+            AppAction::OpenAnnotationMenu => {
+                self.open_annotation_menu();
                 Ok(ActionOutcome::consumed())
             }
             AppAction::ToggleFileSidebar => {

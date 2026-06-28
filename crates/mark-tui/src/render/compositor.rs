@@ -55,6 +55,7 @@ pub(crate) enum ComponentId {
     DiffMenu,
     ColorSchemePicker,
     OptionsMenu,
+    AnnotationMenu,
     ErrorLog,
     Prefix,
     GlobalAction,

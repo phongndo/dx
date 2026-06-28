@@ -5,7 +5,8 @@ use mark_core::{MarkError, MarkResult};
 use serde::Deserialize;
 
 use super::{
-    GLOBAL_ACTION_SPECS, GlobalAction, GlobalConflictGroup, Keymap, MENU_ACTION_SPECS, MenuAction,
+    ANNOTATION_MENU_ACTION_SPECS, AnnotationMenuAction, GLOBAL_ACTION_SPECS, GlobalAction,
+    GlobalConflictGroup, Keymap, MENU_ACTION_SPECS, MenuAction,
 };
 
 impl Keymap {
@@ -33,6 +34,7 @@ impl Keymap {
         let mut keymap = Self::default();
         let mut stored_global = stored.global;
         let mut stored_menu = stored.menu;
+        let mut stored_annotation_menu = stored.annotation_menu;
         let copy_marks_configured = stored_global.copy_marks.is_some();
 
         if let Some(leader) = stored_global.leader.take() {
@@ -50,6 +52,14 @@ impl Keymap {
         for spec in MENU_ACTION_SPECS {
             let configured = stored_menu.take(spec.action);
             set_sequences(keymap.menu_sequences_mut(spec.action), configured)?;
+        }
+
+        for spec in ANNOTATION_MENU_ACTION_SPECS {
+            let configured = stored_annotation_menu.take(spec.action);
+            set_sequences(
+                keymap.annotation_menu_sequences_mut(spec.action),
+                configured,
+            )?;
         }
 
         keymap.validate()?;
@@ -81,6 +91,7 @@ impl Keymap {
         self.validate_global_conflicts()?;
         self.validate_mark_draft_conflicts()?;
         self.validate_menu_conflicts()?;
+        self.validate_annotation_menu_conflicts()?;
 
         Ok(())
     }
@@ -118,6 +129,14 @@ impl Keymap {
             .map(|spec| (spec.name, self.menu_sequences(spec.action)))
             .collect::<Vec<_>>();
         validate_conflicts("keymap.menu", &bindings)
+    }
+
+    fn validate_annotation_menu_conflicts(&self) -> Result<(), String> {
+        let bindings = ANNOTATION_MENU_ACTION_SPECS
+            .iter()
+            .map(|spec| (spec.name, self.annotation_menu_sequences(spec.action)))
+            .collect::<Vec<_>>();
+        validate_conflicts("keymap.annotation_menu", &bindings)
     }
 
     fn clear_default_copy_marks_on_conflict(&mut self) {
@@ -181,6 +200,8 @@ struct StoredKeymap {
     global: StoredGlobalKeymap,
     #[serde(default)]
     menu: StoredMenuKeymap,
+    #[serde(default)]
+    annotation_menu: StoredAnnotationMenuKeymap,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -195,6 +216,7 @@ struct StoredGlobalKeymap {
     base_branch: Option<KeySpec>,
     commit_picker: Option<KeySpec>,
     options_menu: Option<KeySpec>,
+    annotation_menu: Option<KeySpec>,
     file_browser: Option<KeySpec>,
     #[serde(alias = "prev_file")]
     previous_file: Option<KeySpec>,
@@ -232,6 +254,7 @@ impl StoredGlobalKeymap {
             GlobalAction::BaseBranch => self.base_branch.take(),
             GlobalAction::CommitPicker => self.commit_picker.take(),
             GlobalAction::OptionsMenu => self.options_menu.take(),
+            GlobalAction::AnnotationMenu => self.annotation_menu.take(),
             GlobalAction::FileBrowser => self.file_browser.take(),
             GlobalAction::PreviousFile => self.previous_file.take(),
             GlobalAction::NextFile => self.next_file.take(),
@@ -252,6 +275,23 @@ impl StoredGlobalKeymap {
             GlobalAction::PreviousDiffType => self.previous_diff_type.take(),
             GlobalAction::NextAnnotation => self.next_annotation.take(),
             GlobalAction::PreviousAnnotation => self.previous_annotation.take(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StoredAnnotationMenuKeymap {
+    jump: Option<KeySpec>,
+    edit_external: Option<KeySpec>,
+    remove: Option<KeySpec>,
+}
+
+impl StoredAnnotationMenuKeymap {
+    fn take(&mut self, action: AnnotationMenuAction) -> Option<KeySpec> {
+        match action {
+            AnnotationMenuAction::Jump => self.jump.take(),
+            AnnotationMenuAction::EditExternal => self.edit_external.take(),
+            AnnotationMenuAction::Remove => self.remove.take(),
         }
     }
 }

@@ -11,6 +11,7 @@ pub(crate) enum OverlayLayer {
     DiffMenu,
     ReviewInput,
     OptionsMenu,
+    AnnotationMenu,
     ColorSchemePicker,
     BranchMenu,
     CommitMenu,
@@ -50,6 +51,9 @@ impl RenderSnapshot {
         }
         if app.overlays.options_menu_is_open() {
             overlay_layers.push(OverlayLayer::OptionsMenu);
+        }
+        if app.overlays.annotation_menu_is_open() {
+            overlay_layers.push(OverlayLayer::AnnotationMenu);
         }
         if app.overlays.color_scheme_picker_is_open() {
             overlay_layers.push(OverlayLayer::ColorSchemePicker);
@@ -108,6 +112,7 @@ pub(crate) struct HitMap {
     pub(crate) branch_menu_area: Option<Rect>,
     pub(crate) commit_menu_area: Option<Rect>,
     pub(crate) options_menu_area: Option<Rect>,
+    pub(crate) annotation_menu_area: Option<Rect>,
     pub(crate) review_input_area: Option<Rect>,
     pub(crate) color_scheme_picker_area: Option<Rect>,
     pub(crate) error_log_separator_row: Option<u16>,
@@ -128,6 +133,7 @@ pub(crate) struct RenderStatePlan {
     pub(crate) viewport_rows: usize,
     pub(crate) viewport_width: usize,
     pub(crate) options_menu_visible_rows: Option<usize>,
+    pub(crate) annotation_menu_visible_rows: Option<usize>,
     pub(crate) color_scheme_picker_visible_rows: Option<usize>,
     pub(crate) branch_menu_visible_rows: Option<usize>,
     pub(crate) commit_menu_visible_rows: Option<usize>,

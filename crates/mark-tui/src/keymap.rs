@@ -16,6 +16,7 @@ pub(crate) enum GlobalAction {
     BaseBranch,
     CommitPicker,
     OptionsMenu,
+    AnnotationMenu,
     FileBrowser,
     PreviousFile,
     NextFile,
@@ -39,6 +40,13 @@ pub(crate) enum GlobalAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnnotationMenuAction {
+    Jump,
+    EditExternal,
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
     Up,
     Down,
@@ -51,6 +59,7 @@ pub(crate) enum MenuAction {
 pub(crate) struct Keymap {
     global: Vec<Vec<KeySequence>>,
     menu: Vec<Vec<KeySequence>>,
+    annotation_menu: Vec<Vec<KeySequence>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +80,13 @@ struct GlobalActionSpec {
 #[derive(Debug, Clone, Copy)]
 struct MenuActionSpec {
     action: MenuAction,
+    name: &'static str,
+    defaults: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnnotationMenuActionSpec {
+    action: AnnotationMenuAction,
     name: &'static str,
     defaults: &'static [&'static str],
 }
@@ -115,6 +131,16 @@ macro_rules! menu_action_spec {
     };
 }
 
+macro_rules! annotation_menu_action_spec {
+    ($action:expr, $name:expr, [$($default:expr),* $(,)?]) => {
+        AnnotationMenuActionSpec {
+            action: $action,
+            name: $name,
+            defaults: &[$($default),*],
+        }
+    };
+}
+
 const GLOBAL_ACTION_SPECS: &[GlobalActionSpec] = &[
     global_action_spec!(GlobalAction::Help, "help", ["?"]),
     global_action_spec!(GlobalAction::Reload, "reload", ["r"]),
@@ -125,6 +151,7 @@ const GLOBAL_ACTION_SPECS: &[GlobalActionSpec] = &[
     global_action_spec!(GlobalAction::BaseBranch, "base_branch", ["m b"]),
     global_action_spec!(GlobalAction::CommitPicker, "commit_picker", ["m c"]),
     global_action_spec!(GlobalAction::OptionsMenu, "options_menu", ["o"]),
+    global_action_spec!(GlobalAction::AnnotationMenu, "annotation_menu", ["a"], 1),
     global_action_spec!(GlobalAction::FileBrowser, "file_browser", ["b"]),
     global_action_spec!(GlobalAction::PreviousFile, "previous_file", ["("]),
     global_action_spec!(GlobalAction::NextFile, "next_file", [")"]),
@@ -179,6 +206,16 @@ const GLOBAL_ACTION_SPECS: &[GlobalActionSpec] = &[
     ),
 ];
 
+const ANNOTATION_MENU_ACTION_SPECS: &[AnnotationMenuActionSpec] = &[
+    annotation_menu_action_spec!(AnnotationMenuAction::Jump, "jump", ["enter"]),
+    annotation_menu_action_spec!(
+        AnnotationMenuAction::EditExternal,
+        "edit_external",
+        ["ctrl-g"]
+    ),
+    annotation_menu_action_spec!(AnnotationMenuAction::Remove, "remove", ["ctrl-x"]),
+];
+
 const MENU_ACTION_SPECS: &[MenuActionSpec] = &[
     menu_action_spec!(MenuAction::Up, "up", ["up", "shift-tab", "ctrl-p"]),
     menu_action_spec!(MenuAction::Down, "down", ["down", "tab", "ctrl-n"]),
@@ -195,6 +232,10 @@ impl Default for Keymap {
                 .map(|spec| key_sequences(spec.defaults))
                 .collect(),
             menu: MENU_ACTION_SPECS
+                .iter()
+                .map(|spec| key_sequences(spec.defaults))
+                .collect(),
+            annotation_menu: ANNOTATION_MENU_ACTION_SPECS
                 .iter()
                 .map(|spec| key_sequences(spec.defaults))
                 .collect(),
@@ -248,6 +289,17 @@ impl Keymap {
             .any(|sequence| sequence.0.as_slice() == [key])
     }
 
+    pub(crate) fn matches_annotation_menu(
+        &self,
+        action: AnnotationMenuAction,
+        key: KeyEvent,
+    ) -> bool {
+        let key = KeyPress::from(key);
+        self.annotation_menu_sequences(action)
+            .iter()
+            .any(|sequence| sequence.0.as_slice() == [key])
+    }
+
     /// Menu up/down for scrollable overlays that intentionally ignore Tab / Shift-Tab.
     pub(crate) fn matches_help_menu_scroll(&self, action: MenuAction, key: KeyEvent) -> bool {
         if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
@@ -271,6 +323,17 @@ impl Keymap {
     fn menu_sequences_mut(&mut self, action: MenuAction) -> &mut Vec<KeySequence> {
         &mut self.menu[menu_action_index(action)]
     }
+
+    fn annotation_menu_sequences(&self, action: AnnotationMenuAction) -> &Vec<KeySequence> {
+        &self.annotation_menu[annotation_menu_action_index(action)]
+    }
+
+    fn annotation_menu_sequences_mut(
+        &mut self,
+        action: AnnotationMenuAction,
+    ) -> &mut Vec<KeySequence> {
+        &mut self.annotation_menu[annotation_menu_action_index(action)]
+    }
 }
 
 fn global_action_index(action: GlobalAction) -> usize {
@@ -285,6 +348,13 @@ fn menu_action_index(action: MenuAction) -> usize {
         .iter()
         .position(|spec| spec.action == action)
         .expect("menu action should have a spec")
+}
+
+fn annotation_menu_action_index(action: AnnotationMenuAction) -> usize {
+    ANNOTATION_MENU_ACTION_SPECS
+        .iter()
+        .position(|spec| spec.action == action)
+        .expect("annotation menu action should have a spec")
 }
 
 #[cfg(test)]

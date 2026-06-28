@@ -19,6 +19,7 @@ struct FakeKeyCtx {
     diff_menu: Option<bool>,
     color_scheme_picker: Option<bool>,
     options_menu: Option<bool>,
+    annotation_menu: Option<bool>,
     close_error_log: bool,
     pending_prefix: Option<bool>,
     single_global: Option<bool>,
@@ -105,6 +106,10 @@ impl MenuKeyContext for FakeKeyCtx {
 
     fn handle_options_menu_key_if_open(&mut self, _key: KeyEvent) -> MarkResult<Option<bool>> {
         Ok(self.options_menu)
+    }
+
+    fn handle_annotation_menu_key_if_open(&mut self, _key: KeyEvent) -> MarkResult<Option<bool>> {
+        Ok(self.annotation_menu)
     }
 }
 

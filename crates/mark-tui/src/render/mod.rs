@@ -21,10 +21,11 @@ use self::{
     compositor::{ComponentId, Compositor, RectComponent, RenderContext},
     diff::draw_diff,
     menus::{
-        branch_menu_area, branch_menu_list_visible_rows, color_scheme_picker_area,
+        annotation_menu_area, annotation_menu_list_visible_rows, branch_menu_area,
+        branch_menu_list_visible_rows, color_scheme_picker_area,
         color_scheme_picker_list_visible_rows, commit_menu_area, commit_menu_list_visible_rows,
-        diff_menu_area, draw_branch_menu, draw_color_scheme_picker, draw_commit_menu,
-        draw_diff_menu, draw_help_menu, draw_options_menu, draw_review_input,
+        diff_menu_area, draw_annotation_menu, draw_branch_menu, draw_color_scheme_picker,
+        draw_commit_menu, draw_diff_menu, draw_help_menu, draw_options_menu, draw_review_input,
         help_menu_list_visible_rows, options_menu_area, options_menu_block, review_input_area,
     },
     screen_layout::ScreenLayout,
@@ -40,6 +41,7 @@ fn overlay_component_id(layer: OverlayLayer) -> ComponentId {
         OverlayLayer::DiffMenu => ComponentId::DiffMenu,
         OverlayLayer::ReviewInput => ComponentId::ReviewInput,
         OverlayLayer::OptionsMenu => ComponentId::OptionsMenu,
+        OverlayLayer::AnnotationMenu => ComponentId::AnnotationMenu,
         OverlayLayer::ColorSchemePicker => ComponentId::ColorSchemePicker,
         OverlayLayer::BranchMenu => ComponentId::BranchMenu,
         OverlayLayer::CommitMenu => ComponentId::CommitMenu,
@@ -108,6 +110,7 @@ impl RenderContext for AppRenderCtx<'_> {
             ComponentId::DiffMenu => draw_diff_menu(frame, self.app, area),
             ComponentId::ReviewInput => draw_review_input(frame, self.app, area),
             ComponentId::OptionsMenu => draw_options_menu(frame, self.app, area),
+            ComponentId::AnnotationMenu => draw_annotation_menu(frame, self.app, area),
             ComponentId::ColorSchemePicker => draw_color_scheme_picker(frame, self.app, area),
             ComponentId::BranchMenu => draw_branch_menu(frame, self.app, area),
             ComponentId::CommitMenu => draw_commit_menu(frame, self.app, area),
@@ -136,6 +139,7 @@ fn build_render_state_plan(app: &DiffApp, layout: &ScreenLayout, root: Rect) -> 
         let inner = options_menu_block(app.config.theme).inner(area);
         selector_menu_list_rows(inner.height, 0)
     });
+    let annotation_menu_visible_rows = annotation_menu_list_visible_rows(app, root);
 
     RenderStatePlan {
         terminal_area: root,
@@ -144,6 +148,7 @@ fn build_render_state_plan(app: &DiffApp, layout: &ScreenLayout, root: Rect) -> 
         viewport_rows: layout.diff.height as usize,
         viewport_width: layout.diff.width as usize,
         options_menu_visible_rows,
+        annotation_menu_visible_rows,
         color_scheme_picker_visible_rows: color_scheme_picker_list_visible_rows(app, root),
         branch_menu_visible_rows: branch_menu_list_visible_rows(app, root),
         commit_menu_visible_rows: commit_menu_list_visible_rows(app, root),
@@ -154,12 +159,14 @@ fn build_render_state_plan(app: &DiffApp, layout: &ScreenLayout, root: Rect) -> 
 fn build_hit_map(app: &DiffApp, layout: &ScreenLayout, root: Rect) -> HitMap {
     let diff_choices = app.filtered_diff_choices();
     let option_items = app.filtered_options_menu_items();
+    let annotation_items = app.filtered_annotation_menu_items();
     HitMap {
         diff_area: Some(layout.diff),
         diff_menu_area: diff_menu_area(app, root, &diff_choices),
         branch_menu_area: branch_menu_area(app, root),
         commit_menu_area: commit_menu_area(app, root),
         options_menu_area: options_menu_area(app, root, &option_items),
+        annotation_menu_area: annotation_menu_area(app, root, &annotation_items),
         review_input_area: review_input_area(app, root),
         color_scheme_picker_area: color_scheme_picker_area(app, root),
         error_log_separator_row: layout.error_log.map(|area| area.y),

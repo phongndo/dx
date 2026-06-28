@@ -39,6 +39,7 @@ pub(crate) use action::AppAction;
 pub(crate) use annotation_editor::{
     create_annotation_scratch_file, normalize_annotation_editor_contents,
 };
+pub(crate) use annotations::AnnotationMenuItem;
 #[cfg(test)]
 pub(crate) use clipboard::osc52_clipboard_sequence;
 pub(crate) use clipboard::{json_string, write_osc52_clipboard};
