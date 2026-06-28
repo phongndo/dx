@@ -10,6 +10,7 @@ pub(in crate::app) trait MenuKeyContext {
     fn handle_color_scheme_picker_key_if_open(&mut self, key: KeyEvent)
     -> MarkResult<Option<bool>>;
     fn handle_options_menu_key_if_open(&mut self, key: KeyEvent) -> MarkResult<Option<bool>>;
+    fn handle_annotation_menu_key_if_open(&mut self, key: KeyEvent) -> MarkResult<Option<bool>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,7 @@ impl MenuController {
             C::handle_diff_menu_key_if_open,
             C::handle_color_scheme_picker_key_if_open,
             C::handle_options_menu_key_if_open,
+            C::handle_annotation_menu_key_if_open,
         ] {
             let result = MenuRouteResult::from_optional_quit(handle(ctx, key)?);
             if result != MenuRouteResult::Ignored {

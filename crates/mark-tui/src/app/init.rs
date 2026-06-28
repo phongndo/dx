@@ -394,6 +394,8 @@ impl DiffApp {
                 review_input_cursor: 0,
                 options_menu_open: false,
                 options_menu: SelectorState::default(),
+                annotation_menu_open: false,
+                annotation_menu: SelectorState::default(),
                 options_menu_draft: OptionsDraft {
                     layout: layout_setting_from_override(layout_override),
                     live_updates_enabled: settings.live_reload,
@@ -412,6 +414,7 @@ impl DiffApp {
                 rendered_diff_menu_area: None,
                 rendered_branch_menu_area: None,
                 rendered_commit_menu_area: None,
+                rendered_annotation_menu_area: None,
                 rendered_review_input_area: None,
                 rendered_color_scheme_picker_area: None,
             },

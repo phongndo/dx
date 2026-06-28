@@ -144,6 +144,7 @@ m h            head branch picker
 m b            base branch picker
 m c            commit picker
 o              settings menu
+a              annotation search menu
 b              file browser
 s              toggle split/unified layout
 Ctrl-G         open the focused hunk in `$VISUAL`, `$GIT_EDITOR`, or `$EDITOR`

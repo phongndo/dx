@@ -49,6 +49,9 @@ impl DiffApp {
         hit_map.options_menu_area = hit_map
             .options_menu_area
             .filter(|_| self.overlays.options_menu_open);
+        hit_map.annotation_menu_area = hit_map
+            .annotation_menu_area
+            .filter(|_| self.overlays.annotation_menu_open);
         hit_map.review_input_area = hit_map
             .review_input_area
             .filter(|_| self.overlays.review_input_open);
@@ -65,6 +68,7 @@ impl DiffApp {
         self.overlays.rendered_diff_menu_area = hit_map.diff_menu_area;
         self.overlays.rendered_branch_menu_area = hit_map.branch_menu_area;
         self.overlays.rendered_commit_menu_area = hit_map.commit_menu_area;
+        self.overlays.rendered_annotation_menu_area = hit_map.annotation_menu_area;
         self.overlays.rendered_review_input_area = hit_map.review_input_area;
         self.overlays.rendered_color_scheme_picker_area = hit_map.color_scheme_picker_area;
         self.notifications.rendered_error_log_separator_row = hit_map.error_log_separator_row;
@@ -87,6 +91,9 @@ impl DiffApp {
 
         if let Some(rows) = state.options_menu_visible_rows {
             self.ensure_options_menu_selection_visible(rows);
+        }
+        if let Some(rows) = state.annotation_menu_visible_rows {
+            self.ensure_annotation_menu_selection_visible(rows);
         }
         if let Some(rows) = state.color_scheme_picker_visible_rows
             && self.overlays.color_scheme_picker_open

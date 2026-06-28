@@ -133,6 +133,8 @@ pub(crate) struct OverlayState {
     pub(crate) review_input_cursor: usize,
     pub(crate) options_menu_open: bool,
     pub(crate) options_menu: SelectorState,
+    pub(crate) annotation_menu_open: bool,
+    pub(crate) annotation_menu: SelectorState,
     pub(crate) options_menu_draft: OptionsDraft,
     pub(crate) color_scheme_picker_open: bool,
     pub(crate) color_scheme_picker: SelectorState,
@@ -140,6 +142,7 @@ pub(crate) struct OverlayState {
     pub(crate) rendered_diff_menu_area: Option<Rect>,
     pub(crate) rendered_branch_menu_area: Option<Rect>,
     pub(crate) rendered_commit_menu_area: Option<Rect>,
+    pub(crate) rendered_annotation_menu_area: Option<Rect>,
     pub(crate) rendered_review_input_area: Option<Rect>,
     pub(crate) rendered_color_scheme_picker_area: Option<Rect>,
 }
@@ -159,6 +162,10 @@ impl OverlayState {
 
     pub(crate) fn options_menu_is_open(&self) -> bool {
         self.options_menu_open
+    }
+
+    pub(crate) fn annotation_menu_is_open(&self) -> bool {
+        self.annotation_menu_open
     }
 
     pub(crate) fn color_scheme_picker_is_open(&self) -> bool {
@@ -189,6 +196,21 @@ impl OverlayState {
 
         self.options_menu_open = false;
         self.options_menu.reset();
+        true
+    }
+
+    pub(crate) fn close_annotation_menu(&mut self) -> bool {
+        if !self.annotation_menu_open
+            && self.annotation_menu.input.is_empty()
+            && self.annotation_menu.scroll == 0
+            && self.rendered_annotation_menu_area.is_none()
+        {
+            return false;
+        }
+
+        self.annotation_menu_open = false;
+        self.annotation_menu.reset();
+        self.rendered_annotation_menu_area = None;
         true
     }
 

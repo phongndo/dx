@@ -157,6 +157,13 @@ impl MenuKeyContext for KeyEventCtx<'_> {
         }
         Ok(None)
     }
+
+    fn handle_annotation_menu_key_if_open(&mut self, key: KeyEvent) -> MarkResult<Option<bool>> {
+        if self.app.overlays.annotation_menu_is_open() {
+            return self.app.handle_annotation_menu_key(key).map(Some);
+        }
+        Ok(None)
+    }
 }
 
 impl NavigationContext for KeyEventCtx<'_> {

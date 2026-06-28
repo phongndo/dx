@@ -1,8 +1,12 @@
+mod annotation_menu;
 mod diff;
 mod help;
 mod options;
 mod refs;
 
+pub(crate) use annotation_menu::{
+    annotation_menu_area, annotation_menu_list_visible_rows, draw_annotation_menu,
+};
 pub(crate) use diff::{
     diff_comparison_label, diff_menu_area, diff_menu_block, diff_selector_text,
     diff_selector_width, draw_diff_menu, draw_review_input, review_input_area,

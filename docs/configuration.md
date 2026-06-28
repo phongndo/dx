@@ -61,6 +61,7 @@ head_branch = "m h"
 base_branch = "m b"
 commit_picker = "m c"
 options_menu = "o"
+annotation_menu = "a"
 file_browser = "b"
 previous_file = "("
 next_file = ")"
@@ -81,6 +82,11 @@ next_diff_type = "tab"
 previous_diff_type = "shift-tab"
 next_annotation = "}"
 previous_annotation = "{"
+
+[keymap.annotation_menu]
+jump = "enter"
+edit_external = "ctrl-g"
+remove = "ctrl-x"
 
 [keymap.menu]
 up = ["up", "shift-tab", "ctrl-p"]
