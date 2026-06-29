@@ -5,6 +5,8 @@ use clap::{
     builder::styling::{AnsiColor, Styles},
 };
 
+use crate::version::CLI_VERSION;
+
 pub(crate) const HELP_TEMPLATE: &str = "\
 {about-with-newline}
 usage:
@@ -42,7 +44,7 @@ pub(crate) const RELEASE_REPO: &str = "phongndo/mark";
 #[derive(Debug, Parser)]
 #[command(
     name = "mark",
-    version,
+    version = CLI_VERSION,
     about = "Terminal Git diff review tool",
     override_usage = "mark [OPTIONS] [COMMAND|REV] [REV]",
     help_template = HELP_TEMPLATE,
@@ -333,7 +335,7 @@ pub(crate) struct PatchArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct UpdateArgs {
-    /// Release version to install, without or with the leading v.
+    /// Release version to install, or nightly, without or with the leading v.
     #[arg(long = "target-version", value_name = "VERSION")]
     pub(crate) version: Option<String>,
     /// Directory to update. Defaults to the directory containing the invoked mark.

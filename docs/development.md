@@ -114,6 +114,29 @@ mark-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz
 
 Those names are part of the installer contract.
 
+## Nightly flow
+
+The Nightly workflow publishes the latest `main` commit to a mutable `vnightly`
+GitHub prerelease. The installer treats it as an explicit version channel:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_VERSION=nightly sh
+```
+
+Nightly replaces the active `mark` binary. Users switch back to the latest
+stable semver release with:
+
+```sh
+mark update
+```
+
+Keep `vnightly` marked as a prerelease and not latest. The installer only
+resolves semver tags like `v0.7.1` for the default `latest` channel, so stable
+updates do not accidentally install nightly.
+
+Nightly builds set `MARK_BUILD_CHANNEL=nightly`, so `mark --version` includes
+the channel and source commit.
+
 ## pi-mark release flow
 
 `pi-mark` is published separately to npm.

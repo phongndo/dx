@@ -45,6 +45,22 @@ mark update
 mark update --target-version 0.7.1
 ```
 
+Nightly builds are published from `main` as a prerelease channel. Switch the
+installed `mark` binary to nightly, then back to stable, with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_VERSION=nightly sh
+mark update
+```
+
+Once on stable, switch to nightly again with:
+
+```sh
+mark update --target-version nightly
+```
+
+Nightly binaries report their channel and build commit in `mark --version`.
+
 ## Quick start
 
 ```sh

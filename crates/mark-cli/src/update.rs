@@ -12,6 +12,7 @@ use mark_core::MarkResult;
 use crate::{
     CliResult,
     args::{INSTALL_SCRIPT, RELEASE_REPO, UpdateArgs},
+    version::CLI_VERSION,
 };
 
 pub(crate) fn update(args: UpdateArgs) -> CliResult<()> {
@@ -32,7 +33,7 @@ pub(crate) fn update(args: UpdateArgs) -> CliResult<()> {
         .env("MARK_REPO", repo)
         .env("MARK_INSTALL_DIR", install_dir)
         .env("MARK_VERSION", version)
-        .env("MARK_CURRENT_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("MARK_CURRENT_VERSION", CLI_VERSION)
         .env("MARK_BINARY", binary)
         .env("MARK_INSTALL_ACTION", "update")
         .stdin(Stdio::piped())

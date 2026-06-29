@@ -52,7 +52,16 @@ case "$(uname -m)" in
     ;;
 esac
 
-cargo build -p mark-cli --locked
+case "$tag" in
+  vnightly)
+    MARK_BUILD_CHANNEL=nightly \
+    MARK_BUILD_COMMIT="$(git rev-parse --verify HEAD)" \
+      cargo build -p mark-cli --locked
+    ;;
+  *)
+    cargo build -p mark-cli --locked
+    ;;
+esac
 
 target="$arch-$platform"
 package="mark-$tag-$target"

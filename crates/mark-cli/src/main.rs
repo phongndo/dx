@@ -6,6 +6,7 @@ mod preflight;
 mod review;
 mod syntax;
 mod update;
+mod version;
 
 use std::{
     fmt,

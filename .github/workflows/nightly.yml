@@ -1,0 +1,166 @@
+name: Nightly
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  NIGHTLY_TAG: vnightly
+
+jobs:
+  validate-source:
+    name: Validate nightly source
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ensure workflow is running from main
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_ref="refs/heads/$DEFAULT_BRANCH"
+          if [[ "$GITHUB_REF" != "$expected_ref" ]]; then
+            echo "::error::Nightly releases must be built from $expected_ref; rerun this workflow from the $DEFAULT_BRANCH branch."
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: validate-source
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        env:
+          MARK_BUILD_CHANNEL: nightly
+          MARK_BUILD_COMMIT: ${{ github.sha }}
+        run: cargo test --workspace --all-targets --all-features --locked --target ${{ matrix.target }}
+
+      - name: Build nightly binary
+        env:
+          MARK_BUILD_CHANNEL: nightly
+          MARK_BUILD_COMMIT: ${{ github.sha }}
+        run: cargo build --release -p mark-cli --locked --target ${{ matrix.target }}
+
+      - name: Package nightly asset
+        shell: bash
+        run: |
+          package="mark-${NIGHTLY_TAG}-${{ matrix.target }}"
+          binary="target/${{ matrix.target }}/release/mark"
+          asset="dist/${package}.tar.gz"
+
+          test -x "$binary"
+          mkdir -p "dist/$package"
+          install -m 755 "$binary" "dist/$package/mark"
+          cp README.md LICENSE "dist/$package/"
+          printf '%s\n' "$GITHUB_SHA" > "dist/$package/REVISION"
+          tar -czf "$asset" -C dist "$package"
+
+          if command -v shasum >/dev/null 2>&1; then
+            (cd dist && shasum -a 256 "${package}.tar.gz" > "${package}.tar.gz.sha256")
+          else
+            (cd dist && sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256")
+          fi
+
+      - name: Upload nightly asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: mark-nightly-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  publish:
+    name: Publish nightly release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download nightly assets
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish mutable nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release delete "$NIGHTLY_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --cleanup-tag \
+            --yes || true
+          gh api -X DELETE \
+            "repos/$GITHUB_REPOSITORY/git/refs/tags/$NIGHTLY_TAG" \
+            >/dev/null 2>&1 || true
+
+          cat > release-notes.md <<EOF
+          Nightly build from main.
+
+          Commit: $GITHUB_SHA
+
+          Switch mark to nightly:
+
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/phongndo/mark/main/scripts/install.sh | MARK_VERSION=nightly sh
+          \`\`\`
+
+          Switch back to stable:
+
+          \`\`\`sh
+          mark update
+          \`\`\`
+          EOF
+
+          gh release create "$NIGHTLY_TAG" dist/*.tar.gz dist/*.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "mark nightly" \
+            --notes-file release-notes.md
