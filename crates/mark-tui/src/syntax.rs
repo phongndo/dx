@@ -20,7 +20,7 @@ pub(crate) use source::{FullFileSource, FullFileSourceKind, HunkSource, git_blob
 #[cfg(test)]
 pub(crate) use source::{
     SyntaxJob, SyntaxJobFailure, SyntaxJobSource, SyntaxResult, build_full_file_line_map,
-    build_hunk_source, run_syntax_worker,
+    build_hunk_source,
 };
 pub(crate) use source::{
     available_context_lines, full_file_source, load_full_file_source, split_context_source_lines,

@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::mpsc as std_mpsc,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use mark_syntax::{SyntaxLanguageSet, SyntaxLimits};
@@ -14,7 +14,6 @@ use crate::theme::{SYNTAX_THEME_ID, SyntaxBenchmarkReport};
 #[test]
 fn drop_closes_full_result_channel_before_joining_worker() {
     let queue = SyntaxWorkerQueue::new(1, 0);
-    let worker_queue = queue.clone();
     let (result_tx, result_rx) = mpsc::channel(1);
     result_tx
         .try_send(SyntaxResult {
@@ -22,12 +21,20 @@ fn drop_closes_full_result_channel_before_joining_worker() {
             side: Err(SyntaxJobFailure::HighlightError),
         })
         .expect("result channel should be prefilled");
-    queue
-        .try_push(syntax_job(syntax_key(1)), SyntaxPriority::Visible)
-        .expect("syntax job should queue");
 
-    let worker = thread::spawn(move || run_syntax_worker(worker_queue, result_tx));
-    wait_until(Duration::from_secs(1), || queue.len() == 0).expect("worker should take queued job");
+    let (started_tx, started_rx) = std_mpsc::channel();
+    let worker = thread::spawn(move || {
+        started_tx
+            .send(())
+            .expect("worker start signal should send");
+        let _ = result_tx.blocking_send(SyntaxResult {
+            key: syntax_key(1),
+            side: Err(SyntaxJobFailure::HighlightError),
+        });
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker should start");
 
     let syntax = SyntaxRuntime {
         languages: SyntaxLanguageSet::from_enabled_languages(&[]),
@@ -58,17 +65,6 @@ fn drop_closes_full_result_channel_before_joining_worker() {
     dropper.join().expect("dropper thread should finish");
 }
 
-fn wait_until(timeout: Duration, condition: impl Fn() -> bool) -> Result<(), ()> {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if condition() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    Err(())
-}
-
 fn syntax_key(file: usize) -> SyntaxKey {
     SyntaxKey {
         source: SyntaxSourceId {
@@ -79,18 +75,5 @@ fn syntax_key(file: usize) -> SyntaxKey {
         },
         language_hash: 1,
         theme_id: SYNTAX_THEME_ID,
-    }
-}
-
-fn syntax_job(key: SyntaxKey) -> SyntaxJob {
-    SyntaxJob {
-        key,
-        language: "rust".to_owned(),
-        source: SyntaxJobSource::Hunk(HunkSource {
-            text: "fn main() {}".to_owned(),
-            line_map: vec![Some(0)],
-            source_lines: 1,
-        }),
-        limits: SyntaxLimits::default(),
     }
 }
