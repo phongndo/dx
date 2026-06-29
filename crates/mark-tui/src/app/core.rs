@@ -85,9 +85,29 @@ pub(crate) struct FocusedEditorLaunch {
     pub(crate) editor: String,
 }
 
+pub(crate) struct AsyncJob<T> {
+    rx: oneshot::Receiver<T>,
+}
+
+impl<T> AsyncJob<T> {
+    pub(crate) fn new(rx: oneshot::Receiver<T>) -> Self {
+        Self { rx }
+    }
+
+    pub(crate) fn try_recv(&mut self) -> Result<T, oneshot::error::TryRecvError> {
+        self.rx.try_recv()
+    }
+}
+
+impl<T> std::fmt::Debug for AsyncJob<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("AsyncJob").finish()
+    }
+}
+
 pub(crate) struct EditorReloadWorker {
     pub(crate) generation: u64,
-    pub(crate) rx: oneshot::Receiver<EditorScopedReload>,
+    pub(crate) job: AsyncJob<EditorScopedReload>,
 }
 
 impl std::fmt::Debug for EditorReloadWorker {
@@ -102,18 +122,30 @@ pub(crate) struct EditorScopedReload {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PostFilterNavigation {
+    Preserve,
+    JumpToGrep,
+}
+
+impl PostFilterNavigation {
+    pub(crate) fn jumps_to_grep(self) -> bool {
+        matches!(self, Self::JumpToGrep)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PendingFilterApply {
     pub(crate) generation: u64,
     pub(crate) due_at: Instant,
-    pub(crate) jump_to_grep: bool,
+    pub(crate) navigation: PostFilterNavigation,
 }
 
 pub(crate) struct FilterWorker {
     pub(crate) generation: u64,
     pub(crate) file_filter: String,
     pub(crate) grep_filter: String,
-    pub(crate) jump_to_grep: bool,
-    pub(crate) rx: oneshot::Receiver<DiffSearchResult>,
+    pub(crate) navigation: PostFilterNavigation,
+    pub(crate) job: AsyncJob<DiffSearchResult>,
 }
 
 impl std::fmt::Debug for FilterWorker {
@@ -123,7 +155,7 @@ impl std::fmt::Debug for FilterWorker {
             .field("generation", &self.generation)
             .field("file_filter", &self.file_filter)
             .field("grep_filter", &self.grep_filter)
-            .field("jump_to_grep", &self.jump_to_grep)
+            .field("navigation", &self.navigation)
             .finish_non_exhaustive()
     }
 }
@@ -157,7 +189,7 @@ pub(crate) fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
 
 pub(crate) fn show_rev_from_options(options: &DiffOptions) -> Option<String> {
     match &options.source {
-        DiffSource::Show(rev) if !rev.is_empty() => Some(rev.clone()),
+        DiffSource::Show(rev) if !rev.is_empty() => Some(rev.to_string()),
         _ => None,
     }
 }
@@ -167,20 +199,24 @@ pub(crate) fn diff_choice_for_options(options: &DiffOptions) -> Option<DiffChoic
         return Some(DiffChoice::Review);
     }
 
-    match (&options.source, options.scope) {
-        (DiffSource::Worktree, DiffScope::All) => Some(DiffChoice::All),
-        (DiffSource::Worktree, DiffScope::Unstaged) => Some(DiffChoice::Unstaged),
-        (DiffSource::Worktree, DiffScope::Staged) => Some(DiffChoice::Staged),
-        (DiffSource::Base(_) | DiffSource::Branch { .. }, DiffScope::All) => {
-            Some(DiffChoice::Branch)
-        }
-        (DiffSource::Show(_), DiffScope::All) => Some(DiffChoice::Show),
+    match &options.source {
+        DiffSource::Worktree {
+            scope: DiffScope::All,
+        } => Some(DiffChoice::All),
+        DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        } => Some(DiffChoice::Unstaged),
+        DiffSource::Worktree {
+            scope: DiffScope::Staged,
+        } => Some(DiffChoice::Staged),
+        DiffSource::Base(_) | DiffSource::Branch { .. } => Some(DiffChoice::Branch),
+        DiffSource::Show(_) => Some(DiffChoice::Show),
         _ => None,
     }
 }
 
 pub(crate) fn cacheable_diff_options(options: &DiffOptions) -> bool {
-    !options.stat
+    !options.is_stat()
         && !matches!(
             options.source,
             DiffSource::Patch(_) | DiffSource::Difftool { .. }
@@ -206,18 +242,30 @@ pub(crate) fn previous_context_expansion(expansion: DiffContextExpansion) -> Dif
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DiffLoadCachePolicy {
+    Use,
+    Bypass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchMetadataPolicy {
+    Preserve,
+    Refresh,
+}
+
 #[derive(Debug)]
 pub(crate) struct PendingDiffLoad {
     pub(crate) options: DiffOptions,
     pub(crate) error_prefix: String,
-    pub(crate) refresh_branch_metadata: bool,
-    pub(crate) rx: oneshot::Receiver<MarkResult<Changeset>>,
+    pub(crate) branch_metadata: BranchMetadataPolicy,
+    pub(crate) job: AsyncJob<MarkResult<Changeset>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct PendingReviewLoad {
     pub(crate) error_prefix: String,
-    pub(crate) rx: oneshot::Receiver<MarkResult<(DiffOptions, Changeset)>>,
+    pub(crate) job: AsyncJob<MarkResult<(DiffOptions, Changeset)>>,
 }
 
 #[derive(Debug)]
@@ -234,7 +282,7 @@ pub(crate) struct DiffCacheEntry {
 #[derive(Debug)]
 pub(crate) struct PendingDiffPrefetch {
     pub(crate) options: DiffOptions,
-    pub(crate) rx: oneshot::Receiver<MarkResult<Changeset>>,
+    pub(crate) job: AsyncJob<MarkResult<Changeset>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

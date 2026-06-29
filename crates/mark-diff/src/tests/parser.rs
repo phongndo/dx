@@ -7,12 +7,12 @@ fn parse_patch_omits_no_newline_at_end_of_file_marker() {
     let files = parse_patch(patch);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines.len(), 3);
+    assert_eq!(files[0].hunks()[0].lines.len(), 3);
     assert!(
-        files[0].hunks[0]
+        files[0].hunks()[0]
             .lines
             .iter()
-            .all(|line| line.kind != DiffLineKind::Meta)
+            .all(|line| line.kind() != DiffLineKind::Meta)
     );
 }
 
@@ -26,12 +26,12 @@ fn parse_patch_reads_file_hunks_and_line_numbers() {
     assert_eq!(files[0].display_path(), "a.txt");
     assert_eq!(files[0].additions, 2);
     assert_eq!(files[0].deletions, 1);
-    assert_eq!(files[0].hunks[0].lines[0].old_line, Some(1));
-    assert_eq!(files[0].hunks[0].lines[0].new_line, Some(1));
-    assert_eq!(files[0].hunks[0].lines[1].old_line, Some(2));
-    assert_eq!(files[0].hunks[0].lines[1].new_line, None);
-    assert_eq!(files[0].hunks[0].lines[2].old_line, None);
-    assert_eq!(files[0].hunks[0].lines[2].new_line, Some(2));
+    assert_eq!(files[0].hunks()[0].lines[0].old_line(), Some(1));
+    assert_eq!(files[0].hunks()[0].lines[0].new_line(), Some(1));
+    assert_eq!(files[0].hunks()[0].lines[1].old_line(), Some(2));
+    assert_eq!(files[0].hunks()[0].lines[1].new_line(), None);
+    assert_eq!(files[0].hunks()[0].lines[2].old_line(), None);
+    assert_eq!(files[0].hunks()[0].lines[2].new_line(), Some(2));
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn parse_patch_stats_counts_without_storing_hunk_lines() {
     assert_eq!(stats.files[0].additions, 2);
     assert_eq!(stats.files[0].deletions, 1);
     assert_eq!(stats.files[1].display_path(), "blob.bin");
-    assert!(stats.files[1].is_binary);
+    assert!(stats.files[1].is_binary());
     assert_eq!(stats.totals.files, 2);
     assert_eq!(stats.totals.additions, 2);
     assert_eq!(stats.totals.deletions, 1);
@@ -75,8 +75,8 @@ fn render_bytes_stat_matches_full_changeset_stat_for_patch() {
         );
     let options = DiffOptions {
         source: DiffSource::Patch(PatchSource::Stdin(patch)),
-        stat: true,
-        include_untracked: false,
+        output: crate::DiffOutput::Stat,
+        local_untracked: crate::UntrackedMode::Exclude,
         ..DiffOptions::default()
     };
 
@@ -96,7 +96,7 @@ fn parse_numstat_reads_regular_renamed_and_binary_files() {
     assert_eq!(stats.files.len(), 3);
     assert_eq!(stats.files[0].display_path(), "src/lib.rs");
     assert_eq!(stats.files[1].display_path(), "image.bin");
-    assert!(stats.files[1].is_binary);
+    assert!(stats.files[1].is_binary());
     assert_eq!(stats.files[2].display_path(), "new/name.rs");
     assert_eq!(stats.totals.files, 3);
     assert_eq!(stats.totals.additions, 2);
@@ -117,6 +117,19 @@ fn parse_patch_reads_plain_unified_diff_without_git_header() {
 }
 
 #[test]
+fn parse_patch_preserves_distinct_plain_unified_header_paths() {
+    let patch = "--- old.txt\n+++ new.txt\n@@ -1 +1 @@\n-old\n+new\n";
+
+    let files = parse_patch(patch);
+
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].status(), FileStatus::Modified);
+    assert_eq!(files[0].old_path(), Some("old.txt"));
+    assert_eq!(files[0].new_path(), Some("new.txt"));
+    assert_eq!(files[0].display_path(), "new.txt");
+}
+
+#[test]
 fn plain_unified_file_headers_wait_for_completed_hunks() {
     let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n--- old marker\n+++ new marker\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+new\n";
 
@@ -124,8 +137,8 @@ fn plain_unified_file_headers_wait_for_completed_hunks() {
 
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].display_path(), "a.txt");
-    assert_eq!(files[0].hunks[0].lines[0].text, "-- old marker");
-    assert_eq!(files[0].hunks[0].lines[1].text, "++ new marker");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "-- old marker");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "++ new marker");
     assert_eq!(files[1].display_path(), "b.txt");
 }
 
@@ -136,14 +149,8 @@ fn parse_patch_dequotes_git_c_style_paths() {
     let files = parse_patch(patch);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(
-        files[0].old_path.as_deref(),
-        Some("name\twith\"quote\\.txt")
-    );
-    assert_eq!(
-        files[0].new_path.as_deref(),
-        Some("name\twith\"quote\\.txt")
-    );
+    assert_eq!(files[0].old_path(), Some("name\twith\"quote\\.txt"));
+    assert_eq!(files[0].new_path(), Some("name\twith\"quote\\.txt"));
     assert_eq!(files[0].display_path(), "name\twith\"quote\\.txt");
 }
 
@@ -154,8 +161,8 @@ fn parse_patch_dequotes_git_octal_utf8_paths() {
     let files = parse_patch(patch);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].old_path.as_deref(), Some("é.txt"));
-    assert_eq!(files[0].new_path.as_deref(), Some("é.txt"));
+    assert_eq!(files[0].old_path(), Some("é.txt"));
+    assert_eq!(files[0].new_path(), Some("é.txt"));
     assert_eq!(files[0].display_path(), "é.txt");
 }
 
@@ -166,8 +173,8 @@ fn parse_patch_preserves_crlf_payloads() {
     let files = parse_patch(patch);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[0].text, "old\r");
-    assert_eq!(files[0].hunks[0].lines[1].text, "old");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "old\r");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "old");
 }
 
 #[test]
@@ -175,14 +182,14 @@ fn parse_patch_dequotes_rename_and_copy_metadata_paths() {
     let renamed = parse_patch(
         "diff --git \"a/old\\tname.txt\" \"b/new\\tname.txt\"\nsimilarity index 100%\nrename from \"old\\tname.txt\"\nrename to \"new\\tname.txt\"\n",
     );
-    assert_eq!(renamed[0].old_path.as_deref(), Some("old\tname.txt"));
-    assert_eq!(renamed[0].new_path.as_deref(), Some("new\tname.txt"));
+    assert_eq!(renamed[0].old_path(), Some("old\tname.txt"));
+    assert_eq!(renamed[0].new_path(), Some("new\tname.txt"));
 
     let copied = parse_patch(
         "diff --git \"a/src\\\"file.txt\" \"b/copy\\\"file.txt\"\nsimilarity index 100%\ncopy from \"src\\\"file.txt\"\ncopy to \"copy\\\"file.txt\"\n",
     );
-    assert_eq!(copied[0].old_path.as_deref(), Some("src\"file.txt"));
-    assert_eq!(copied[0].new_path.as_deref(), Some("copy\"file.txt"));
+    assert_eq!(copied[0].old_path(), Some("src\"file.txt"));
+    assert_eq!(copied[0].new_path(), Some("copy\"file.txt"));
 }
 
 #[test]
@@ -193,7 +200,7 @@ fn stat_rendering_escapes_terminal_control_characters_in_paths() {
         );
     let output = render(DiffOptions {
         source: DiffSource::Patch(PatchSource::Stdin(patch)),
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..DiffOptions::default()
     })
     .expect("stat output should render");
@@ -210,10 +217,10 @@ fn parse_patch_preserves_binary_paths_with_spaces() {
     let files = parse_patch(patch);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].old_path.as_deref(), Some("my file.bin"));
-    assert_eq!(files[0].new_path.as_deref(), Some("my file.bin"));
+    assert_eq!(files[0].old_path(), Some("my file.bin"));
+    assert_eq!(files[0].new_path(), Some("my file.bin"));
     assert_eq!(files[0].display_path(), "my file.bin");
-    assert!(files[0].is_binary);
+    assert!(files[0].is_binary());
 }
 
 #[test]
@@ -221,18 +228,18 @@ fn rename_or_copy_status_wins_over_later_mode_headers() {
     let renamed = parse_patch(
         "diff --git a/old.txt b/new.txt\nrename from old.txt\nrename to new.txt\nold mode 100644\nnew mode 100755\n",
     );
-    assert_eq!(renamed[0].status, FileStatus::Renamed);
+    assert_eq!(renamed[0].status(), FileStatus::Renamed);
 
     let copied = parse_patch(
         "diff --git a/source.txt b/copy.txt\ncopy from source.txt\ncopy to copy.txt\nold mode 100644\nnew mode 100755\n",
     );
-    assert_eq!(copied[0].status, FileStatus::Copied);
+    assert_eq!(copied[0].status(), FileStatus::Copied);
 }
 
 #[test]
 fn view_model_indexes_file_and_hunk_rows() {
     let changeset = Changeset {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         title: "test".to_owned(),
         files: parse_patch(
             "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n",

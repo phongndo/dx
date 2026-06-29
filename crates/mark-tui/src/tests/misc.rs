@@ -15,12 +15,7 @@ fn text_matcher_preserves_case_and_prefix_matching() {
     assert!(unicode.matches("éCLAIR"));
     assert!(!unicode.matches("Éclair"));
 
-    let addition = DiffLine {
-        kind: DiffLineKind::Addition,
-        old_line: None,
-        new_line: Some(1),
-        text: "changed".to_owned(),
-    };
+    let addition = DiffLine::addition(1, "changed".to_owned());
     let prefixed = TextMatcher::new("+changed").expect("matcher should be created");
     assert!(diff_line_grep_text_matches(&addition, &prefixed));
 }
@@ -28,7 +23,7 @@ fn text_matcher_preserves_case_and_prefix_matching() {
 #[test]
 fn configured_leader_e_is_unmapped() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.config.keymap = Keymap::parse(
         r#"

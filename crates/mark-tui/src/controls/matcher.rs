@@ -1,5 +1,7 @@
 use mark_diff::{Changeset, DiffLine, DiffLineKind, DiffStats};
 
+use crate::model::FileIndex;
+
 pub(crate) fn branch_match_score(query: &str, branch: &str) -> Option<(usize, usize)> {
     let branch_lower = branch.to_ascii_lowercase();
     if branch_lower == query {
@@ -229,17 +231,17 @@ pub(crate) fn file_matches_file_filter(
 pub(crate) fn file_filter_texts(file: &mark_diff::DiffFile) -> Vec<String> {
     let mut texts = Vec::with_capacity(4);
     texts.push(file.display_path().to_owned());
-    if let Some(old_path) = &file.old_path
+    if let Some(old_path) = file.old_path()
         && old_path != file.display_path()
     {
-        texts.push(old_path.clone());
+        texts.push(old_path.to_owned());
     }
-    if let Some(new_path) = &file.new_path
+    if let Some(new_path) = file.new_path()
         && new_path != file.display_path()
     {
-        texts.push(new_path.clone());
+        texts.push(new_path.to_owned());
     }
-    texts.push(file.status.label().to_owned());
+    texts.push(file.status().label().to_owned());
     texts
 }
 
@@ -256,21 +258,15 @@ pub(crate) fn file_matches_grep_filter(
 
 pub(crate) fn file_grep_text_matches(file: &mark_diff::DiffFile, matcher: &TextMatcher) -> bool {
     matcher.matches(file.display_path())
+        || file.old_path().is_some_and(|path| matcher.matches(path))
+        || file.new_path().is_some_and(|path| matcher.matches(path))
+        || matcher.matches(file.status().label())
         || file
-            .old_path
-            .as_deref()
-            .is_some_and(|path| matcher.matches(path))
-        || file
-            .new_path
-            .as_deref()
-            .is_some_and(|path| matcher.matches(path))
-        || matcher.matches(file.status.label())
-        || file
-            .hunks
+            .hunks()
             .iter()
             .any(|hunk| hunk_grep_text_matches(hunk, matcher))
-        || (file.is_binary && matcher.matches("binary file"))
-        || (!file.is_binary && file.hunks.is_empty() && matcher.matches("no textual changes"))
+        || (file.is_binary() && matcher.matches("binary file"))
+        || (file.has_no_textual_changes() && matcher.matches("no textual changes"))
 }
 
 pub(crate) fn hunk_grep_text_matches(hunk: &mark_diff::DiffHunk, matcher: &TextMatcher) -> bool {
@@ -282,7 +278,7 @@ pub(crate) fn hunk_grep_text_matches(hunk: &mark_diff::DiffHunk, matcher: &TextM
 }
 
 pub(crate) fn diff_line_grep_text_matches(line: &DiffLine, matcher: &TextMatcher) -> bool {
-    matcher.matches_prefixed(diff_line_grep_prefix(line.kind), &line.text)
+    matcher.matches_prefixed(diff_line_grep_prefix(line.kind()), line.text())
 }
 
 pub(crate) fn diff_line_grep_prefix(kind: DiffLineKind) -> char {
@@ -294,15 +290,18 @@ pub(crate) fn diff_line_grep_prefix(kind: DiffLineKind) -> char {
     }
 }
 
-pub(crate) fn diff_stats_for_files(changeset: &Changeset, files: &[usize]) -> DiffStats {
+pub(crate) fn diff_stats_for_files(changeset: &Changeset, files: &[FileIndex]) -> DiffStats {
     let mut stats = DiffStats {
         files: files.len(),
         ..DiffStats::default()
     };
-    for file in files.iter().filter_map(|file| changeset.files.get(*file)) {
+    for file in files
+        .iter()
+        .filter_map(|file| changeset.files.get(file.get()))
+    {
         stats.additions += file.additions;
         stats.deletions += file.deletions;
-        if file.is_binary {
+        if file.is_binary() {
             stats.binary_files += 1;
         }
     }

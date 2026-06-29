@@ -64,7 +64,7 @@ impl LiveDiff {
                 continue;
             }
             watcher
-                .watch(&watch_path.path, watch_path.recursive_mode())
+                .watch(&watch_path.path, watch_path.mode)
                 .map_err(|error| {
                     watcher_error(
                         &format!("failed to watch {}", watch_path.path.display()),
@@ -127,17 +127,7 @@ pub(crate) enum LiveDiffReload {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LiveDiffWatchPath {
     pub(crate) path: PathBuf,
-    pub(crate) recursive: bool,
-}
-
-impl LiveDiffWatchPath {
-    pub(crate) fn recursive_mode(&self) -> RecursiveMode {
-        if self.recursive {
-            RecursiveMode::Recursive
-        } else {
-            RecursiveMode::NonRecursive
-        }
-    }
+    pub(crate) mode: RecursiveMode,
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +146,7 @@ impl LiveDiffWatchSpec {
                 exact_paths: Vec::new(),
             },
         };
-        spec.add_watch_path(repo.to_path_buf(), true);
+        spec.add_watch_path(repo.to_path_buf(), RecursiveMode::Recursive);
         spec
     }
 
@@ -188,25 +178,27 @@ impl LiveDiffWatchSpec {
         }
     }
 
-    pub(crate) fn add_watch_path(&mut self, path: PathBuf, recursive: bool) {
+    pub(crate) fn add_watch_path(&mut self, path: PathBuf, mode: RecursiveMode) {
         if let Some(existing) = self
             .watch_paths
             .iter_mut()
             .find(|watch_path| watch_path.path == path)
         {
-            existing.recursive |= recursive;
+            if mode == RecursiveMode::Recursive {
+                existing.mode = RecursiveMode::Recursive;
+            }
             return;
         }
 
-        self.watch_paths.push(LiveDiffWatchPath { path, recursive });
+        self.watch_paths.push(LiveDiffWatchPath { path, mode });
     }
 
     pub(crate) fn add_git_state(&mut self, path: PathBuf) {
         self.add_git_state_path(path.clone());
         if path.is_dir() {
-            self.add_watch_path(path, true);
+            self.add_watch_path(path, RecursiveMode::Recursive);
         } else if let Some(parent) = path.parent() {
-            self.add_watch_path(parent.to_path_buf(), false);
+            self.add_watch_path(parent.to_path_buf(), RecursiveMode::NonRecursive);
         }
     }
 }
@@ -318,7 +310,7 @@ fn is_relevant_git_metadata_components(mut components: std::path::Components<'_>
 pub(crate) fn live_diff_supported(options: &DiffOptions) -> bool {
     matches!(
         options.source,
-        DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Difftool { .. }
+        DiffSource::Worktree { .. } | DiffSource::Base(_) | DiffSource::Difftool { .. }
     )
 }
 
@@ -382,7 +374,7 @@ fn add_difftool_watch_path(spec: &mut LiveDiffWatchSpec, repo: &Path, path: &Pat
     } else {
         return;
     };
-    spec.add_watch_path(watch_path, false);
+    spec.add_watch_path(watch_path, RecursiveMode::NonRecursive);
 }
 
 fn is_null_path(path: &Path) -> bool {
@@ -560,8 +552,8 @@ mod tests {
     fn difftool_live_diff_is_supported() {
         assert!(live_diff_supported(&DiffOptions {
             source: DiffSource::Difftool {
-                left: PathBuf::from("left.tmp"),
-                right: PathBuf::from("right.tmp"),
+                left: PathBuf::from("left.tmp").into(),
+                right: PathBuf::from("right.tmp").into(),
                 path: None,
             },
             ..DiffOptions::default()

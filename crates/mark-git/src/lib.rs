@@ -24,9 +24,22 @@ pub struct GitWorktree {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitWorktreeState {
-    pub dirty: bool,
-    pub modified_at_unix: u64,
+pub enum GitWorktreeState {
+    Clean,
+    Dirty { modified_at_unix: u64 },
+}
+
+impl GitWorktreeState {
+    pub fn is_dirty(&self) -> bool {
+        matches!(self, Self::Dirty { .. })
+    }
+
+    pub fn modified_at_unix(&self) -> u64 {
+        match self {
+            Self::Clean => 0,
+            Self::Dirty { modified_at_unix } => *modified_at_unix,
+        }
+    }
 }
 
 pub fn repository_root(repo: Option<&Path>) -> MarkResult<PathBuf> {
@@ -134,14 +147,10 @@ pub fn worktree_state(path: &Path) -> MarkResult<GitWorktreeState> {
     }
 
     if output.stdout.is_empty() {
-        return Ok(GitWorktreeState {
-            dirty: false,
-            modified_at_unix: 0,
-        });
+        return Ok(GitWorktreeState::Clean);
     }
 
-    Ok(GitWorktreeState {
-        dirty: true,
+    Ok(GitWorktreeState::Dirty {
         modified_at_unix: status_paths_modified_at(path, &output.stdout),
     })
 }
@@ -760,9 +769,9 @@ mod tests {
 
         let state = worktree_state(&repo).expect("worktree state should be read");
 
-        assert!(state.dirty);
+        assert!(state.is_dirty());
         assert_eq!(
-            state.modified_at_unix,
+            state.modified_at_unix(),
             path_modified_at(&nested_file).expect("file mtime should be read")
         );
 
@@ -844,7 +853,7 @@ mod tests {
         assert!(apply_patch_reverse(&repo, &patch).expect("patch should reverse"));
 
         assert_eq!(fs::read_to_string(repo.join("file.txt")).unwrap(), "base\n");
-        assert!(!worktree_state(&repo).unwrap().dirty);
+        assert!(!worktree_state(&repo).unwrap().is_dirty());
 
         fs::remove_dir_all(test_dir).expect("test directory should be removed");
     }

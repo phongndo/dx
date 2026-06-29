@@ -16,8 +16,8 @@ fn render_bytes_stat_matches_full_changeset_stat_for_repo_source() {
     fs::write(repo.join("untracked.txt"), "new\n").expect("untracked file should be written");
     git(["mv", "rename.txt", "renamed.txt"], &repo);
     let options = DiffOptions {
-        repo: Some(repo.clone()),
-        stat: true,
+        repo: Some(repo.clone().into()),
+        output: crate::DiffOutput::Stat,
         ..DiffOptions::default()
     };
 
@@ -37,8 +37,8 @@ fn load_review_with_patch_bytes_reports_repo_patch_len_without_retention() {
     fs::write(repo.join("base.txt"), "base\nchanged\n").expect("tracked file should change");
 
     let options = DiffOptions {
-        repo: Some(repo.clone()),
-        include_untracked: false,
+        repo: Some(repo.clone().into()),
+        local_untracked: crate::UntrackedMode::Exclude,
         ..DiffOptions::default()
     };
     let expected_patch_bytes = u64::try_from(render_bytes(options.clone()).unwrap().len()).unwrap();
@@ -73,7 +73,7 @@ fn render_untracked_empty_and_noeol_files_as_applyable_patch() {
         &test_dir,
     );
     let patch = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     })
     .expect("diff should render");
@@ -100,7 +100,7 @@ fn render_unborn_head_worktree_diff_against_empty_tree() {
     fs::write(repo.join("new.txt"), "new\n").expect("new file should be written");
 
     let output = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     })
     .expect("unborn HEAD diff should render");
@@ -130,7 +130,7 @@ fn render_unborn_sha256_head_worktree_diff_against_empty_tree() {
     fs::write(repo.join("new.txt"), "new\n").expect("new file should be written");
 
     let output = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     })
     .expect("unborn SHA-256 HEAD diff should render");
@@ -164,7 +164,7 @@ fn render_untracked_symlink_as_symlink_without_reading_target() {
         &test_dir,
     );
     let patch = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     })
     .expect("diff should render");

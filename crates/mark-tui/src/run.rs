@@ -14,7 +14,10 @@ use mark_diff::{Changeset, DiffOptions};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::{
-    app::{DiffApp, SyntaxStartupMode, max_scroll_for_viewport, run_loop, sync_live_diff},
+    app::{
+        DiffApp, LiveUpdatesState, PostFilterNavigation, SyntaxStartupMode,
+        max_scroll_for_viewport, run_loop, sync_live_diff,
+    },
     controls::{DiffLayoutMode, default_layout_for_width, filtered_file_indices},
     model::UiModel,
     render::diff::render_row,
@@ -23,16 +26,37 @@ use crate::{
     theme::{DiffBenchmarkOptions, DiffBenchmarkReport},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiffRunOptions {
+    pub live_updates: bool,
+    pub syntax_enabled: bool,
+}
+
+impl Default for DiffRunOptions {
+    fn default() -> Self {
+        Self {
+            live_updates: true,
+            syntax_enabled: true,
+        }
+    }
+}
+
 pub fn run() -> MarkResult<()> {
     run_diff(DiffOptions::default())
 }
 
 pub fn run_diff(options: DiffOptions) -> MarkResult<()> {
-    run_diff_with_live_updates(options, true)
+    run_diff_with_options(options, DiffRunOptions::default())
 }
 
 pub fn run_diff_with_live_updates(options: DiffOptions, live_updates: bool) -> MarkResult<()> {
-    run_diff_with_live_updates_and_syntax(options, live_updates, true)
+    run_diff_with_options(
+        options,
+        DiffRunOptions {
+            live_updates,
+            ..DiffRunOptions::default()
+        },
+    )
 }
 
 pub fn run_diff_with_live_updates_and_syntax(
@@ -40,17 +64,22 @@ pub fn run_diff_with_live_updates_and_syntax(
     live_updates: bool,
     syntax_enabled: bool,
 ) -> MarkResult<()> {
-    runtime::block_on(run_diff_with_live_updates_and_syntax_async(
+    run_diff_with_options(
         options,
-        live_updates,
-        syntax_enabled,
-    ))?
+        DiffRunOptions {
+            live_updates,
+            syntax_enabled,
+        },
+    )
 }
 
-async fn run_diff_with_live_updates_and_syntax_async(
+pub fn run_diff_with_options(options: DiffOptions, run_options: DiffRunOptions) -> MarkResult<()> {
+    runtime::block_on(run_diff_with_options_async(options, run_options))?
+}
+
+async fn run_diff_with_options_async(
     options: DiffOptions,
-    live_updates: bool,
-    syntax_enabled: bool,
+    run_options: DiffRunOptions,
 ) -> MarkResult<()> {
     let load_options = options.clone();
     let changeset = runtime::spawn_blocking(move || mark_diff::load_review_ref(&load_options))
@@ -62,14 +91,16 @@ async fn run_diff_with_live_updates_and_syntax_async(
         })??;
 
     let layout = default_layout_for_width(crossterm::terminal::size()?.0);
-    let syntax_mode = if syntax_enabled {
+    let syntax_mode = if run_options.syntax_enabled {
         SyntaxStartupMode::Config
     } else {
         SyntaxStartupMode::Disabled
     };
     let mut app = DiffApp::new_with_syntax(options, changeset, layout, syntax_mode);
-    app.jobs.live_updates_allowed = live_updates;
-    app.jobs.live_updates_enabled = live_updates && app.jobs.live_updates_enabled;
+    app.jobs.live_updates = LiveUpdatesState::from_allowed_and_enabled(
+        run_options.live_updates,
+        run_options.live_updates && app.jobs.live_updates.enabled(),
+    );
 
     let mut cleanup = TerminalCleanup::install()?;
     let backend = CrosstermBackend::new(io::stdout());
@@ -79,9 +110,15 @@ async fn run_diff_with_live_updates_and_syntax_async(
         app.apply_responsive_layout(terminal_width);
     }
     let mut live_diff = None;
-    sync_live_diff(&mut live_diff, &mut app, live_updates);
+    sync_live_diff(&mut live_diff, &mut app, run_options.live_updates);
 
-    let result = run_loop(&mut terminal, &mut app, live_updates, &mut live_diff).await;
+    let result = run_loop(
+        &mut terminal,
+        &mut app,
+        run_options.live_updates,
+        &mut live_diff,
+    )
+    .await;
     let cleanup_result = cleanup.cleanup();
 
     result?;
@@ -95,7 +132,7 @@ pub fn benchmark_diff_view(
 ) -> DiffBenchmarkReport {
     let options = sanitize_benchmark_options(options);
     let file_count = changeset.files.len();
-    let hunk_count = changeset.files.iter().map(|file| file.hunks.len()).sum();
+    let hunk_count = changeset.files.iter().map(|file| file.hunks().len()).sum();
     let syntax_mode = syntax_languages
         .map(SyntaxStartupMode::Languages)
         .unwrap_or(SyntaxStartupMode::Disabled);
@@ -129,19 +166,19 @@ pub fn benchmark_diff_view(
 
     let file_filter_apply_start = Instant::now();
     app.filters.file_filter = "src".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
     let file_filter_apply_micros = file_filter_apply_start.elapsed().as_micros();
 
     app.filters.file_filter.clear();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     let grep_filter_apply_start = Instant::now();
     app.filters.grep_filter = "line".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
     let grep_filter_apply_micros = grep_filter_apply_start.elapsed().as_micros();
 
     app.filters.grep_filter.clear();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     let (hunk_navigation_steps, hunk_navigation_total_micros, hunk_navigation_max_micros) =
         benchmark_hunk_navigation(&app.document.model);

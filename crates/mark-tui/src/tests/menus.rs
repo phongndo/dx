@@ -119,11 +119,11 @@ fn configured_help_key_filters_help_menu_when_open() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("configured help key should open help");
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
 
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("configured help key should filter help");
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
     assert_eq!(app.overlays.help_menu_input, "h");
 }
 
@@ -143,14 +143,14 @@ fn configured_leader_help_key_filters_help_menu_when_open() {
         .expect("leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("leader help should open help");
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
 
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("space should filter while help is open");
     assert!(app.input.key_prefix_pending.is_none());
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("h should filter while help is open");
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
     assert_eq!(app.overlays.help_menu_input, " h");
     assert!(app.input.key_prefix_pending.is_none());
 }
@@ -166,7 +166,7 @@ fn m_m_opens_diff_source_menu() {
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
         .expect("m m should be handled");
 
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 }
 
@@ -178,14 +178,14 @@ fn o_key_opens_options_menu() {
     app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
         .expect("o should be handled");
 
-    assert!(app.overlays.options_menu_open);
+    assert!(app.overlays.options_menu_is_open());
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::Layout));
 }
 
 #[test]
 fn configured_edit_hunk_key_does_not_bypass_open_menus() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(
         DiffOptions::default(),
         changeset.clone(),
@@ -206,7 +206,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
     );
 
     assert!(!should_quit);
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.overlays.diff_menu.input, "j");
     assert!(app.notifications.error_log.is_none());
 
@@ -228,7 +228,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
         handle_test_key_event(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert!(!should_quit);
-    assert!(app.overlays.options_menu_open);
+    assert!(app.overlays.options_menu_is_open());
     assert_eq!(app.viewport.layout, DiffLayoutMode::Split);
     assert!(app.notifications.error_log.is_none());
 
@@ -240,7 +240,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
         "#,
     )
     .expect("keymap should parse");
-    app.refs.branch_menu_open = Some(BranchMenu::Head);
+    app.refs.open_branch_menu(BranchMenu::Head);
 
     let should_quit = handle_test_key_event(
         &mut app,
@@ -248,7 +248,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
     );
 
     assert!(!should_quit);
-    assert_eq!(app.refs.branch_menu_open, Some(BranchMenu::Head));
+    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Head));
     assert_eq!(app.refs.branch_menu.input, "j");
     assert!(app.notifications.error_log.is_none());
 }
@@ -257,7 +257,7 @@ fn configured_edit_hunk_key_does_not_bypass_open_menus() {
 fn help_menu_esc_closes_without_quitting() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.overlays.help_menu_open = true;
+    app.overlays.open_help_menu();
     app.runtime.dirty = false;
 
     let should_quit = app
@@ -265,7 +265,7 @@ fn help_menu_esc_closes_without_quitting() {
         .expect("Esc should close help");
 
     assert!(!should_quit);
-    assert!(!app.overlays.help_menu_open);
+    assert!(!app.overlays.help_menu_is_open());
     assert!(app.runtime.dirty);
 }
 
@@ -273,7 +273,7 @@ fn help_menu_esc_closes_without_quitting() {
 fn esc_closes_diff_menu_before_error_log() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.overlays.diff_menu_open = true;
+    app.overlays.open_diff_menu();
     app.set_error_log("reload failed");
 
     let should_quit = app
@@ -281,7 +281,7 @@ fn esc_closes_diff_menu_before_error_log() {
         .expect("Esc should close topmost menu");
 
     assert!(!should_quit);
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     assert!(app.notifications.error_log.is_some());
 }
 
@@ -297,7 +297,7 @@ fn copy_error_log_key_does_not_preempt_branch_menu_input() {
     )
     .expect("keymap should parse");
     app.set_error_log("reload failed");
-    app.refs.branch_menu_open = Some(BranchMenu::Head);
+    app.refs.open_branch_menu(BranchMenu::Head);
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE))
@@ -604,7 +604,7 @@ fn help_menu_uses_diff_theme_colors() {
 #[test]
 fn commit_match_score_matches_sha_and_subject() {
     let commit = GitCommit {
-        sha: "abcdef0123456789".to_owned(),
+        sha: "abcdef0123456789".into(),
         subject: "fix tui menus".to_owned(),
     };
     assert!(commit_match_score("abcdef0", &commit).is_some());
@@ -640,15 +640,15 @@ fn diff_menu_show_loads_current_commit_like_branch() {
         app.move_diff_menu_selection(1);
     }
     app.select_highlighted_diff_choice();
-    assert!(!app.overlays.diff_menu_open);
-    assert!(!app.refs.commit_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
+    assert!(!app.refs.commit_menu_is_open());
     let load = app
         .jobs
         .pending_diff_load
         .as_ref()
         .expect("show choice should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Show("HEAD".to_owned()));
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
+    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
@@ -677,8 +677,8 @@ fn diff_menu_lists_all_changes_first() {
 fn tab_does_not_switch_range_diff_to_branch_or_worktree() {
     let options = DiffOptions {
         source: DiffSource::Range {
-            left: "main".to_owned(),
-            right: "feature".to_owned(),
+            left: "main".into(),
+            right: "feature".into(),
         },
         ..DiffOptions::default()
     };
@@ -720,14 +720,19 @@ fn diff_menu_keyboard_selects_diff_choice() {
         .expect("enter should apply menu selection");
 
     assert!(!should_quit);
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     let load = app
         .jobs
         .pending_diff_load
         .as_ref()
         .expect("menu selection should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::Unstaged);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::Unstaged
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Unstaged));
 }
 
 #[test]
@@ -744,8 +749,8 @@ fn diff_menu_review_choice_opens_review_input() {
     }
     app.select_highlighted_diff_choice();
 
-    assert!(!app.overlays.diff_menu_open);
-    assert!(app.overlays.review_input_open);
+    assert!(!app.overlays.diff_menu_is_open());
+    assert!(app.overlays.review_input_is_open());
     assert_eq!(app.overlays.review_input, "");
 }
 
@@ -766,7 +771,7 @@ fn review_input_url_queues_review_load() {
         app.jobs.pending_review_load = Some(pending_review_load());
     });
 
-    assert!(!app.overlays.review_input_open);
+    assert!(!app.overlays.review_input_is_open());
     assert_eq!(
         submitted_target.as_deref(),
         Some("https://github.com/owner/repo/pull/1")
@@ -791,7 +796,7 @@ fn review_input_number_queues_review_load() {
         app.jobs.pending_review_load = Some(pending_review_load());
     });
 
-    assert!(!app.overlays.review_input_open);
+    assert!(!app.overlays.review_input_is_open());
     assert_eq!(submitted_target.as_deref(), Some("123"));
     assert!(app.jobs.pending_review_load.is_some());
 }
@@ -822,8 +827,8 @@ fn review_load_repo_preserves_current_repo_context() {
 #[test]
 fn review_patch_source_uses_review_selector_label() {
     let options = DiffOptions {
-        source: DiffSource::Patch(PatchSource::Text {
-            label: "review owner/repo#123".to_owned(),
+        source: DiffSource::Patch(PatchSource::Review {
+            label: "review owner/repo#123".into(),
             patch: Arc::from(&b""[..]),
         }),
         ..DiffOptions::default()
@@ -844,7 +849,7 @@ fn review_patch_source_uses_review_selector_label() {
 #[test]
 fn review_load_preserves_include_untracked_for_followup_local_diffs() {
     let options = DiffOptions {
-        include_untracked: true,
+        local_untracked: mark_diff::UntrackedMode::Include,
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -853,27 +858,27 @@ fn review_load_preserves_include_untracked_for_followup_local_diffs() {
         DiffLayoutMode::Unified,
     );
     let review_options = DiffOptions {
-        source: DiffSource::Patch(PatchSource::Text {
-            label: "review owner/repo#123".to_owned(),
+        source: DiffSource::Patch(PatchSource::Review {
+            label: "review owner/repo#123".into(),
             patch: Arc::from(&b""[..]),
         }),
-        include_untracked: false,
+        local_untracked: mark_diff::UntrackedMode::Exclude,
         ..DiffOptions::default()
     };
     let (tx, rx) = oneshot::channel();
     let _ = tx.send(Ok((review_options, changeset_with_context_lines(1))));
     app.jobs.pending_review_load = Some(PendingReviewLoad {
         error_prefix: "review unavailable".to_owned(),
-        rx,
+        job: AsyncJob::new(rx),
     });
 
     app.drain_pending_review_load();
 
-    assert!(app.document.options.include_untracked);
+    assert!(app.document.options.include_untracked());
     assert!(
         app.options_for_choice(DiffChoice::All)
             .expect("all choice should be available")
-            .include_untracked
+            .include_untracked()
     );
 }
 
@@ -913,27 +918,27 @@ fn diff_menu_uses_configured_menu_keymap() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         .expect("configured close key should close menu");
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     assert_eq!(app.overlays.diff_menu.input, "");
 
     app.open_diff_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("configured confirm key should select menu item");
 
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     let load = app
         .jobs
         .pending_diff_load
         .as_ref()
         .expect("menu selection should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Base("main".to_owned()));
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(load.options.source, DiffSource::Base("main".into()));
+    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
 fn branch_menu_uses_configured_menu_keymap() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -944,8 +949,7 @@ fn branch_menu_uses_configured_menu_keymap() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches =
-        vec!["main".to_owned(), "feature".to_owned(), "topic".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature", "topic"]);
     app.config.keymap = Keymap::parse(
         r#"
         [keymap.menu]
@@ -972,7 +976,7 @@ fn branch_menu_uses_configured_menu_keymap() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))
         .expect("configured close key should close branch menu");
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.refs.branch_menu_open().is_none());
     assert_eq!(app.refs.branch_menu.input, "");
 
     app.toggle_branch_menu(BranchMenu::Head);
@@ -981,7 +985,7 @@ fn branch_menu_uses_configured_menu_keymap() {
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("configured confirm key should select branch");
 
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.refs.branch_menu_open().is_none());
     let load = app
         .jobs
         .pending_diff_load
@@ -990,11 +994,11 @@ fn branch_menu_uses_configured_menu_keymap() {
     assert_eq!(
         load.options.source,
         DiffSource::Branch {
-            base: "main".to_owned(),
-            head: "topic".to_owned()
+            base: "main".into(),
+            head: "topic".into()
         }
     );
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
@@ -1031,7 +1035,7 @@ fn diff_menu_plain_letters_filter_input() {
         .expect("plain j should filter menu input");
 
     assert_eq!(app.overlays.diff_menu.input, "j");
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.highlighted_diff_choice(), None);
 }
 
@@ -1047,7 +1051,7 @@ fn diff_menu_space_filters_without_entering_leader() {
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
         .expect("space should filter menu input");
 
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert!(app.input.key_prefix_pending.is_none());
     assert_eq!(app.overlays.diff_menu.input, " ");
     assert!(app.jobs.pending_diff_load.is_none());
@@ -1067,7 +1071,7 @@ fn diff_menu_q_filters_without_quitting() {
         .expect("q should filter menu input");
 
     assert!(!should_quit);
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.overlays.diff_menu.input, "q");
 }
 
@@ -1081,22 +1085,22 @@ fn diff_menu_branch_keys_do_not_open_branch_picker() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature"]);
 
     app.open_diff_menu();
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Branch));
     app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
         .expect("b should filter diff menu");
 
-    assert!(app.overlays.diff_menu_open);
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.overlays.diff_menu_is_open());
+    assert!(app.refs.branch_menu_open().is_none());
     assert_eq!(app.overlays.diff_menu.input, "b");
 
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("h should filter diff menu");
 
-    assert!(app.overlays.diff_menu_open);
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.overlays.diff_menu_is_open());
+    assert!(app.refs.branch_menu_open().is_none());
     assert_eq!(app.overlays.diff_menu.input, "bh");
 }
 
@@ -1115,7 +1119,7 @@ fn diff_menu_number_keys_filter_input() {
     app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
         .expect("2 should filter diff choices");
 
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.overlays.diff_menu.input, "2");
     assert!(app.jobs.pending_diff_load.is_none());
 }
@@ -1189,14 +1193,19 @@ fn diff_menu_mouse_selects_visible_centered_choice() {
 
     app.handle_click(column, row);
 
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     let load = app
         .jobs
         .pending_diff_load
         .as_ref()
         .expect("visible click should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::Unstaged);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::Unstaged
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Unstaged));
 }
 
 #[test]
@@ -1213,7 +1222,7 @@ fn diff_menu_mouse_ignores_old_top_left_choice_coordinates() {
 
     app.handle_click(1, 1);
 
-    assert!(!app.overlays.diff_menu_open);
+    assert!(!app.overlays.diff_menu_is_open());
     assert!(app.jobs.pending_diff_load.is_none());
 }
 
@@ -1226,7 +1235,7 @@ fn options_menu_toggles_setting_on_enter() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should toggle layout");
 
-    assert!(app.overlays.options_menu_open);
+    assert!(app.overlays.options_menu_is_open());
     assert_eq!(app.viewport.layout, DiffLayoutMode::Split);
 }
 
@@ -1477,7 +1486,7 @@ fn options_menu_plain_letters_filter_input() {
     app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
         .expect("x should filter settings");
 
-    assert!(app.overlays.options_menu_open);
+    assert!(app.overlays.options_menu_is_open());
     assert_eq!(app.overlays.options_menu.input, "x");
     assert_eq!(app.viewport.layout, DiffLayoutMode::Unified);
     assert_eq!(app.highlighted_option(), Some(OptionsMenuItem::LiveReload));
@@ -1580,7 +1589,7 @@ fn options_menu_cycles_notification_settings() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should toggle notification mode");
     assert_eq!(
-        app.config.syntax_settings.notifications.mode,
+        app.config.syntax_settings.notifications.mode(),
         NotificationMode::Debug
     );
     assert!(app.notifications.toasts.debug_enabled());
@@ -1590,7 +1599,7 @@ fn options_menu_cycles_notification_settings() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should cycle toast corner");
     assert_eq!(
-        app.config.syntax_settings.notifications.corner,
+        app.config.syntax_settings.notifications.corner(),
         ToastCorner::BottomRight
     );
     assert_eq!(app.notifications.toasts.corner(), ToastCorner::BottomRight);
@@ -1602,7 +1611,7 @@ fn options_menu_cycles_notification_settings() {
     );
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
         .expect("right should cycle toast timeout");
-    assert_eq!(app.config.syntax_settings.notifications.timeout_ms, 2_500);
+    assert_eq!(app.config.syntax_settings.notifications.timeout_ms(), 2_500);
 
     app.set_options_menu_selection(8);
     assert_eq!(
@@ -1611,15 +1620,19 @@ fn options_menu_cycles_notification_settings() {
     );
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
         .expect("right should cycle toast max visible");
-    assert_eq!(app.config.syntax_settings.notifications.max_visible, 4);
+    assert_eq!(app.config.syntax_settings.notifications.max_visible(), 4);
 }
 
 #[test]
 fn options_menu_cycles_custom_notification_values_to_nearest_choices() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.config.syntax_settings.notifications.timeout_ms = 2_000;
-    app.config.syntax_settings.notifications.max_visible = 10;
+    app.config.syntax_settings.notifications = NotificationSettings::new(
+        app.config.syntax_settings.notifications.mode(),
+        app.config.syntax_settings.notifications.corner(),
+        2_000,
+        10,
+    );
 
     app.open_options_menu();
     app.set_options_menu_selection(7);
@@ -1629,7 +1642,7 @@ fn options_menu_cycles_custom_notification_values_to_nearest_choices() {
     );
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
         .expect("right should cycle custom toast timeout to next choice");
-    assert_eq!(app.config.syntax_settings.notifications.timeout_ms, 2_500);
+    assert_eq!(app.config.syntax_settings.notifications.timeout_ms(), 2_500);
     assert_eq!(
         app.config
             .last_persisted_options_menu_draft
@@ -1646,7 +1659,7 @@ fn options_menu_cycles_custom_notification_values_to_nearest_choices() {
     );
     app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
         .expect("right should cycle custom toast max visible to nearest choice");
-    assert_eq!(app.config.syntax_settings.notifications.max_visible, 5);
+    assert_eq!(app.config.syntax_settings.notifications.max_visible(), 5);
     assert_eq!(
         app.config
             .last_persisted_options_menu_draft
@@ -1702,7 +1715,7 @@ fn options_menu_clamps_selection_after_toggle_leaves_filter() {
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should activate the rendered highlighted setting");
-    assert!(!app.jobs.live_updates_enabled);
+    assert!(!app.jobs.live_updates.enabled());
 }
 
 #[test]
@@ -1718,7 +1731,7 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme input");
-    assert!(app.overlays.color_scheme_picker_open);
+    assert!(app.overlays.color_scheme_picker_is_open());
     for character in ['t', 'o', 'k', 'y', 'o'] {
         app.handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE))
             .expect("typing should filter colorschemes");
@@ -1739,8 +1752,8 @@ fn options_menu_colorscheme_input_selects_draft_and_applies_on_enter() {
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should select colorscheme draft");
-    assert!(!app.overlays.color_scheme_picker_open);
-    assert!(app.overlays.options_menu_open);
+    assert!(!app.overlays.color_scheme_picker_is_open());
+    assert!(app.overlays.options_menu_is_open());
     assert_eq!(
         app.overlays.options_menu_draft.color_scheme,
         ColorSchemeChoice::Tokyonight
@@ -1790,7 +1803,7 @@ fn colorscheme_picker_mouse_selection_persists_draft() {
     })
     .expect("mouse click should select colorscheme");
 
-    assert!(!app.overlays.color_scheme_picker_open);
+    assert!(!app.overlays.color_scheme_picker_is_open());
     assert_eq!(app.config.color_scheme, ColorSchemeChoice::GruvboxDark);
     assert_eq!(
         app.overlays.options_menu_draft.color_scheme,
@@ -1813,7 +1826,7 @@ fn colorscheme_picker_mouse_dismiss_keeps_options_menu_open() {
     app.move_options_menu_selection(4);
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should open colorscheme picker");
-    assert!(app.overlays.color_scheme_picker_open);
+    assert!(app.overlays.color_scheme_picker_is_open());
 
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -1823,16 +1836,16 @@ fn colorscheme_picker_mouse_dismiss_keeps_options_menu_open() {
     })
     .expect("mouse click should dismiss colorscheme picker");
 
-    assert!(!app.overlays.color_scheme_picker_open);
-    assert!(app.overlays.options_menu_open);
+    assert!(!app.overlays.color_scheme_picker_is_open());
+    assert!(app.overlays.options_menu_is_open());
 }
 
 #[test]
 fn options_menu_omits_branch_options_for_branch_diff() {
     let options = DiffOptions {
         source: DiffSource::Branch {
-            base: "main".to_owned(),
-            head: "feature".to_owned(),
+            base: "main".into(),
+            head: "feature".into(),
         },
         ..DiffOptions::default()
     };
@@ -1841,7 +1854,7 @@ fn options_menu_omits_branch_options_for_branch_diff() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature"]);
 
     app.open_options_menu();
 
@@ -1866,8 +1879,8 @@ fn options_menu_omits_branch_options_for_branch_diff() {
 fn options_menu_does_not_open_branch_picker_for_branch_diff() {
     let options = DiffOptions {
         source: DiffSource::Branch {
-            base: "main".to_owned(),
-            head: "feature".to_owned(),
+            base: "main".into(),
+            head: "feature".into(),
         },
         ..DiffOptions::default()
     };
@@ -1876,20 +1889,20 @@ fn options_menu_does_not_open_branch_picker_for_branch_diff() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature"]);
 
     app.open_options_menu();
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should toggle first setting");
-    assert!(app.overlays.options_menu_open);
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.overlays.options_menu_is_open());
+    assert!(app.refs.branch_menu_open().is_none());
 }
 
 #[test]
 fn options_menu_live_reload_toggles_without_reloading_diff() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    assert!(app.jobs.live_updates_enabled);
+    assert!(app.jobs.live_updates.enabled());
 
     app.open_options_menu();
     app.move_options_menu_selection(1);
@@ -1897,7 +1910,7 @@ fn options_menu_live_reload_toggles_without_reloading_diff() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should toggle live reload");
 
-    assert!(!app.jobs.live_updates_enabled);
+    assert!(!app.jobs.live_updates.enabled());
     assert!(app.jobs.pending_diff_load.is_none());
 }
 
@@ -1905,7 +1918,7 @@ fn options_menu_live_reload_toggles_without_reloading_diff() {
 fn options_menu_reenabling_live_reload_reloads_diff() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.jobs.live_updates_enabled = false;
+    app.jobs.live_updates = LiveUpdatesState::DisabledByUser;
 
     app.open_options_menu();
     app.move_options_menu_selection(1);
@@ -1913,7 +1926,7 @@ fn options_menu_reenabling_live_reload_reloads_diff() {
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should toggle live reload");
 
-    assert!(app.jobs.live_updates_enabled);
+    assert!(app.jobs.live_updates.enabled());
     let load = app
         .jobs
         .pending_diff_load
@@ -1926,8 +1939,7 @@ fn options_menu_reenabling_live_reload_reloads_diff() {
 fn options_menu_does_not_enable_live_reload_when_watch_is_disabled() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.jobs.live_updates_allowed = false;
-    app.jobs.live_updates_enabled = false;
+    app.jobs.live_updates = LiveUpdatesState::DisabledByCli;
 
     app.open_options_menu();
     app.move_options_menu_selection(1);
@@ -2039,7 +2051,7 @@ fn scrollable_menu_draws_thin_scrollbar() {
 #[test]
 fn scrollable_menu_scrollbar_reaches_bottom_at_last_page() {
     let options = DiffOptions {
-        source: DiffSource::Base("branch-00".to_owned()),
+        source: DiffSource::Base("branch-00".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2050,7 +2062,9 @@ fn scrollable_menu_scrollbar_reaches_bottom_at_last_page() {
     app.refs.branch_base = Some("branch-00".to_owned());
     app.refs.branch_head = Some("branch-01".to_owned());
     app.refs.current_head = Some("branch-01".to_owned());
-    app.refs.comparison_branches = (0..59).map(|index| format!("branch-{index:02}")).collect();
+    app.refs.comparison_branches = (0..59)
+        .map(|index| format!("branch-{index:02}").into())
+        .collect();
     app.toggle_branch_menu(BranchMenu::Base);
     app.set_branch_selection(usize::MAX);
 
@@ -2237,7 +2251,7 @@ fn colorscheme_picker_previews_hovered_theme_and_reverts_on_close() {
     })
     .expect("outside click should close colorscheme picker");
 
-    assert!(!app.overlays.color_scheme_picker_open);
+    assert!(!app.overlays.color_scheme_picker_is_open());
     assert_eq!(app.config.color_scheme, ColorSchemeChoice::System);
     assert_eq!(app.config.theme, DiffTheme::system());
 }
@@ -2289,8 +2303,8 @@ fn colorscheme_picker_previews_first_hovered_theme() {
 #[test]
 fn tab_from_review_diff_cycles_to_all_changes() {
     let options = DiffOptions {
-        source: DiffSource::Patch(PatchSource::Text {
-            label: "review owner/repo#123".to_owned(),
+        source: DiffSource::Patch(PatchSource::Review {
+            label: "review owner/repo#123".into(),
             patch: Arc::from(&b""[..]),
         }),
         ..DiffOptions::default()
@@ -2311,8 +2325,13 @@ fn tab_from_review_diff_cycles_to_all_changes() {
         .pending_diff_load
         .as_ref()
         .expect("tab should queue all-changes diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::All
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
 }
 
 #[test]
@@ -2337,8 +2356,8 @@ fn tab_from_pending_review_load_cancels_to_current_all_changes() {
 #[test]
 fn diff_menu_options_preserve_repo_and_untracked_setting() {
     let options = DiffOptions {
-        repo: Some(PathBuf::from("/repo")),
-        include_untracked: false,
+        repo: Some(PathBuf::from("/repo").into()),
+        local_untracked: mark_diff::UntrackedMode::Exclude,
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2352,19 +2371,24 @@ fn diff_menu_options_preserve_repo_and_untracked_setting() {
 
     let staged = app.options_for_choice(DiffChoice::Staged).unwrap();
     assert_eq!(staged.repo, options.repo);
-    assert!(!staged.include_untracked);
-    assert_eq!(staged.source, DiffSource::Worktree);
-    assert_eq!(staged.scope, DiffScope::Staged);
+    assert!(!staged.include_untracked());
+    assert_eq!(
+        staged.source,
+        DiffSource::Worktree {
+            scope: DiffScope::Staged
+        }
+    );
+    assert_eq!(staged.worktree_scope(), Some(DiffScope::Staged));
 
     let branch = app.options_for_choice(DiffChoice::Branch).unwrap();
-    assert_eq!(branch.source, DiffSource::Base("origin/main".to_owned()));
-    assert_eq!(branch.scope, DiffScope::All);
+    assert_eq!(branch.source, DiffSource::Base("origin/main".into()));
+    assert_eq!(branch.worktree_scope(), None);
 }
 
 #[test]
 fn branch_choice_survives_switching_to_worktree_scope() {
     let options = DiffOptions {
-        source: DiffSource::Base("origin/main".to_owned()),
+        source: DiffSource::Base("origin/main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2383,8 +2407,8 @@ fn branch_choice_survives_switching_to_worktree_scope() {
         app.options_for_choice(DiffChoice::Branch)
             .map(|options| options.source),
         Some(DiffSource::Branch {
-            base: "origin/main".to_owned(),
-            head: "feature/header".to_owned(),
+            base: "origin/main".into(),
+            head: "feature/header".into(),
         })
     );
 }
@@ -2392,7 +2416,7 @@ fn branch_choice_survives_switching_to_worktree_scope() {
 #[test]
 fn branch_header_exposes_head_and_base_selectors() {
     let options = DiffOptions {
-        source: DiffSource::Base("origin/main".to_owned()),
+        source: DiffSource::Base("origin/main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2439,7 +2463,7 @@ fn branch_header_exposes_head_and_base_selectors() {
 #[test]
 fn branch_menu_draws_centered_floating_filter() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2450,7 +2474,7 @@ fn branch_menu_draws_centered_floating_filter() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature"]);
     app.toggle_branch_menu(BranchMenu::Base);
     app.push_branch_input('m');
 
@@ -2490,7 +2514,7 @@ fn branch_menu_draws_centered_floating_filter() {
 #[test]
 fn branch_menu_number_keys_filter_branch_names() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2501,11 +2525,7 @@ fn branch_menu_number_keys_filter_branch_names() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec![
-        "release/2026".to_owned(),
-        "release/2025".to_owned(),
-        "topic-a".to_owned(),
-    ];
+    app.refs.comparison_branches = branch_names(&["release/2026", "release/2025", "topic-a"]);
 
     app.toggle_branch_menu(BranchMenu::Head);
     for character in "release/".chars() {
@@ -2514,7 +2534,7 @@ fn branch_menu_number_keys_filter_branch_names() {
     app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
         .expect("2 should filter branch names");
 
-    assert_eq!(app.refs.branch_menu_open, Some(BranchMenu::Head));
+    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Head));
     assert_eq!(app.refs.branch_menu.input, "release/2");
     assert_eq!(
         app.filtered_branches(),
@@ -2526,7 +2546,7 @@ fn branch_menu_number_keys_filter_branch_names() {
 #[test]
 fn branch_menu_ctrl_n_and_ctrl_p_cycle_selection_from_input() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2537,8 +2557,7 @@ fn branch_menu_ctrl_n_and_ctrl_p_cycle_selection_from_input() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches =
-        vec!["main".to_owned(), "feature".to_owned(), "topic".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature", "topic"]);
 
     app.toggle_branch_menu(BranchMenu::Base);
     app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL))
@@ -2554,7 +2573,7 @@ fn branch_menu_ctrl_n_and_ctrl_p_cycle_selection_from_input() {
 #[test]
 fn branch_menu_scrolls_visible_branch_window() {
     let options = DiffOptions {
-        source: DiffSource::Base("branch-00".to_owned()),
+        source: DiffSource::Base("branch-00".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2562,7 +2581,9 @@ fn branch_menu_scrolls_visible_branch_window() {
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
-    app.refs.comparison_branches = (0..12).map(|index| format!("branch-{index:02}")).collect();
+    app.refs.comparison_branches = (0..12)
+        .map(|index| format!("branch-{index:02}").into())
+        .collect();
 
     assert_eq!(app.max_branch_menu_scroll(), 0);
 
@@ -2578,7 +2599,7 @@ fn branch_menu_scrolls_visible_branch_window() {
 #[test]
 fn branch_menu_expands_to_show_long_branch_when_terminal_allows() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2590,7 +2611,7 @@ fn branch_menu_expands_to_show_long_branch_when_terminal_allows() {
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature".to_owned());
     app.refs.current_head = Some("feature".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), long_branch.to_owned()];
+    app.refs.comparison_branches = vec!["main".into(), long_branch.into()];
     app.toggle_branch_menu(BranchMenu::Base);
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20))
@@ -2606,7 +2627,7 @@ fn branch_menu_expands_to_show_long_branch_when_terminal_allows() {
 #[test]
 fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
     let options = DiffOptions {
-        source: DiffSource::Base("branch-00".to_owned()),
+        source: DiffSource::Base("branch-00".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2617,7 +2638,9 @@ fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
     app.refs.branch_base = Some("branch-00".to_owned());
     app.refs.branch_head = Some("branch-01".to_owned());
     app.refs.current_head = Some("branch-01".to_owned());
-    app.refs.comparison_branches = (0..12).map(|index| format!("branch-{index:02}")).collect();
+    app.refs.comparison_branches = (0..12)
+        .map(|index| format!("branch-{index:02}").into())
+        .collect();
     app.toggle_branch_menu(BranchMenu::Base);
     app.move_branch_selection(5);
     assert_eq!(app.refs.branch_menu.scroll, 0);
@@ -2642,7 +2665,7 @@ fn branch_menu_scrolls_to_rendered_rows_in_short_terminal() {
 #[test]
 fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     let options = DiffOptions {
-        source: DiffSource::Base("branch-00".to_owned()),
+        source: DiffSource::Base("branch-00".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2659,7 +2682,9 @@ fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     app.refs.branch_base = Some("branch-00".to_owned());
     app.refs.branch_head = Some("branch-01".to_owned());
     app.refs.current_head = Some("branch-01".to_owned());
-    app.refs.comparison_branches = (0..40).map(|index| format!("branch-{index:02}")).collect();
+    app.refs.comparison_branches = (0..40)
+        .map(|index| format!("branch-{index:02}").into())
+        .collect();
     app.toggle_branch_menu(BranchMenu::Base);
 
     app.move_branch_selection(20);
@@ -2680,7 +2705,7 @@ fn branch_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
 #[test]
 fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
     let options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2691,7 +2716,7 @@ fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
     app.refs.show_rev = Some("ccccccc".to_owned());
     app.refs.comparison_commits = (0..12)
         .map(|index| GitCommit {
-            sha: format!("{index:07x}"),
+            sha: format!("{index:07x}").into(),
             subject: format!("commit-{index:02}"),
         })
         .collect();
@@ -2722,7 +2747,7 @@ fn commit_menu_scrolls_to_rendered_rows_and_highlights_selection() {
 #[test]
 fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     let options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2739,7 +2764,7 @@ fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
     app.refs.show_rev = Some("0000000".to_owned());
     app.refs.comparison_commits = (0..40)
         .map(|index| GitCommit {
-            sha: format!("{index:07x}"),
+            sha: format!("{index:07x}").into(),
             subject: format!("commit-{index:02}"),
         })
         .collect();
@@ -2766,7 +2791,7 @@ fn commit_menu_navigation_keeps_expanded_rows_stable_in_tall_terminal() {
 #[test]
 fn mouse_wheel_over_commit_menu_scrolls_menu_not_diff() {
     let options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2778,7 +2803,7 @@ fn mouse_wheel_over_commit_menu_scrolls_menu_not_diff() {
     assert!(app.max_scroll() > 0);
     app.refs.comparison_commits = (0..12)
         .map(|index| GitCommit {
-            sha: format!("{index:07x}"),
+            sha: format!("{index:07x}").into(),
             subject: format!("commit-{index:02}"),
         })
         .collect();
@@ -2799,7 +2824,7 @@ fn mouse_wheel_over_commit_menu_scrolls_menu_not_diff() {
 #[test]
 fn branch_combo_input_filters_and_completes() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2807,11 +2832,7 @@ fn branch_combo_input_filters_and_completes() {
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
-    app.refs.comparison_branches = vec![
-        "main".to_owned(),
-        "feature/header".to_owned(),
-        "fix/footer".to_owned(),
-    ];
+    app.refs.comparison_branches = branch_names(&["main", "feature/header", "fix/footer"]);
 
     app.push_branch_input('h');
     assert_eq!(app.filtered_branches(), vec!["feature/header"]);
@@ -2821,7 +2842,7 @@ fn branch_combo_input_filters_and_completes() {
     app.push_branch_input('h');
     assert_eq!(app.filtered_branches(), vec!["feature/header"]);
 
-    app.refs.branch_menu_open = Some(BranchMenu::Head);
+    app.refs.open_branch_menu(BranchMenu::Head);
     app.cycle_branch_completion(1);
     assert_eq!(app.refs.branch_menu.selected, 0);
     assert_eq!(app.refs.branch_menu.input, "fh");
@@ -2844,7 +2865,7 @@ fn branch_combo_input_filters_and_completes() {
 #[test]
 fn branch_combo_pins_current_head_and_base_before_recent_order() {
     let options = DiffOptions {
-        source: DiffSource::Base("release".to_owned()),
+        source: DiffSource::Base("release".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2855,21 +2876,16 @@ fn branch_combo_pins_current_head_and_base_before_recent_order() {
     app.refs.branch_head = Some("feature/header".to_owned());
     app.refs.current_head = Some("feature/header".to_owned());
     app.refs.branch_base = Some("release".to_owned());
-    app.refs.comparison_branches = vec![
-        "recent".to_owned(),
-        "old".to_owned(),
-        "origin/main".to_owned(),
-        "release".to_owned(),
-        "feature/header".to_owned(),
-    ];
+    app.refs.comparison_branches =
+        branch_names(&["recent", "old", "origin/main", "release", "feature/header"]);
 
-    app.refs.branch_menu_open = Some(BranchMenu::Base);
+    app.refs.open_branch_menu(BranchMenu::Base);
     assert_eq!(
         app.filtered_branches(),
         vec!["feature/header", "recent", "old", "origin/main"]
     );
 
-    app.refs.branch_menu_open = Some(BranchMenu::Head);
+    app.refs.open_branch_menu(BranchMenu::Head);
     assert_eq!(
         app.filtered_branches(),
         vec!["release", "recent", "old", "origin/main"]
@@ -2879,7 +2895,7 @@ fn branch_combo_pins_current_head_and_base_before_recent_order() {
 #[test]
 fn branch_combo_close_clears_input_without_changing_selection() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(
@@ -2889,20 +2905,17 @@ fn branch_combo_close_clears_input_without_changing_selection() {
     );
     app.refs.branch_base = Some("main".to_owned());
     app.refs.branch_head = Some("feature/header".to_owned());
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature/header".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature/header"]);
 
     app.toggle_branch_menu(BranchMenu::Base);
     app.push_branch_input('f');
     app.close_branch_menu();
 
-    assert!(app.refs.branch_menu_open.is_none());
+    assert!(app.refs.branch_menu_open().is_none());
     assert!(app.refs.branch_menu.input.is_empty());
     assert_eq!(app.refs.branch_base.as_deref(), Some("main"));
     assert_eq!(app.refs.branch_head.as_deref(), Some("feature/header"));
-    assert_eq!(
-        app.document.options.source,
-        DiffSource::Base("main".to_owned())
-    );
+    assert_eq!(app.document.options.source, DiffSource::Base("main".into()));
 }
 
 #[test]
@@ -2976,22 +2989,22 @@ fn color_scheme_picker_lists_supported_builtin_themes_only() {
 fn branch_full_file_source_uses_merge_base_and_head_revision() {
     let repo = std::env::temp_dir();
     let file = mark_diff::DiffFile {
-        old_path: Some("old.rs".to_owned()),
-        new_path: Some("new.rs".to_owned()),
-        status: mark_diff::FileStatus::Modified,
-        hunks: Vec::new(),
+        change: mark_diff::FileChange::from_status(
+            mark_diff::FileStatus::Renamed,
+            Some("old.rs".to_owned()),
+            Some("new.rs".to_owned()),
+        ),
         additions: 0,
         deletions: 0,
-        is_binary: false,
+        body: mark_diff::DiffFileBody::Text { hunks: Vec::new() },
     };
     let base = "origin/main".to_owned();
     let head = "feature/full-file".to_owned();
     let branch = DiffOptions {
         source: DiffSource::Branch {
-            base: base.clone(),
-            head: head.clone(),
+            base: base.clone().into(),
+            head: head.clone().into(),
         },
-        scope: DiffScope::All,
         ..DiffOptions::default()
     };
 
@@ -3000,9 +3013,9 @@ fn branch_full_file_source_uses_merge_base_and_head_revision() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitMergeBase {
-            base,
-            head: head.clone(),
-            path: "old.rs".to_owned(),
+            base: base.into(),
+            head: head.clone().into(),
+            path: "old.rs".into(),
         }
     );
     assert_eq!(
@@ -3010,8 +3023,8 @@ fn branch_full_file_source_uses_merge_base_and_head_revision() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitRevision {
-            rev: head,
-            path: "new.rs".to_owned(),
+            rev: head.into(),
+            path: "new.rs".into(),
         }
     );
 }

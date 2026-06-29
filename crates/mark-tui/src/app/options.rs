@@ -1,8 +1,7 @@
 use crate::controls::DiffLayoutMode;
 use mark_core::{MarkError, MarkResult};
 use mark_syntax::{
-    DiffContextExpansion, LayoutSetting, NotificationMode, SyntaxThemeConfig, SyntaxThemeSource,
-    ToastCorner,
+    DiffContextExpansion, LayoutSetting, NotificationMode, SyntaxThemeConfig, ToastCorner,
 };
 use std::fs;
 use std::path::Path;
@@ -127,9 +126,11 @@ pub(crate) fn color_scheme_label(choice: ColorSchemeChoice) -> &'static str {
 }
 
 pub(crate) fn color_scheme_from_config(config: &SyntaxThemeConfig) -> ColorSchemeChoice {
-    match config.source {
-        SyntaxThemeSource::Ansi | SyntaxThemeSource::Base16 => ColorSchemeChoice::Custom,
-        SyntaxThemeSource::Builtin => color_scheme_from_name(config.name.as_deref()),
+    match config {
+        SyntaxThemeConfig::Builtin { name } => color_scheme_from_name(name.as_deref()),
+        SyntaxThemeConfig::Ansi
+        | SyntaxThemeConfig::Base16 { .. }
+        | SyntaxThemeConfig::Base16MissingPath => ColorSchemeChoice::Custom,
     }
 }
 
@@ -161,10 +162,8 @@ pub(crate) fn color_scheme_from_name(name: Option<&str>) -> ColorSchemeChoice {
 pub(crate) fn color_scheme_config(choice: ColorSchemeChoice) -> Option<SyntaxThemeConfig> {
     match choice {
         ColorSchemeChoice::Custom => None,
-        choice => Some(SyntaxThemeConfig {
-            source: SyntaxThemeSource::Builtin,
+        choice => Some(SyntaxThemeConfig::Builtin {
             name: Some(color_scheme_label(choice).to_owned()),
-            path: None,
         }),
     }
 }
@@ -383,9 +382,8 @@ pub(crate) fn persist_options_menu_draft_to_path(
             );
         }
         OptionsMenuItem::ColorScheme => {
-            if let Some(config) = color_scheme_config(draft.color_scheme)
-                && config.source == SyntaxThemeSource::Builtin
-                && let Some(name) = config.name
+            if let Some(SyntaxThemeConfig::Builtin { name: Some(name) }) =
+                color_scheme_config(draft.color_scheme)
             {
                 table.insert("colorscheme".to_owned(), toml::Value::String(name));
             }

@@ -9,10 +9,10 @@ use mark_core::{MarkError, MarkResult};
 use crate::{DiffOptions, git_io::git_error};
 
 pub(super) fn difftool_workdir(options: &DiffOptions) -> MarkResult<PathBuf> {
-    options
-        .repo
-        .clone()
-        .map_or_else(|| env::current_dir().map_err(MarkError::Io), Ok)
+    options.repo.clone().map_or_else(
+        || env::current_dir().map_err(MarkError::Io),
+        |repo| Ok(repo.into_path_buf()),
+    )
 }
 
 pub(super) fn difftool_display_path(left: &Path, right: &Path, path: Option<&Path>) -> String {

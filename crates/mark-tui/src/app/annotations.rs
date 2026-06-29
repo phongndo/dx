@@ -25,19 +25,24 @@ pub(crate) struct AnnotationMenuItem {
     pub(crate) text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationEditMode {
+    Inline,
+    External,
+}
+
 impl DiffApp {
     pub(crate) fn open_annotation_menu(&mut self) {
         if self.annotations_state.annotations.is_empty() {
             self.set_notice("no annotations");
             return;
         }
-        self.overlays.annotation_menu.reset();
-        self.overlays.annotation_menu_open = true;
-        self.overlays.diff_menu_open = false;
-        self.overlays.options_menu_open = false;
         self.close_color_scheme_picker();
-        self.refs.branch_menu_open = None;
-        self.set_rendered_branch_menu_area(None);
+        self.overlays.annotation_menu.reset();
+        self.overlays.open_annotation_menu();
+        self.overlays.hide_diff_menu();
+        self.overlays.hide_options_menu();
+        self.close_branch_menu();
         self.close_review_input();
         self.close_commit_menu();
         self.runtime.dirty = true;
@@ -63,10 +68,10 @@ impl DiffApp {
                     .files
                     .iter()
                     .find(|file| {
-                        file.old_path.as_deref() == Some(key.path.as_str())
-                            || file.new_path.as_deref() == Some(key.path.as_str())
+                        file.old_path() == Some(key.path.as_str())
+                            || file.new_path() == Some(key.path.as_str())
                     })
-                    .map(|file| file.status)
+                    .map(|file| file.status())
                     .unwrap_or(FileStatus::Unknown);
                 Some(AnnotationMenuItem {
                     key: key.clone(),
@@ -144,13 +149,13 @@ impl DiffApp {
             .keymap
             .matches_annotation_menu(AnnotationMenuAction::Jump, key)
         {
-            self.edit_selected_annotation(false);
+            self.edit_selected_annotation(AnnotationEditMode::Inline);
         } else if self
             .config
             .keymap
             .matches_annotation_menu(AnnotationMenuAction::EditExternal, key)
         {
-            self.edit_selected_annotation(true);
+            self.edit_selected_annotation(AnnotationEditMode::External);
         } else if self
             .config
             .keymap
@@ -161,8 +166,8 @@ impl DiffApp {
             let len = self.filtered_annotation_menu_items().len();
             let outcome = SelectorController::new(&mut self.overlays.annotation_menu, len)
                 .apply_input_key(key);
-            if outcome.handled {
-                if outcome.changed {
+            if outcome.handled() {
+                if outcome.changed() {
                     self.runtime.dirty = true;
                 }
                 return Ok(false);
@@ -184,7 +189,7 @@ impl DiffApp {
             .cloned()
     }
 
-    fn edit_selected_annotation(&mut self, external: bool) {
+    fn edit_selected_annotation(&mut self, mode: AnnotationEditMode) {
         let Some(item) = self.selected_annotation_menu_item() else {
             return;
         };
@@ -202,7 +207,7 @@ impl DiffApp {
             input: text.clone(),
             cursor: text.len(),
         });
-        if external {
+        if mode == AnnotationEditMode::External {
             self.open_annotation_draft_in_editor();
         }
         self.runtime.dirty = true;

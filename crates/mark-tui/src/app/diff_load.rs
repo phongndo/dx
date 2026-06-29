@@ -4,7 +4,10 @@ mod review;
 
 pub(crate) use cache::diff_cache_entry;
 
-use super::{DiffApp, PendingDiffLoad, cacheable_diff_options};
+use super::{
+    AsyncJob, BranchMetadataPolicy, DiffApp, DiffLoadCachePolicy, PendingDiffLoad,
+    cacheable_diff_options,
+};
 use crate::runtime;
 use mark_diff::DiffOptions;
 use tokio::sync::oneshot;
@@ -15,7 +18,7 @@ impl DiffApp {
         options: DiffOptions,
         error_prefix: impl Into<String>,
     ) {
-        self.start_diff_load_inner(options, error_prefix, true);
+        self.start_diff_load_inner(options, error_prefix, DiffLoadCachePolicy::Use);
     }
 
     pub(crate) fn start_uncached_diff_load(
@@ -23,26 +26,27 @@ impl DiffApp {
         options: DiffOptions,
         error_prefix: impl Into<String>,
     ) {
-        self.start_diff_load_inner(options, error_prefix, false);
+        self.start_diff_load_inner(options, error_prefix, DiffLoadCachePolicy::Bypass);
     }
 
     pub(super) fn start_diff_load_inner(
         &mut self,
         options: DiffOptions,
         error_prefix: impl Into<String>,
-        use_cache: bool,
+        cache_policy: DiffLoadCachePolicy,
     ) {
         let error_prefix = error_prefix.into();
         self.jobs.pending_review_load = None;
 
-        let use_cache = use_cache && self.diff_cache_invalidator_active();
+        let use_cache = matches!(cache_policy, DiffLoadCachePolicy::Use)
+            && self.diff_cache_invalidator_active();
 
         if use_cache {
             self.store_current_diff_cache();
 
             if let Some(cached) = self.take_cached_diff(&options) {
                 self.jobs.pending_diff_load = None;
-                self.replace_cached_diff(options, cached, false);
+                self.replace_cached_diff(options, cached, BranchMetadataPolicy::Preserve);
                 return;
             }
 
@@ -63,8 +67,8 @@ impl DiffApp {
                 self.jobs.pending_diff_load = Some(PendingDiffLoad {
                     options,
                     error_prefix,
-                    refresh_branch_metadata: false,
-                    rx: prefetch.rx,
+                    branch_metadata: BranchMetadataPolicy::Preserve,
+                    job: prefetch.job,
                 });
                 self.set_success_notice("reloading");
                 self.runtime.dirty = true;
@@ -83,8 +87,12 @@ impl DiffApp {
         self.jobs.pending_diff_load = Some(PendingDiffLoad {
             options,
             error_prefix,
-            refresh_branch_metadata: !use_cache,
-            rx,
+            branch_metadata: if use_cache {
+                BranchMetadataPolicy::Preserve
+            } else {
+                BranchMetadataPolicy::Refresh
+            },
+            job: AsyncJob::new(rx),
         });
         self.set_success_notice("reloading");
         self.runtime.dirty = true;
@@ -97,7 +105,7 @@ impl DiffApp {
             .jobs
             .pending_diff_load
             .as_mut()
-            .and_then(|pending| match pending.rx.try_recv() {
+            .and_then(|pending| match pending.job.try_recv() {
                 Ok(result) => Some(Some(result)),
                 Err(oneshot::error::TryRecvError::Empty) => None,
                 Err(oneshot::error::TryRecvError::Closed) => Some(None),
@@ -113,11 +121,7 @@ impl DiffApp {
             Some(Ok(changeset)) => {
                 if cacheable_diff_options(&pending.options) {
                     let cached = diff_cache_entry(pending.options.clone(), changeset);
-                    self.replace_cached_diff(
-                        pending.options,
-                        cached,
-                        pending.refresh_branch_metadata,
-                    );
+                    self.replace_cached_diff(pending.options, cached, pending.branch_metadata);
                 } else {
                     self.replace_loaded_diff(pending.options, changeset);
                 }

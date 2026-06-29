@@ -1,4 +1,5 @@
 use super::DiffApp;
+use crate::model::FileIndex;
 use crate::render::sidebar::max_file_sidebar_width;
 use crate::theme::FILE_SIDEBAR_MIN_WIDTH;
 
@@ -59,7 +60,7 @@ impl DiffApp {
         let current = self
             .document
             .model
-            .visible_file_position(self.sidebar.selected_file)
+            .visible_file_position(self.sidebar.selected_file.get())
             .unwrap_or_default();
         let next = if delta < 0 {
             current.saturating_sub(delta.unsigned_abs())
@@ -68,7 +69,7 @@ impl DiffApp {
         }
         .min(visible_files.len() - 1);
 
-        self.select_file(visible_files[next]);
+        self.select_file(visible_files[next].get());
     }
 
     pub(crate) fn select_file(&mut self, file: usize) {
@@ -84,10 +85,11 @@ impl DiffApp {
                 .visible_files()
                 .first()
                 .copied()
+                .map(|file| file.get())
                 .unwrap_or_default()
         };
 
-        if next == self.sidebar.selected_file {
+        if FileIndex::new(next) == self.sidebar.selected_file {
             self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
             self.runtime.dirty = true;
             return;
@@ -98,7 +100,7 @@ impl DiffApp {
             return;
         }
 
-        self.sidebar.selected_file = next;
+        self.sidebar.selected_file = FileIndex::new(next);
         if let Some(row) = self.document.model.file_start_row(next) {
             self.set_scroll(self.scroll_for_model_row(row));
         } else {
@@ -110,11 +112,9 @@ impl DiffApp {
     pub(crate) fn toggle_file_sidebar(&mut self) {
         self.sidebar.file_sidebar_open = !self.sidebar.file_sidebar_open;
         self.sidebar.finish_resize();
-        self.overlays.diff_menu_open = false;
-        self.overlays.diff_menu.reset_input();
-        self.set_rendered_diff_menu_area(None);
-        self.overlays.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.overlays.hide_diff_menu();
+        self.overlays.hide_options_menu();
         self.close_review_input();
         self.close_branch_menu();
         self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
@@ -129,7 +129,7 @@ impl DiffApp {
         let Some(selected_position) = self
             .document
             .model
-            .visible_file_position(self.sidebar.selected_file)
+            .visible_file_position(self.sidebar.selected_file.get())
         else {
             self.sidebar.file_sidebar_scroll = 0;
             return;
@@ -150,7 +150,7 @@ impl DiffApp {
             self.sidebar.file_sidebar_scroll = self
                 .document
                 .model
-                .visible_file_position(self.sidebar.selected_file)
+                .visible_file_position(self.sidebar.selected_file.get())
                 .unwrap_or_default()
                 .saturating_add(1)
                 .saturating_sub(visible_rows);

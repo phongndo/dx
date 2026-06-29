@@ -4,53 +4,117 @@ use mark_diff::{Changeset, DiffLine, DiffLineKind};
 
 use crate::{controls::DiffLayoutMode, syntax::DiffSide};
 
+macro_rules! typed_index {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub(crate) struct $name(usize);
+
+        impl $name {
+            pub(crate) const fn new(index: usize) -> Self {
+                Self(index)
+            }
+
+            pub(crate) const fn get(self) -> usize {
+                self.0
+            }
+        }
+
+        impl From<usize> for $name {
+            fn from(index: usize) -> Self {
+                Self::new(index)
+            }
+        }
+
+        impl From<$name> for usize {
+            fn from(index: $name) -> Self {
+                index.get()
+            }
+        }
+
+        impl<T> std::ops::Index<$name> for [T] {
+            type Output = T;
+
+            fn index(&self, index: $name) -> &Self::Output {
+                &self[index.get()]
+            }
+        }
+
+        impl<T> std::ops::IndexMut<$name> for [T] {
+            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
+                &mut self[index.get()]
+            }
+        }
+
+        impl<T> std::ops::Index<$name> for Vec<T> {
+            type Output = T;
+
+            fn index(&self, index: $name) -> &Self::Output {
+                &self[index.get()]
+            }
+        }
+
+        impl<T> std::ops::IndexMut<$name> for Vec<T> {
+            fn index_mut(&mut self, index: $name) -> &mut Self::Output {
+                &mut self[index.get()]
+            }
+        }
+    };
+}
+
+typed_index!(FileIndex);
+typed_index!(HunkIndex);
+typed_index!(DiffLineIndex);
+typed_index!(ModelRow);
+typed_index!(VisualRow);
+typed_index!(ScrollOffset);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiRow {
     FileSeparator,
-    FileHeader(usize),
-    BinaryFile(usize),
+    FileHeader(FileIndex),
+    FileBodyNotice(FileIndex),
     Collapsed {
-        file: usize,
-        hunk: usize,
+        file: FileIndex,
+        hunk: HunkIndex,
         old_start: usize,
         new_start: usize,
         lines: usize,
         expanded: usize,
     },
     ContextLine {
-        file: usize,
+        file: FileIndex,
         old_line: usize,
         new_line: usize,
     },
     ContextHide {
-        file: usize,
-        hunk: usize,
+        file: FileIndex,
+        hunk: HunkIndex,
         lines: usize,
     },
     HunkHeader {
-        file: usize,
-        hunk: usize,
+        file: FileIndex,
+        hunk: HunkIndex,
     },
     UnifiedLine {
-        file: usize,
-        hunk: usize,
-        line: usize,
+        file: FileIndex,
+        hunk: HunkIndex,
+        line: DiffLineIndex,
     },
     SplitLine {
-        file: usize,
-        hunk: usize,
-        left: Option<usize>,
-        right: Option<usize>,
+        file: FileIndex,
+        hunk: HunkIndex,
+        left: Option<DiffLineIndex>,
+        right: Option<DiffLineIndex>,
     },
     MetaLine {
-        file: usize,
-        hunk: usize,
-        line: usize,
+        file: FileIndex,
+        hunk: HunkIndex,
+        line: DiffLineIndex,
     },
 }
 
 impl UiRow {
-    pub(crate) fn hunk_key(self) -> Option<(usize, usize)> {
+    pub(crate) fn typed_hunk_key(self) -> Option<(FileIndex, HunkIndex)> {
         match self {
             Self::HunkHeader { file, hunk }
             | Self::UnifiedLine { file, hunk, .. }
@@ -58,11 +122,16 @@ impl UiRow {
             | Self::MetaLine { file, hunk, .. } => Some((file, hunk)),
             Self::FileSeparator
             | Self::FileHeader(_)
-            | Self::BinaryFile(_)
+            | Self::FileBodyNotice(_)
             | Self::Collapsed { .. }
             | Self::ContextLine { .. }
             | Self::ContextHide { .. } => None,
         }
+    }
+
+    pub(crate) fn hunk_key(self) -> Option<(usize, usize)> {
+        self.typed_hunk_key()
+            .map(|(file, hunk)| (file.get(), hunk.get()))
     }
 
     pub(crate) fn is_hunk_row(self, file: usize, hunk: usize) -> bool {
@@ -72,19 +141,19 @@ impl UiRow {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ContextKey {
-    pub(crate) file: usize,
+    pub(crate) file: FileIndex,
     /// The hunk whose surrounding context is expanded. A value one past the
     /// final hunk is used for trailing context after that final hunk.
-    pub(crate) hunk: usize,
+    pub(crate) hunk: HunkIndex,
 }
 
-pub(crate) fn context_expands_up(hunk: usize) -> bool {
-    hunk == 0
+pub(crate) fn context_expands_up(hunk: HunkIndex) -> bool {
+    hunk.get() == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ContextSourceKey {
-    pub(crate) file: usize,
+    pub(crate) file: FileIndex,
     pub(crate) side: DiffSide,
 }
 
@@ -97,11 +166,11 @@ pub(crate) enum ContextSourceEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UiModel {
     pub(crate) rows: Vec<UiRow>,
-    pub(crate) file_start_rows: Vec<Option<usize>>,
-    pub(crate) file_row_starts: Vec<(usize, usize)>,
-    pub(crate) visible_files: Vec<usize>,
-    pub(crate) hunk_start_rows: Vec<usize>,
-    pub(crate) hunk_row_starts: Vec<((usize, usize), usize)>,
+    pub(crate) file_start_rows: Vec<Option<ModelRow>>,
+    pub(crate) file_row_starts: Vec<(FileIndex, ModelRow)>,
+    pub(crate) visible_files: Vec<FileIndex>,
+    pub(crate) hunk_start_rows: Vec<ModelRow>,
+    pub(crate) hunk_row_starts: Vec<((FileIndex, HunkIndex), ModelRow)>,
 }
 
 impl UiModel {
@@ -110,7 +179,7 @@ impl UiModel {
         layout: DiffLayoutMode,
         context_expansions: &HashMap<ContextKey, usize>,
     ) -> Self {
-        let visible_files: Vec<_> = (0..changeset.files.len()).collect();
+        let visible_files: Vec<_> = (0..changeset.files.len()).map(FileIndex::new).collect();
         Self::new_filtered(changeset, layout, context_expansions, &visible_files)
     }
 
@@ -118,23 +187,23 @@ impl UiModel {
         changeset: &Changeset,
         layout: DiffLayoutMode,
         context_expansions: &HashMap<ContextKey, usize>,
-        visible_files: &[usize],
+        visible_files: &[FileIndex],
     ) -> Self {
         let total_hunks = changeset
             .files
             .iter()
-            .map(|file| file.hunks.len())
+            .map(|file| file.hunks().len())
             .sum::<usize>();
         let total_hunk_lines = changeset
             .files
             .iter()
-            .flat_map(|file| file.hunks.iter())
+            .flat_map(|file| file.hunks().iter())
             .map(|hunk| hunk.lines.len())
             .sum::<usize>();
         let binary_or_empty_rows = changeset
             .files
             .iter()
-            .filter(|file| file.is_binary || file.hunks.is_empty())
+            .filter(|file| file.is_binary() || file.has_no_textual_changes())
             .count();
         let file_separator_rows = changeset.files.len().saturating_sub(1);
         let expanded_context_rows = context_expansions.values().copied().sum::<usize>();
@@ -159,28 +228,29 @@ impl UiModel {
         let mut hunk_row_starts = Vec::with_capacity(total_hunks);
 
         for (visible_index, file_index) in visible_files.iter().copied().enumerate() {
-            let Some(file) = changeset.files.get(file_index) else {
+            let Some(file) = changeset.files.get(file_index.get()) else {
                 continue;
             };
             if visible_index > 0 {
                 rows.push(UiRow::FileSeparator);
             }
-            file_start_rows[file_index] = Some(rows.len());
-            file_row_starts.push((file_index, rows.len()));
+            file_start_rows[file_index] = Some(ModelRow::new(rows.len()));
+            file_row_starts.push((file_index, ModelRow::new(rows.len())));
             rows.push(UiRow::FileHeader(file_index));
 
-            if file.is_binary || file.hunks.is_empty() {
-                rows.push(UiRow::BinaryFile(file_index));
+            if file.is_binary() || file.has_no_textual_changes() {
+                rows.push(UiRow::FileBodyNotice(file_index));
                 continue;
             }
 
             let mut next_old_line = 1;
             let mut next_new_line = 1;
-            for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+            for (hunk_index, hunk) in file.hunks().iter().enumerate() {
+                let hunk_index = HunkIndex::new(hunk_index);
                 let collapsed_lines = hunk
-                    .old_start
+                    .old_start()
                     .saturating_sub(next_old_line)
-                    .min(hunk.new_start.saturating_sub(next_new_line));
+                    .min(hunk.new_start().saturating_sub(next_new_line));
                 if collapsed_lines > 0 {
                     let key = ContextKey {
                         file: file_index,
@@ -251,6 +321,7 @@ impl UiModel {
                 }
 
                 let hunk_start_row = rows.len();
+                let hunk_start_row = ModelRow::new(hunk_start_row);
                 hunk_start_rows.push(hunk_start_row);
                 hunk_row_starts.push(((file_index, hunk_index), hunk_start_row));
                 rows.push(UiRow::HunkHeader {
@@ -264,7 +335,7 @@ impl UiModel {
                             rows.push(UiRow::UnifiedLine {
                                 file: file_index,
                                 hunk: hunk_index,
-                                line: line_index,
+                                line: DiffLineIndex::new(line_index),
                             });
                         }
                     }
@@ -276,13 +347,13 @@ impl UiModel {
                     ),
                 }
 
-                next_old_line = hunk.old_start.saturating_add(hunk.old_count);
-                next_new_line = hunk.new_start.saturating_add(hunk.new_count);
+                next_old_line = hunk.old_start().saturating_add(hunk.old_count());
+                next_new_line = hunk.new_start().saturating_add(hunk.new_count());
             }
 
             let trailing_context_key = ContextKey {
                 file: file_index,
-                hunk: file.hunks.len(),
+                hunk: HunkIndex::new(file.hunks().len()),
             };
             let expanded = context_expansions
                 .get(&trailing_context_key)
@@ -327,10 +398,19 @@ impl UiModel {
     }
 
     pub(crate) fn file_start_row(&self, file: usize) -> Option<usize> {
-        self.file_start_rows.get(file).copied().flatten()
+        self.file_start_rows
+            .get(file)
+            .copied()
+            .flatten()
+            .map(ModelRow::get)
     }
 
     pub(crate) fn file_at_row(&self, row: usize) -> Option<usize> {
+        self.typed_file_at_row(ModelRow::new(row))
+            .map(FileIndex::get)
+    }
+
+    pub(crate) fn typed_file_at_row(&self, row: ModelRow) -> Option<FileIndex> {
         if self.file_row_starts.is_empty() {
             return None;
         }
@@ -344,20 +424,30 @@ impl UiModel {
         }
     }
 
-    pub(crate) fn visible_files(&self) -> &[usize] {
+    pub(crate) fn visible_files(&self) -> &[FileIndex] {
         &self.visible_files
     }
 
     pub(crate) fn visible_file_position(&self, file: usize) -> Option<usize> {
-        self.visible_files.binary_search(&file).ok()
+        self.visible_files.binary_search(&FileIndex::new(file)).ok()
     }
 
     pub(crate) fn next_hunk_row(&self, row: usize) -> Option<usize> {
+        self.typed_next_hunk_row(ModelRow::new(row))
+            .map(ModelRow::get)
+    }
+
+    pub(crate) fn typed_next_hunk_row(&self, row: ModelRow) -> Option<ModelRow> {
         let index = self.hunk_start_rows.partition_point(|start| *start <= row);
         self.hunk_start_rows.get(index).copied()
     }
 
     pub(crate) fn previous_hunk_row(&self, row: usize) -> Option<usize> {
+        self.typed_previous_hunk_row(ModelRow::new(row))
+            .map(ModelRow::get)
+    }
+
+    pub(crate) fn typed_previous_hunk_row(&self, row: ModelRow) -> Option<ModelRow> {
         let index = self.hunk_start_rows.partition_point(|start| *start < row);
         index
             .checked_sub(1)
@@ -366,6 +456,15 @@ impl UiModel {
     }
 
     pub(crate) fn hunk_start_row(&self, file: usize, hunk: usize) -> Option<usize> {
+        self.typed_hunk_start_row(FileIndex::new(file), HunkIndex::new(hunk))
+            .map(ModelRow::get)
+    }
+
+    pub(crate) fn typed_hunk_start_row(
+        &self,
+        file: FileIndex,
+        hunk: HunkIndex,
+    ) -> Option<ModelRow> {
         self.hunk_row_starts
             .binary_search_by_key(&(file, hunk), |(key, _)| *key)
             .ok()
@@ -374,11 +473,13 @@ impl UiModel {
     }
 
     pub(crate) fn hunk_row_range(&self, file: usize, hunk: usize) -> Option<Range<usize>> {
-        let start = self.hunk_start_row(file, hunk)?;
+        let file = FileIndex::new(file);
+        let hunk = HunkIndex::new(hunk);
+        let start = self.typed_hunk_start_row(file, hunk)?.get();
         let end = (start + 1..self.rows.len())
             .find(|row| {
                 self.row(*row)
-                    .map(|row| !row.is_hunk_row(file, hunk))
+                    .map(|row| !row.is_hunk_row(file.get(), hunk.get()))
                     .unwrap_or(true)
             })
             .unwrap_or(self.rows.len());
@@ -388,19 +489,19 @@ impl UiModel {
 
 pub(crate) fn push_split_hunk_rows(
     rows: &mut Vec<UiRow>,
-    file_index: usize,
-    hunk_index: usize,
+    file_index: FileIndex,
+    hunk_index: HunkIndex,
     lines: &[DiffLine],
 ) {
     let mut index = 0;
     while index < lines.len() {
-        match lines[index].kind {
+        match lines[index].kind() {
             DiffLineKind::Context => {
                 rows.push(UiRow::SplitLine {
                     file: file_index,
                     hunk: hunk_index,
-                    left: Some(index),
-                    right: Some(index),
+                    left: Some(DiffLineIndex::new(index)),
+                    right: Some(DiffLineIndex::new(index)),
                 });
                 index += 1;
             }
@@ -408,7 +509,7 @@ pub(crate) fn push_split_hunk_rows(
                 rows.push(UiRow::MetaLine {
                     file: file_index,
                     hunk: hunk_index,
-                    line: index,
+                    line: DiffLineIndex::new(index),
                 });
                 index += 1;
             }
@@ -417,13 +518,13 @@ pub(crate) fn push_split_hunk_rows(
                 let mut additions = Vec::new();
                 while index < lines.len()
                     && matches!(
-                        lines[index].kind,
+                        lines[index].kind(),
                         DiffLineKind::Deletion | DiffLineKind::Addition
                     )
                 {
-                    match lines[index].kind {
-                        DiffLineKind::Deletion => deletions.push(index),
-                        DiffLineKind::Addition => additions.push(index),
+                    match lines[index].kind() {
+                        DiffLineKind::Deletion => deletions.push(DiffLineIndex::new(index)),
+                        DiffLineKind::Addition => additions.push(DiffLineIndex::new(index)),
                         DiffLineKind::Context | DiffLineKind::Meta => {}
                     }
                     index += 1;

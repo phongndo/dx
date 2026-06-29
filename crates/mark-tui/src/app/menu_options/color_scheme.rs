@@ -12,7 +12,7 @@ use crossterm::event::KeyEvent;
 
 impl DiffApp {
     pub(crate) fn open_color_scheme_picker(&mut self) {
-        self.overlays.color_scheme_picker_open = true;
+        self.overlays.open_color_scheme_picker();
         self.overlays.color_scheme_preview_original =
             Some((self.config.color_scheme, self.config.theme));
         self.overlays.color_scheme_picker.reset();
@@ -119,11 +119,11 @@ impl DiffApp {
         let outcome = SelectorController::new(&mut self.overlays.color_scheme_picker, len)
             .with_visible_rows(rows)
             .apply_input_key(key);
-        if outcome.changed {
+        if outcome.changed() {
             self.preview_highlighted_color_scheme();
             self.runtime.dirty = true;
         }
-        outcome.handled
+        outcome.handled()
     }
 
     pub(crate) fn preview_highlighted_color_scheme(&mut self) {
@@ -149,9 +149,7 @@ impl DiffApp {
         };
 
         self.overlays.options_menu_draft.color_scheme = choice;
-        self.overlays.color_scheme_picker_open = false;
-        self.overlays.color_scheme_preview_original = None;
-        self.overlays.color_scheme_picker.reset_input_and_scroll();
+        self.overlays.accept_color_scheme_picker();
         self.set_rendered_color_scheme_picker_area(None);
         self.apply_options_menu_draft(OptionsMenuItem::ColorScheme);
     }

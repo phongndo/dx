@@ -17,8 +17,8 @@ fn base_branch_diff_includes_committed_staged_and_untracked_changes() {
     fs::write(repo.join("untracked.txt"), "untracked\n").expect("untracked file should be written");
 
     let changeset = load_review_ref(&DiffOptions {
-        repo: Some(repo.clone()),
-        source: DiffSource::Base("main".to_owned()),
+        repo: Some(repo.clone().into()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     })
     .expect("base branch diff should load");
@@ -42,8 +42,8 @@ fn base_branch_diff_reports_unknown_base_revision() {
     init_repo(&repo);
 
     let error = render(DiffOptions {
-        repo: Some(repo.clone()),
-        source: DiffSource::Base("missing-branch".to_owned()),
+        repo: Some(repo.clone().into()),
+        source: DiffSource::Base("missing-branch".into()),
         ..DiffOptions::default()
     })
     .expect_err("missing base should fail before git merge-base");
@@ -60,8 +60,8 @@ fn base_branch_diff_keeps_commitish_validation() {
     init_repo(&repo);
 
     let error = render(DiffOptions {
-        repo: Some(repo.clone()),
-        source: DiffSource::Base("HEAD^{tree}".to_owned()),
+        repo: Some(repo.clone().into()),
+        source: DiffSource::Base("HEAD^{tree}".into()),
         ..DiffOptions::default()
     })
     .expect_err("merge-base diffs should still require commit-ish base revisions");
@@ -84,7 +84,7 @@ fn load_review_ref_path_limits_tracked_and_untracked_files() {
     fs::write(repo.join("other.txt"), "other changed\n").expect("other file should change");
     fs::write(repo.join("new.txt"), "new\n").expect("untracked file should be written");
     let options = DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     };
 
@@ -124,12 +124,12 @@ fn load_review_ref_paths_preserves_scoped_rename_metadata() {
         .collect::<String>();
     fs::write(repo.join("new.txt"), changed).expect("new file should be changed");
     let options = DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         ..DiffOptions::default()
     };
 
     let new_only = load_review_ref_path(&options, Path::new("new.txt")).unwrap();
-    assert_eq!(new_only.files[0].status, FileStatus::Added);
+    assert_eq!(new_only.files[0].status(), FileStatus::Added);
 
     let paired = load_review_ref_paths(
         &options,
@@ -138,9 +138,9 @@ fn load_review_ref_paths_preserves_scoped_rename_metadata() {
     .unwrap();
 
     assert_eq!(paired.files.len(), 1);
-    assert_eq!(paired.files[0].status, FileStatus::Renamed);
-    assert_eq!(paired.files[0].old_path.as_deref(), Some("old.txt"));
-    assert_eq!(paired.files[0].new_path.as_deref(), Some("new.txt"));
+    assert_eq!(paired.files[0].status(), FileStatus::Renamed);
+    assert_eq!(paired.files[0].old_path(), Some("old.txt"));
+    assert_eq!(paired.files[0].new_path(), Some("new.txt"));
     assert_eq!(paired.files[0].additions, 1);
     assert_eq!(paired.files[0].deletions, 1);
 

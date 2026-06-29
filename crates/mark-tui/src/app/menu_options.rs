@@ -17,38 +17,39 @@ use mark_syntax::NotificationSettings;
 
 impl DiffApp {
     pub(crate) fn open_options_menu(&mut self) {
+        self.close_color_scheme_picker();
         self.overlays.options_menu_draft = OptionsDraft {
             layout: layout_setting_from_override(self.viewport.layout_override),
-            live_updates_enabled: self.jobs.live_updates_enabled,
+            live_updates_enabled: self.jobs.live_updates.enabled(),
             context_expansion: self.config.theme.diff.context_expansion,
             syntax_enabled: self.config.syntax.is_some(),
             line_wrapping: self.viewport.line_wrapping,
             color_scheme: self.config.color_scheme,
-            notification_mode: self.config.syntax_settings.notifications.mode,
-            toast_corner: self.config.syntax_settings.notifications.corner,
-            toast_timeout_ms: self.config.syntax_settings.notifications.timeout_ms,
-            toast_max_visible: self.config.syntax_settings.notifications.max_visible,
+            notification_mode: self.config.syntax_settings.notifications.mode(),
+            toast_corner: self.config.syntax_settings.notifications.corner(),
+            toast_timeout_ms: self.config.syntax_settings.notifications.timeout_ms(),
+            toast_max_visible: self.config.syntax_settings.notifications.max_visible(),
         };
         let len = self.options_menu_items().len();
         self.overlays
             .options_menu
             .set_selected(self.overlays.options_menu.selected, len);
         self.overlays.options_menu.reset_input_and_scroll();
-        self.overlays.options_menu_open = true;
-        self.close_color_scheme_picker();
-        self.overlays.diff_menu_open = false;
+        self.overlays.open_options_menu();
+        self.overlays.hide_diff_menu();
         self.overlays.diff_menu.reset_input();
         self.set_rendered_diff_menu_area(None);
         self.close_review_input();
-        self.refs.branch_menu_open = None;
-        self.set_rendered_branch_menu_area(None);
+        self.close_branch_menu();
         self.close_commit_menu();
         self.runtime.dirty = true;
     }
 
     pub(crate) fn close_options_menu(&mut self) {
-        if self.overlays.close_options_menu() {
+        if self.overlays.color_scheme_picker_is_open() {
             self.close_color_scheme_picker();
+        }
+        if self.overlays.close_options_menu() {
             self.runtime.dirty = true;
         }
     }
@@ -136,7 +137,7 @@ impl DiffApp {
             OptionsMenuItem::Layout => {
                 layout_setting_label(self.overlays.options_menu_draft.layout).to_owned()
             }
-            OptionsMenuItem::LiveReload if !self.jobs.live_updates_allowed => {
+            OptionsMenuItem::LiveReload if !self.jobs.live_updates.allowed() => {
                 "off disabled".to_owned()
             }
             OptionsMenuItem::LiveReload => {
@@ -180,7 +181,7 @@ impl DiffApp {
                     layout_setting_label(self.overlays.options_menu_draft.layout)
                 )
             }
-            OptionsMenuItem::LiveReload if !self.jobs.live_updates_allowed => {
+            OptionsMenuItem::LiveReload if !self.jobs.live_updates.allowed() => {
                 "[ ] disabled".to_owned()
             }
             OptionsMenuItem::LiveReload => {
@@ -232,10 +233,10 @@ impl DiffApp {
         let len = self.filtered_options_menu_items().len();
         let outcome =
             SelectorController::new(&mut self.overlays.options_menu, len).apply_input_key(key);
-        if outcome.changed {
+        if outcome.changed() {
             self.runtime.dirty = true;
         }
-        outcome.handled
+        outcome.handled()
     }
 
     pub(crate) fn activate_selected_option(&mut self) {
@@ -257,7 +258,7 @@ impl DiffApp {
                     next_layout_setting(self.overlays.options_menu_draft.layout, delta);
             }
             OptionsMenuItem::LiveReload => {
-                if !self.jobs.live_updates_allowed {
+                if !self.jobs.live_updates.allowed() {
                     self.set_error_log("live reload disabled by --no-watch");
                     return;
                 }
@@ -313,21 +314,21 @@ impl DiffApp {
 
     fn apply_options_menu_draft(&mut self, changed_item: OptionsMenuItem) {
         let draft = self.overlays.options_menu_draft;
-        let live_reload_reenabled = draft.live_updates_enabled && !self.jobs.live_updates_enabled;
-        let notification_settings = NotificationSettings {
-            mode: draft.notification_mode,
-            corner: draft.toast_corner,
-            timeout_ms: draft.toast_timeout_ms,
-            max_visible: draft.toast_max_visible,
-        };
+        let live_reload_reenabled = draft.live_updates_enabled && !self.jobs.live_updates.enabled();
+        let notification_settings = NotificationSettings::new(
+            draft.notification_mode,
+            draft.toast_corner,
+            draft.toast_timeout_ms,
+            draft.toast_max_visible,
+        );
 
         if draft.layout != layout_setting_from_override(self.viewport.layout_override) {
             self.set_layout_setting(draft.layout);
         }
-        if draft.live_updates_enabled != self.jobs.live_updates_enabled {
-            self.jobs.live_updates_enabled = draft.live_updates_enabled;
-            self.jobs.live_reload_invalidated = false;
-            self.jobs.live_reload_pending = false;
+        if draft.live_updates_enabled != self.jobs.live_updates.enabled() {
+            self.jobs
+                .live_updates
+                .set_user_enabled(draft.live_updates_enabled);
             self.jobs.live_diff_failed_options = None;
             self.runtime.dirty = true;
         }

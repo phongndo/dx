@@ -32,10 +32,6 @@ impl DiffChoice {
 pub(crate) fn is_review_options(options: &DiffOptions) -> bool {
     matches!(
         &options.source,
-        DiffSource::Patch(PatchSource::Text { label, .. }) if is_review_label(label)
+        DiffSource::Patch(PatchSource::Review { .. })
     )
-}
-
-pub(crate) fn is_review_label(label: &str) -> bool {
-    label.starts_with("review ")
 }

@@ -49,7 +49,7 @@ pub(crate) fn file_sidebar_desired_width(app: &DiffApp) -> u16 {
         .model
         .visible_files()
         .iter()
-        .filter_map(|file| app.document.changeset.files.get(*file))
+        .filter_map(|file| app.document.changeset.files.get(file.get()))
         .map(|file| {
             let stats = file_sidebar_stats(file);
             let stats_width = if stats.is_empty() {
@@ -57,7 +57,7 @@ pub(crate) fn file_sidebar_desired_width(app: &DiffApp) -> u16 {
             } else {
                 stats.width().saturating_add(2)
             };
-            status_code(file.status)
+            status_code(file.status())
                 .width()
                 .saturating_add(2)
                 .saturating_add(file.display_path().width())
@@ -109,7 +109,7 @@ pub(crate) fn file_sidebar_lines(app: &DiffApp, width: usize, height: usize) -> 
             ));
             continue;
         };
-        let Some(file) = app.document.changeset.files.get(file_index) else {
+        let Some(file) = app.document.changeset.files.get(file_index.get()) else {
             continue;
         };
 
@@ -140,10 +140,10 @@ pub(crate) fn file_sidebar_entry_line(
     } else {
         base_bg(theme)
     };
-    let status_style = file_sidebar_status_style(file.status, bg, theme);
+    let status_style = file_sidebar_status_style(file.status(), bg, theme);
     let body_style = file_sidebar_body_style(selected, bg, theme);
 
-    if file.is_binary || (file.additions == 0 && file.deletions == 0) {
+    if file.is_binary() || (file.additions == 0 && file.deletions == 0) {
         let stats = file_sidebar_stats(file);
         let stats_width = stats.width();
         let gap_width = usize::from(!stats.is_empty() && content_width > stats_width);
@@ -277,7 +277,7 @@ pub(crate) fn file_sidebar_left_spans(
         return Vec::new();
     }
 
-    let prefix = format!(" {} ", status_code(file.status));
+    let prefix = format!(" {} ", status_code(file.status()));
     let prefix_width = prefix.width();
     if prefix_width >= width {
         return vec![Span::styled(fit_padded(&prefix, width), status_style)];
@@ -297,7 +297,7 @@ pub(crate) fn file_sidebar_left_spans(
 }
 
 pub(crate) fn file_sidebar_stats(file: &mark_diff::DiffFile) -> String {
-    if file.is_binary {
+    if file.is_binary() {
         "binary".to_owned()
     } else if file.additions == 0 && file.deletions == 0 {
         String::new()

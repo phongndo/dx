@@ -41,7 +41,7 @@ impl InlineHunkEmphasisCache {
 
         while index < lines.len() {
             if !matches!(
-                lines[index].kind,
+                lines[index].kind(),
                 DiffLineKind::Deletion | DiffLineKind::Addition
             ) {
                 index += 1;
@@ -53,11 +53,11 @@ impl InlineHunkEmphasisCache {
             let mut additions = Vec::new();
             while index < lines.len()
                 && matches!(
-                    lines[index].kind,
+                    lines[index].kind(),
                     DiffLineKind::Deletion | DiffLineKind::Addition
                 )
             {
-                match lines[index].kind {
+                match lines[index].kind() {
                     DiffLineKind::Deletion => deletions.push(index),
                     DiffLineKind::Addition => additions.push(index),
                     DiffLineKind::Context | DiffLineKind::Meta => {}
@@ -96,7 +96,7 @@ impl InlineHunkEmphasisCache {
             return;
         };
         if !matches!(
-            diff_line.kind,
+            diff_line.kind(),
             DiffLineKind::Deletion | DiffLineKind::Addition
         ) {
             self.set_emphasis(line, Vec::new());
@@ -120,7 +120,7 @@ impl InlineHunkEmphasisCache {
             return;
         }
 
-        let (old_index, new_index) = match diff_line.kind {
+        let (old_index, new_index) = match diff_line.kind() {
             DiffLineKind::Deletion => {
                 let Ok(pair_index) = block.deletions.binary_search(&line) else {
                     self.set_emphasis(line, Vec::new());
@@ -147,7 +147,7 @@ impl InlineHunkEmphasisCache {
         };
 
         let (old_ranges, new_ranges) =
-            changed_token_ranges(&lines[old_index].text, &lines[new_index].text);
+            changed_token_ranges(lines[old_index].text(), lines[new_index].text());
         self.set_emphasis(old_index, old_ranges);
         self.set_emphasis(new_index, new_ranges);
     }
@@ -165,17 +165,17 @@ pub(crate) fn compute_hunk_inline_emphasis(lines: &[DiffLine]) -> Vec<InlineLine
     let mut index = 0usize;
 
     while index < lines.len() {
-        match lines[index].kind {
+        match lines[index].kind() {
             DiffLineKind::Deletion | DiffLineKind::Addition => {
                 let mut deletions = Vec::new();
                 let mut additions = Vec::new();
                 while index < lines.len()
                     && matches!(
-                        lines[index].kind,
+                        lines[index].kind(),
                         DiffLineKind::Deletion | DiffLineKind::Addition
                     )
                 {
-                    match lines[index].kind {
+                    match lines[index].kind() {
                         DiffLineKind::Deletion => deletions.push(index),
                         DiffLineKind::Addition => additions.push(index),
                         DiffLineKind::Context | DiffLineKind::Meta => {}
@@ -203,7 +203,7 @@ pub(crate) fn compute_changed_block_inline_emphasis(
         match (deletions.get(pair_index), additions.get(pair_index)) {
             (Some(deletion), Some(addition)) => {
                 let (old_ranges, new_ranges) =
-                    changed_token_ranges(&lines[*deletion].text, &lines[*addition].text);
+                    changed_token_ranges(lines[*deletion].text(), lines[*addition].text());
                 emphasis[*deletion].ranges = old_ranges;
                 emphasis[*addition].ranges = new_ranges;
             }

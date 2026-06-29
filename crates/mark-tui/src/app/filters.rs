@@ -1,10 +1,11 @@
 use super::{
-    DiffApp, FILTER_DEBOUNCE, FilterWorker, HunkFocusModelBehavior, HunkFocusScrollBehavior,
-    MAX_LIVE_GREP_MATCHES,
+    AsyncJob, DiffApp, FILTER_DEBOUNCE, FilterWorker, HunkFocusModelBehavior,
+    HunkFocusScrollBehavior, MAX_LIVE_GREP_MATCHES, PostFilterNavigation,
 };
 use crate::controls::{DiffFilterKind, diff_stats_for_files};
+use crate::model::{FileIndex, ModelRow};
 use crate::runtime;
-use crate::search::{DiffSearchResult, grep_match_rows};
+use crate::search::{DiffSearchResult, SearchMatchIndex, grep_match_rows};
 use crate::text_input::TextInputKeyResult;
 use crossterm::event::{KeyCode, KeyEvent};
 use std::sync::Arc;
@@ -18,11 +19,9 @@ impl DiffApp {
     pub(crate) fn open_filter_input(&mut self, kind: DiffFilterKind) {
         self.filters.filter_input = Some(kind);
         self.clear_diff_mouse_hover();
-        self.overlays.diff_menu_open = false;
-        self.overlays.diff_menu.reset_input();
-        self.set_rendered_diff_menu_area(None);
-        self.overlays.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.overlays.hide_diff_menu();
+        self.overlays.hide_options_menu();
         self.close_review_input();
         self.close_branch_menu();
 
@@ -92,10 +91,10 @@ impl DiffApp {
             self.runtime.dirty = true;
             return;
         }
-        self.schedule_filter_apply(Duration::ZERO, false);
+        self.schedule_filter_apply(Duration::ZERO, PostFilterNavigation::Preserve);
     }
 
-    pub(crate) fn apply_filters(&mut self, jump_to_grep: bool) {
+    pub(crate) fn apply_filters(&mut self, navigation: PostFilterNavigation) {
         self.jobs.pending_filter_apply = None;
         self.jobs.filter_worker = None;
         self.jobs.filter_searching = false;
@@ -103,9 +102,10 @@ impl DiffApp {
             .document
             .changeset
             .files
-            .get(self.sidebar.selected_file)
+            .get(self.sidebar.selected_file.get())
             .map(|file| file.display_path().to_owned());
-        let relative_scroll = self.relative_scroll_from_file_start(self.sidebar.selected_file);
+        let relative_scroll =
+            self.relative_scroll_from_file_start(self.sidebar.selected_file.get());
 
         let search_result = self.document.search_index.search_with_grep_match_limit(
             &self.filters.file_filter,
@@ -116,7 +116,7 @@ impl DiffApp {
             search_result,
             selected_path,
             relative_scroll,
-            jump_to_grep,
+            navigation,
             HunkFocusModelBehavior::PreserveIfValid,
         );
     }
@@ -124,15 +124,23 @@ impl DiffApp {
     pub(crate) fn schedule_filter_change(&mut self, kind: DiffFilterKind, debounce: Duration) {
         self.schedule_filter_apply(
             debounce,
-            kind == DiffFilterKind::Grep && !self.filters.grep_filter.is_empty(),
+            if kind == DiffFilterKind::Grep && !self.filters.grep_filter.is_empty() {
+                PostFilterNavigation::JumpToGrep
+            } else {
+                PostFilterNavigation::Preserve
+            },
         );
     }
 
-    pub(crate) fn schedule_filter_apply(&mut self, debounce: Duration, jump_to_grep: bool) {
+    pub(crate) fn schedule_filter_apply(
+        &mut self,
+        debounce: Duration,
+        navigation: PostFilterNavigation,
+    ) {
         #[cfg(test)]
         {
             let _ = debounce;
-            self.apply_filters(jump_to_grep);
+            self.apply_filters(navigation);
         }
 
         #[cfg(not(test))]
@@ -141,7 +149,7 @@ impl DiffApp {
             self.jobs.pending_filter_apply = Some(PendingFilterApply {
                 generation: self.jobs.filter_generation,
                 due_at: Instant::now() + debounce,
-                jump_to_grep,
+                navigation,
             });
             self.jobs.filter_worker = None;
             self.jobs.filter_searching = true;
@@ -159,7 +167,7 @@ impl DiffApp {
 
         self.jobs.pending_filter_apply = None;
         let generation = pending.generation;
-        let jump_to_grep = pending.jump_to_grep;
+        let navigation = pending.navigation;
         let file_filter = self.filters.file_filter.clone();
         let grep_filter = self.filters.grep_filter.clone();
         let worker_file_filter = file_filter.clone();
@@ -179,8 +187,8 @@ impl DiffApp {
             generation,
             file_filter,
             grep_filter,
-            jump_to_grep,
-            rx,
+            navigation,
+            job: AsyncJob::new(rx),
         });
         self.jobs.filter_searching = true;
         self.runtime.dirty = true;
@@ -191,7 +199,7 @@ impl DiffApp {
             self.jobs
                 .filter_worker
                 .as_mut()
-                .and_then(|worker| match worker.rx.try_recv() {
+                .and_then(|worker| match worker.job.try_recv() {
                     Ok(result) => Some(Some(result)),
                     Err(oneshot::error::TryRecvError::Empty) => None,
                     Err(oneshot::error::TryRecvError::Closed) => Some(None),
@@ -213,7 +221,7 @@ impl DiffApp {
 
         self.jobs.filter_searching = false;
         match outcome {
-            Some(result) => self.apply_filter_result(result, worker.jump_to_grep),
+            Some(result) => self.apply_filter_result(result, worker.navigation),
             None => self.set_error_log("filter worker stopped"),
         }
     }
@@ -227,21 +235,22 @@ impl DiffApp {
     pub(super) fn apply_filter_result(
         &mut self,
         search_result: DiffSearchResult,
-        jump_to_grep: bool,
+        navigation: PostFilterNavigation,
     ) {
         let selected_path = self
             .document
             .changeset
             .files
-            .get(self.sidebar.selected_file)
+            .get(self.sidebar.selected_file.get())
             .map(|file| file.display_path().to_owned());
-        let relative_scroll = self.relative_scroll_from_file_start(self.sidebar.selected_file);
+        let relative_scroll =
+            self.relative_scroll_from_file_start(self.sidebar.selected_file.get());
 
         self.replace_visible_files(
             search_result,
             selected_path,
             relative_scroll,
-            jump_to_grep,
+            navigation,
             HunkFocusModelBehavior::PreserveIfValid,
         );
     }
@@ -251,7 +260,7 @@ impl DiffApp {
         search_result: DiffSearchResult,
         selected_path: Option<String>,
         relative_scroll: usize,
-        jump_to_grep: bool,
+        navigation: PostFilterNavigation,
         hunk_focus_behavior: HunkFocusModelBehavior,
     ) {
         let DiffSearchResult {
@@ -267,10 +276,11 @@ impl DiffApp {
                     .files
                     .iter()
                     .position(|file| file.display_path() == path)
+                    .map(FileIndex::new)
             })
             .filter(|file| visible_files.contains(file))
             .or_else(|| visible_files.first().copied())
-            .unwrap_or(0);
+            .unwrap_or_default();
 
         self.document.stats = diff_stats_for_files(&self.document.changeset, &visible_files);
         self.document.max_line_width = self
@@ -286,7 +296,7 @@ impl DiffApp {
         let scroll = self
             .document
             .model
-            .file_start_row(self.sidebar.selected_file)
+            .file_start_row(self.sidebar.selected_file.get())
             .map(|start| {
                 self.scroll_for_model_row(start)
                     .saturating_add(relative_scroll)
@@ -300,9 +310,9 @@ impl DiffApp {
         self.set_horizontal_scroll(self.viewport.horizontal_scroll);
         self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
 
-        if jump_to_grep && !self.filters.grep_matches.is_empty() {
-            self.filters.selected_grep_match = Some(0);
-            self.set_scroll_centered_on(self.filters.grep_matches[0]);
+        if navigation.jumps_to_grep() && !self.filters.grep_matches.is_empty() {
+            self.filters.selected_grep_match = Some(SearchMatchIndex::new(0));
+            self.set_scroll_centered_on(self.filters.grep_matches[0].get());
         } else {
             self.sync_grep_match_selection_to_scroll();
         }
@@ -323,7 +333,8 @@ impl DiffApp {
 
         self.filters
             .selected_grep_match
-            .and_then(|index| self.filters.grep_matches.get(index).copied())
+            .and_then(|index| self.filters.grep_matches.get(index.get()).copied())
+            .map(ModelRow::get)
     }
 
     pub(crate) fn sync_grep_match_selection_to_scroll(&mut self) {
@@ -337,7 +348,8 @@ impl DiffApp {
             .grep_matches
             .iter()
             .position(|row| self.grep_match_is_visible_or_below_scroll(*row))
-            .or_else(|| self.filters.grep_matches.len().checked_sub(1));
+            .or_else(|| self.filters.grep_matches.len().checked_sub(1))
+            .map(SearchMatchIndex::new);
     }
 
     pub(crate) fn move_grep_match(&mut self, delta: isize) {
@@ -353,13 +365,17 @@ impl DiffApp {
         }
 
         let len = self.filters.grep_matches.len();
-        let current = self.filters.selected_grep_match.unwrap_or_else(|| {
-            self.filters
-                .grep_matches
-                .iter()
-                .position(|row| self.grep_match_is_visible_or_below_scroll(*row))
-                .unwrap_or(0)
-        });
+        let current = self
+            .filters
+            .selected_grep_match
+            .map(SearchMatchIndex::get)
+            .unwrap_or_else(|| {
+                self.filters
+                    .grep_matches
+                    .iter()
+                    .position(|row| self.grep_match_is_visible_or_below_scroll(*row))
+                    .unwrap_or(0)
+            });
         let next = if delta < 0 {
             current
                 .saturating_add(len)
@@ -369,22 +385,22 @@ impl DiffApp {
             current.saturating_add(delta as usize) % len
         };
 
-        self.filters.selected_grep_match = Some(next);
+        self.filters.selected_grep_match = Some(SearchMatchIndex::new(next));
         self.set_scroll_for_grep_navigation(self.filters.grep_matches[next]);
         self.runtime.dirty = true;
     }
 
-    pub(super) fn grep_match_is_visible_or_below_scroll(&self, row: usize) -> bool {
-        let scroll = self.scroll_for_model_row(row);
+    pub(super) fn grep_match_is_visible_or_below_scroll(&self, row: ModelRow) -> bool {
+        let scroll = self.scroll_for_model_row(row.get());
         if !self.viewport.line_wrapping {
             return scroll >= self.viewport.scroll;
         }
 
-        let height = self.wrapped_visual_height_for_model_row(row);
+        let height = self.wrapped_visual_height_for_model_row(row.get());
         scroll.saturating_add(height) > self.viewport.scroll
     }
 
-    pub(crate) fn set_scroll_for_grep_navigation(&mut self, row: usize) {
-        self.set_scroll_centered_on(row);
+    pub(crate) fn set_scroll_for_grep_navigation(&mut self, row: ModelRow) {
+        self.set_scroll_centered_on(row.get());
     }
 }

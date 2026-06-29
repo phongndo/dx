@@ -195,10 +195,10 @@ impl DiffApp {
         let len = self.filtered_diff_choices().len();
         let outcome =
             SelectorController::new(&mut self.overlays.diff_menu, len).apply_input_key(key);
-        if outcome.changed {
+        if outcome.changed() {
             self.runtime.dirty = true;
         }
-        outcome.handled
+        outcome.handled()
     }
 
     pub(crate) fn select_highlighted_diff_choice(&mut self) {
@@ -296,7 +296,6 @@ impl DiffApp {
 
         let mut options = self.document.options.clone();
         options.source = self.branch_source(base, head);
-        options.scope = DiffScope::All;
 
         if options == self.document.options {
             self.runtime.dirty = true;
@@ -308,9 +307,12 @@ impl DiffApp {
 
     pub(crate) fn branch_source(&self, base: String, head: String) -> DiffSource {
         if self.refs.current_head.as_deref() == Some(head.as_str()) {
-            DiffSource::Base(base)
+            DiffSource::Base(base.into())
         } else {
-            DiffSource::Branch { base, head }
+            DiffSource::Branch {
+                base: base.into(),
+                head: head.into(),
+            }
         }
     }
 
@@ -352,19 +354,15 @@ impl DiffApp {
                     .or_else(|| self.refs.current_head.clone())
                     .or_else(|| current_head_label(&self.document.changeset.repo))?;
                 options.source = self.branch_source(base, head);
-                options.scope = DiffScope::All;
             }
             DiffChoice::All => {
-                options.source = DiffSource::Worktree;
-                options.scope = DiffScope::All;
+                options.set_worktree_scope(DiffScope::All);
             }
             DiffChoice::Unstaged => {
-                options.source = DiffSource::Worktree;
-                options.scope = DiffScope::Unstaged;
+                options.set_worktree_scope(DiffScope::Unstaged);
             }
             DiffChoice::Staged => {
-                options.source = DiffSource::Worktree;
-                options.scope = DiffScope::Staged;
+                options.set_worktree_scope(DiffScope::Staged);
             }
             DiffChoice::Show => {
                 let rev = self
@@ -372,8 +370,7 @@ impl DiffApp {
                     .show_rev
                     .clone()
                     .unwrap_or_else(|| "HEAD".to_owned());
-                options.source = DiffSource::Show(rev);
-                options.scope = DiffScope::All;
+                options.source = DiffSource::Show(rev.into());
             }
             DiffChoice::Review => return None,
         }

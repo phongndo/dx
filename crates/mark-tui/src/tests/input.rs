@@ -91,14 +91,14 @@ fn scroll_change_clears_manual_hunk_focus() {
     app.set_viewport_rows(5);
 
     app.next_hunk();
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 1)));
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_1)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_1)));
 
     app.set_scroll(0);
 
     assert_eq!(app.viewport.scroll, 0);
     assert_eq!(app.viewport.manual_hunk_focus, None);
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -109,15 +109,15 @@ fn model_rebuild_clears_manual_hunk_focus_when_scroll_is_unchanged() {
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((1, 0)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_1, HUNK_0)));
 
     app.filters.file_filter = "a.rs".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.sidebar.selected_file, 0);
+    assert_eq!(app.sidebar.selected_file, FILE_0);
     assert_eq!(app.viewport.manual_hunk_focus, None);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -129,14 +129,14 @@ fn model_rebuild_preserves_valid_manual_hunk_focus_when_scroll_is_unchanged() {
     app.next_hunk();
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 2)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_2)));
 
     app.filters.file_filter = "file.rs".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 2)));
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 2)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_2)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_2)));
 }
 
 #[test]
@@ -147,15 +147,15 @@ fn model_rebuild_preserves_valid_manual_hunk_focus_when_scroll_changes() {
 
     app.select_file(2);
     assert!(app.viewport.scroll > 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((2, 0)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_2, HUNK_0)));
 
     app.filters.file_filter = "c.rs".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.sidebar.selected_file, 2);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((2, 0)));
-    assert_eq!(app.focused_hunk_for_viewport(3), Some((2, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_2);
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_2, HUNK_0)));
+    assert_eq!(app.focused_hunk_for_viewport(3), Some((FILE_2, HUNK_0)));
 }
 
 #[test]
@@ -210,14 +210,14 @@ fn j_and_k_scroll_then_move_hunk_focus_at_edges_in_scrollable_diff() {
     app.set_scroll(0);
     let top_hunks = visible_hunk_keys(&app);
     assert!(top_hunks.len() >= 2);
-    app.viewport.manual_hunk_focus = Some(top_hunks[1]);
+    app.viewport.manual_hunk_focus = Some(typed_hunk_key(top_hunks[1]));
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("k should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.sidebar.selected_file, top_hunks[0].0);
+    assert_eq!(app.sidebar.selected_file, FileIndex::new(top_hunks[0].0));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some(top_hunks[0])
+        Some(typed_hunk_key(top_hunks[0]))
     );
 
     while app.viewport.scroll < app.max_scroll() {
@@ -229,16 +229,16 @@ fn j_and_k_scroll_then_move_hunk_focus_at_edges_in_scrollable_diff() {
     assert!(bottom_hunks.len() >= 2);
     let previous = bottom_hunks[bottom_hunks.len() - 2];
     let next = bottom_hunks[bottom_hunks.len() - 1];
-    app.viewport.manual_hunk_focus = Some(previous);
+    app.viewport.manual_hunk_focus = Some(typed_hunk_key(previous));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("j should be handled");
 
     assert_eq!(app.viewport.scroll, bottom_scroll);
-    assert_eq!(app.sidebar.selected_file, next.0);
+    assert_eq!(app.sidebar.selected_file, FileIndex::new(next.0));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some(next)
+        Some(typed_hunk_key(next))
     );
 }
 
@@ -249,7 +249,7 @@ fn mouse_wheel_moves_hunk_focus_when_diff_fits_viewport() {
     app.set_viewport_rows(20);
 
     assert_eq!(app.max_scroll(), 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     for _ in 0..2 {
         app.handle_mouse(MouseEvent {
@@ -259,7 +259,7 @@ fn mouse_wheel_moves_hunk_focus_when_diff_fits_viewport() {
             modifiers: KeyModifiers::NONE,
         })
         .expect("mouse wheel should be handled");
-        assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+        assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
     }
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::ScrollDown,
@@ -269,7 +269,7 @@ fn mouse_wheel_moves_hunk_focus_when_diff_fits_viewport() {
     })
     .expect("mouse wheel should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     for _ in 0..2 {
         app.handle_mouse(MouseEvent {
@@ -279,7 +279,7 @@ fn mouse_wheel_moves_hunk_focus_when_diff_fits_viewport() {
             modifiers: KeyModifiers::NONE,
         })
         .expect("mouse wheel should be handled");
-        assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+        assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
     }
     app.handle_mouse(MouseEvent {
         kind: MouseEventKind::ScrollUp,
@@ -289,7 +289,7 @@ fn mouse_wheel_moves_hunk_focus_when_diff_fits_viewport() {
     })
     .expect("mouse wheel should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -313,14 +313,14 @@ fn mouse_wheel_scrolls_then_accumulates_hunk_focus_at_edge_in_scrollable_diff() 
     assert!(bottom_hunks.len() >= 2);
     let previous = bottom_hunks[bottom_hunks.len() - 2];
     let next = bottom_hunks[bottom_hunks.len() - 1];
-    app.viewport.manual_hunk_focus = Some(previous);
+    app.viewport.manual_hunk_focus = Some(typed_hunk_key(previous));
 
     for _ in 0..2 {
         mouse_scroll(&mut app, MouseEventKind::ScrollDown);
         assert_eq!(app.viewport.scroll, app.max_scroll());
         assert_eq!(
             app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-            Some(previous)
+            Some(typed_hunk_key(previous))
         );
     }
     mouse_scroll(&mut app, MouseEventKind::ScrollDown);
@@ -328,7 +328,7 @@ fn mouse_wheel_scrolls_then_accumulates_hunk_focus_at_edge_in_scrollable_diff() 
     assert_eq!(app.viewport.scroll, app.max_scroll());
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some(next)
+        Some(typed_hunk_key(next))
     );
 }
 
@@ -339,16 +339,16 @@ fn bracket_hunk_navigation_uses_focused_hunk_in_scrollable_diff() {
     app.set_viewport_rows(5);
 
     assert!(app.max_scroll() > 0);
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_0)));
 
     app.next_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_1)));
 
     app.next_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 2)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_2)));
 
     app.previous_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -359,11 +359,11 @@ fn bracket_key_hunk_navigation_uses_focused_hunk_in_scrollable_diff() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE))
         .expect("] should move to next hunk");
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_1)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE))
         .expect("[ should move to previous hunk");
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -376,20 +376,20 @@ fn bracket_hunk_navigation_focuses_visible_hunk_when_scroll_is_clamped() {
 
     assert!(app.max_scroll() > 0);
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((1, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_1, HUNK_0)));
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((2, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_2, HUNK_0)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("k should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((1, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_1, HUNK_0)));
 }
 
 #[test]
@@ -399,25 +399,25 @@ fn bracket_hunk_navigation_can_return_to_first_hunk_in_short_scrollable_diff() {
     app.set_viewport_rows(20);
 
     assert!(app.max_scroll() > 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     for _ in 0..10 {
         app.previous_hunk();
     }
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.next_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((1, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_1, HUNK_0)));
 
     app.previous_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
 fn edit_key_without_editable_target_does_not_scroll_to_top() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(1);
     app.set_scroll(1);
@@ -437,7 +437,7 @@ fn edit_key_without_editable_target_does_not_scroll_to_top() {
 #[test]
 fn edit_key_without_editor_launch_preserves_queued_events() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let queued_quit = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
     let (tx, rx) = mpsc::channel(1);
@@ -535,15 +535,16 @@ fn bounded_context_expansion_config_does_not_limit_mouse_expansion() {
 
     assert!(app.expand_context_at_row(1));
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 0 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_0
+        }),
         Some(&49)
     );
     assert_eq!(
         app.document.model.row(1),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 1,
             new_line: 1,
         })
@@ -551,7 +552,7 @@ fn bounded_context_expansion_config_does_not_limit_mouse_expansion() {
     assert_eq!(
         app.document.model.row(49),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 49,
             new_line: 49,
         })
@@ -559,8 +560,8 @@ fn bounded_context_expansion_config_does_not_limit_mouse_expansion() {
     assert_eq!(
         app.document.model.row(50),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             lines: 49,
         })
     );
@@ -588,15 +589,16 @@ fn clicking_collapsed_context_expands_full_gap_and_hide_collapses() {
 
     assert!(app.expand_context_at_row(1));
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 0 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_0
+        }),
         Some(&49)
     );
     assert_eq!(
         app.document.model.row(1),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 1,
             new_line: 1,
         })
@@ -616,7 +618,7 @@ fn clicking_collapsed_context_expands_full_gap_and_hide_collapses() {
     assert_eq!(
         row,
         UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 49,
             new_line: 49,
         }
@@ -625,16 +627,15 @@ fn clicking_collapsed_context_expands_full_gap_and_hide_collapses() {
     assert!(line_text(&rendered).contains("line 49"));
 
     assert!(app.handle_context_at_row(50));
-    assert!(
-        !app.document
-            .context_expansions
-            .contains_key(&ContextKey { file: 0, hunk: 0 })
-    );
+    assert!(!app.document.context_expansions.contains_key(&ContextKey {
+        file: FILE_0,
+        hunk: HUNK_0
+    }));
     assert_eq!(
         app.document.model.row(1),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             old_start: 1,
             new_start: 1,
             lines: 49,
@@ -665,16 +666,17 @@ fn clicking_collapsed_context_between_hunks_expands_full_gap() {
 
     assert!(app.expand_context_at_row(4));
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 1 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1
+        }),
         Some(&49)
     );
     assert_eq!(
         app.document.model.row(4),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             lines: 49,
         })
     );
@@ -693,7 +695,7 @@ fn clicking_collapsed_context_between_hunks_expands_full_gap() {
     assert_eq!(
         row,
         UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 51,
             new_line: 51,
         }
@@ -703,27 +705,29 @@ fn clicking_collapsed_context_between_hunks_expands_full_gap() {
     assert_eq!(
         app.document.model.row(53),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 99,
             new_line: 99,
         })
     );
     assert_eq!(
         app.document.model.row(54),
-        Some(UiRow::HunkHeader { file: 0, hunk: 1 })
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_1
+        })
     );
 
     assert!(app.handle_context_at_row(4));
-    assert!(
-        !app.document
-            .context_expansions
-            .contains_key(&ContextKey { file: 0, hunk: 1 })
-    );
+    assert!(!app.document.context_expansions.contains_key(&ContextKey {
+        file: FILE_0,
+        hunk: HUNK_1
+    }));
     assert_eq!(
         app.document.model.row(4),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             old_start: 51,
             new_start: 51,
             lines: 49,
@@ -750,9 +754,10 @@ fn context_keyboard_shortcuts_expand_and_collapse_by_default() {
     app.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE))
         .expect(", should expand context above focused hunk");
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 0 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_0
+        }),
         Some(&49)
     );
 
@@ -763,9 +768,10 @@ fn context_keyboard_shortcuts_expand_and_collapse_by_default() {
     app.handle_key(KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE))
         .expect(". should expand context below focused hunk");
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 1 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1
+        }),
         Some(&49)
     );
 }
@@ -787,23 +793,24 @@ fn context_keyboard_expand_down_reveals_context_after_final_hunk() {
         .expect(". should expand context below the final hunk");
 
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 1 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1
+        }),
         Some(&30)
     );
     assert_eq!(
         app.document.model.row(4),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             lines: 30,
         })
     );
     assert_eq!(
         app.document.model.row(5),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 51,
             new_line: 51,
         })
@@ -811,7 +818,7 @@ fn context_keyboard_expand_down_reveals_context_after_final_hunk() {
     assert_eq!(
         app.document.model.row(34),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 80,
             new_line: 80,
         })
@@ -983,7 +990,7 @@ fn slash_does_not_match_file_paths() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.filters.grep_filter = "unique_name".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
     assert!(visible_paths(&app).is_empty());
     assert!(app.filters.grep_matches.is_empty());
@@ -1062,16 +1069,16 @@ fn flat_action_keys_are_unmapped_under_leader() {
         .expect("leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
         .expect("leader question mark should be handled");
-    assert!(!app.overlays.help_menu_open);
+    assert!(!app.overlays.help_menu_is_open());
 }
 
 #[test]
 fn default_mode_prefix_keys_open_diff_pickers() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature".to_owned()];
+    app.refs.comparison_branches = branch_names(&["main", "feature"]);
     app.refs.comparison_commits = vec![GitCommit {
-        sha: "abcdef0".to_owned(),
+        sha: "abcdef0".into(),
         subject: "commit".to_owned(),
     }];
 
@@ -1080,21 +1087,21 @@ fn default_mode_prefix_keys_open_diff_pickers() {
     assert!(app.input.key_prefix_pending.is_some());
     app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
         .expect("m h should open head picker");
-    assert_eq!(app.refs.branch_menu_open, Some(BranchMenu::Head));
+    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Head));
 
     app.close_branch_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
         .expect("m prefix should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
         .expect("m b should open base picker");
-    assert_eq!(app.refs.branch_menu_open, Some(BranchMenu::Base));
+    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Base));
 
     app.close_branch_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
         .expect("m prefix should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
         .expect("m c should open commit picker");
-    assert!(app.refs.commit_menu_open);
+    assert!(app.refs.commit_menu_is_open());
 }
 
 #[test]
@@ -1144,20 +1151,20 @@ fn configured_keymap_changes_leader_actions_and_flat_keys() {
         .expect("configured leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))
         .expect("configured diff menu should be handled");
-    assert!(app.overlays.diff_menu_open);
+    assert!(app.overlays.diff_menu_is_open());
 
     app.close_diff_menu();
     app.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::NONE))
         .expect("configured leader should be handled");
     app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE))
         .expect("configured options menu should be handled");
-    assert!(app.overlays.options_menu_open);
+    assert!(app.overlays.options_menu_is_open());
 }
 
 #[test]
 fn default_edit_hunk_key_is_ctrl_g() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(1);
     app.set_scroll(1);
@@ -1395,7 +1402,7 @@ fn diff_scroll_does_not_move_file_sidebar_scroll() {
 
     app.set_scroll(0);
 
-    assert_eq!(app.sidebar.selected_file, 0);
+    assert_eq!(app.sidebar.selected_file, FILE_0);
     assert_eq!(app.sidebar.file_sidebar_scroll, 1);
 }
 
@@ -1495,22 +1502,21 @@ fn diff_header_labels_describe_selected_scope() {
     assert_eq!(diff_selector_text(&options), " All changes ");
     assert_eq!(diff_comparison_label(&options), "HEAD → working tree");
 
-    options.scope = DiffScope::Unstaged;
+    options.set_worktree_scope(DiffScope::Unstaged);
     assert_eq!(diff_selector_text(&options), " Unstaged ");
     assert_eq!(diff_comparison_label(&options), "index → working tree");
 
-    options.scope = DiffScope::Staged;
+    options.set_worktree_scope(DiffScope::Staged);
     assert_eq!(diff_selector_text(&options), " Staged ");
     assert_eq!(diff_comparison_label(&options), "HEAD → index");
 
-    options.source = DiffSource::Base("origin/main".to_owned());
-    options.scope = DiffScope::All;
+    options.source = DiffSource::Base("origin/main".into());
     assert_eq!(diff_selector_text(&options), " Branch ");
     assert_eq!(diff_comparison_label(&options), "HEAD → origin/main");
 
     options.source = DiffSource::Branch {
-        base: "origin/main".to_owned(),
-        head: "feature/ui".to_owned(),
+        base: "origin/main".into(),
+        head: "feature/ui".into(),
     };
     assert_eq!(diff_comparison_label(&options), "feature/ui → origin/main");
 }
@@ -1590,14 +1596,14 @@ fn responsive_resize_clamps_wrapped_scroll_after_width_change() {
 #[test]
 fn select_file_scrolls_to_visual_file_start_for_wrapped_no_hunk_file() {
     let mut changeset = changeset_with_wrapped_leading_file();
-    changeset.files[1].hunks.clear();
+    changeset.files[1].hunks_mut().clear();
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.viewport.line_wrapping = true;
     app.set_viewport_width(18);
 
     app.select_file(1);
 
-    assert_eq!(app.sidebar.selected_file, 1);
+    assert_eq!(app.sidebar.selected_file, FILE_1);
     assert_eq!(app.viewport.scroll, wrapped_file_start_scroll(&app, 1));
 }
 
@@ -1611,7 +1617,7 @@ fn replace_loaded_diff_preserves_wrapped_file_relative_scroll() {
     let relative_scroll = 1;
     set_wrapped_scroll_relative_to_file_start(&mut app, 1, relative_scroll);
     let mut replacement = changeset_with_wrapped_leading_file();
-    replacement.files[1].hunks[0].lines[0].text = "updated target".to_owned();
+    *replacement.files[1].hunks_mut()[0].lines[0].text_mut() = "updated target".to_owned();
 
     app.replace_loaded_diff(DiffOptions::default(), replacement);
 
@@ -1650,16 +1656,18 @@ fn replace_cached_diff_preserves_wrapped_file_relative_scroll() {
     let relative_scroll = 1;
     set_wrapped_scroll_relative_to_file_start(&mut app, 1, relative_scroll);
     let options = DiffOptions {
-        scope: DiffScope::Staged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Staged,
+        },
         ..DiffOptions::default()
     };
     let mut replacement = changeset_with_wrapped_leading_file();
-    replacement.files[1].hunks[0].lines[0].text = "cached target".to_owned();
+    *replacement.files[1].hunks_mut()[0].lines[0].text_mut() = "cached target".to_owned();
 
     app.replace_cached_diff(
         options.clone(),
         diff_cache_entry(options, replacement),
-        false,
+        BranchMetadataPolicy::Preserve,
     );
 
     assert_eq!(
@@ -1684,7 +1692,12 @@ fn number_keys_do_not_switch_diff_choice() {
 
     assert!(!should_quit);
     assert!(app.jobs.pending_diff_load.is_none());
-    assert_eq!(app.document.options.source, DiffSource::Worktree);
+    assert_eq!(
+        app.document.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::All
+        }
+    );
 }
 
 #[test]
@@ -1705,12 +1718,12 @@ fn tab_keys_cycle_diff_choice() {
         .pending_diff_load
         .as_ref()
         .expect("tab should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Show("HEAD".to_owned()));
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
+    assert_eq!(load.options.worktree_scope(), None);
 
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT))
@@ -1721,8 +1734,13 @@ fn tab_keys_cycle_diff_choice() {
         .pending_diff_load
         .as_ref()
         .expect("shift-tab should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::All
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
 }
 
 #[test]
@@ -1733,7 +1751,9 @@ fn cached_tab_key_switches_diff_choice_without_loading() {
         DiffLayoutMode::Unified,
     );
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     let cached_changeset = changeset_with_files(&["unstaged.rs"]);
@@ -1759,14 +1779,16 @@ fn repeated_tab_uses_pending_diff_choice_for_next_target() {
         .expect("tab should queue show");
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
         .expect("tab should queue unstaged");
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
@@ -1777,14 +1799,19 @@ fn repeated_tab_uses_pending_diff_choice_for_next_target() {
         .pending_diff_load
         .as_ref()
         .expect("third tab should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::Staged);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::Staged
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Staged));
 }
 
 #[test]
 fn number_key_does_not_switch_show_source_diff_choice() {
     let options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     let mut app = DiffApp::new(

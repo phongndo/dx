@@ -18,13 +18,13 @@ fn n_and_p_do_not_navigate_without_grep_filter() {
 
     app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
         .expect("n should be ignored without grep");
-    assert_eq!(app.sidebar.selected_file, 0);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((0, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_0);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_0, HUNK_0)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE))
         .expect("p should be ignored without grep");
-    assert_eq!(app.sidebar.selected_file, 0);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((0, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_0);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn n_and_p_navigate_grep_matches_when_grep_filter_is_active() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
     app.filters.grep_filter = "line".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
     assert_eq!(app.filters.grep_matches.len(), 3);
     assert_eq!(app.current_grep_match_row(), Some(2));
@@ -117,7 +117,7 @@ fn grep_match_stays_centered_after_viewport_rows_are_known() {
     ]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.filters.grep_filter = "needle".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
     assert_eq!(app.viewport.viewport_rows, 1);
     assert_eq!(app.current_grep_match_row(), Some(7));

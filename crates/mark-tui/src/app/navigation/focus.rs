@@ -3,7 +3,7 @@ use super::super::{
     find_rendered_diff_row_outward, max_scroll_for_viewport, viewport_focus_offset,
 };
 use crate::{
-    model::UiModel,
+    model::{FileIndex, HunkIndex, UiModel, UiRow},
     render::viewport_plan::{ViewportSlotKind, plan_diff_viewport_rows_at_scroll},
 };
 
@@ -14,7 +14,7 @@ impl DiffApp {
 
     pub(in crate::app) fn replace_model(
         &mut self,
-        visible_files: &[usize],
+        visible_files: &[FileIndex],
         hunk_focus_behavior: HunkFocusModelBehavior,
     ) {
         let previous_manual_hunk_focus = self.viewport.manual_hunk_focus;
@@ -26,8 +26,14 @@ impl DiffApp {
         );
         self.invalidate_wrapped_visual_layout();
         self.viewport.manual_hunk_focus = match hunk_focus_behavior {
-            HunkFocusModelBehavior::PreserveIfValid => previous_manual_hunk_focus
-                .filter(|(file, hunk)| self.document.model.hunk_start_row(*file, *hunk).is_some()),
+            HunkFocusModelBehavior::PreserveIfValid => {
+                previous_manual_hunk_focus.filter(|(file, hunk)| {
+                    self.document
+                        .model
+                        .hunk_start_row(file.get(), hunk.get())
+                        .is_some()
+                })
+            }
             HunkFocusModelBehavior::Clear => None,
         };
         self.reanchor_annotation_draft();
@@ -118,7 +124,7 @@ impl DiffApp {
         &self,
         rendered_rows: &[RenderedDiffRow],
         search: HunkFocusSearch,
-    ) -> Option<(usize, usize)> {
+    ) -> Option<(FileIndex, HunkIndex)> {
         match search {
             HunkFocusSearch::FirstVisible => {
                 for rendered_row in rendered_rows {
@@ -126,7 +132,7 @@ impl DiffApp {
                         .document
                         .model
                         .row(rendered_row.model_row)
-                        .and_then(|row| row.hunk_key())
+                        .and_then(UiRow::typed_hunk_key)
                     {
                         return Some(hunk_key);
                     }
@@ -138,13 +144,16 @@ impl DiffApp {
                     self.document
                         .model
                         .row(rendered_row.model_row)
-                        .and_then(|row| row.hunk_key())
+                        .and_then(UiRow::typed_hunk_key)
                 })
             }
         }
     }
 
-    pub(crate) fn focused_hunk_for_viewport(&self, visible_rows: usize) -> Option<(usize, usize)> {
+    pub(crate) fn focused_hunk_for_viewport(
+        &self,
+        visible_rows: usize,
+    ) -> Option<(FileIndex, HunkIndex)> {
         let rendered_rows = self.rendered_diff_rows_for_viewport(visible_rows);
         if rendered_rows.is_empty() {
             return None;
@@ -155,7 +164,7 @@ impl DiffApp {
                 self.document
                     .model
                     .row(rendered_row.model_row)
-                    .is_some_and(|row| row.is_hunk_row(file, hunk))
+                    .is_some_and(|row| row.is_hunk_row(file.get(), hunk.get()))
             })
         {
             return Some((file, hunk));

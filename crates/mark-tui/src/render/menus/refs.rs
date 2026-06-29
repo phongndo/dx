@@ -24,9 +24,10 @@ use crate::{
     },
     theme::DiffTheme,
 };
+use mark_diff::BranchName;
 
 pub(crate) fn branch_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    let menu = app.refs.branch_menu_open?;
+    let menu = app.refs.branch_menu_open()?;
     if app.refs.comparison_branches.is_empty() {
         return None;
     }
@@ -36,7 +37,7 @@ pub(crate) fn branch_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option
 }
 
 pub(crate) fn commit_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    if !app.refs.commit_menu_open || app.refs.comparison_commits.is_empty() {
+    if !app.refs.commit_menu_is_open() || app.refs.comparison_commits.is_empty() {
         return None;
     }
 
@@ -45,7 +46,7 @@ pub(crate) fn commit_menu_list_visible_rows(app: &DiffApp, area: Rect) -> Option
 }
 
 pub(crate) fn color_scheme_picker_list_visible_rows(app: &DiffApp, area: Rect) -> Option<usize> {
-    if !app.overlays.color_scheme_picker_open {
+    if !app.overlays.color_scheme_picker_is_open() {
         return None;
     }
 
@@ -53,7 +54,7 @@ pub(crate) fn color_scheme_picker_list_visible_rows(app: &DiffApp, area: Rect) -
 }
 
 pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
-    let Some(menu) = app.refs.branch_menu_open else {
+    let Some(menu) = app.refs.branch_menu_open() else {
         return;
     };
     let match_count = app.filtered_branches().len();
@@ -104,7 +105,7 @@ pub(crate) fn draw_branch_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect)
 }
 
 pub(crate) fn branch_menu_area(app: &DiffApp, area: Rect) -> Option<Rect> {
-    let menu = app.refs.branch_menu_open?;
+    let menu = app.refs.branch_menu_open()?;
     if !floating_menu_fits_terminal(area) || app.refs.comparison_branches.is_empty() {
         return None;
     }
@@ -289,7 +290,7 @@ pub(crate) fn draw_commit_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect)
 }
 
 pub(crate) fn commit_menu_area(app: &DiffApp, area: Rect) -> Option<Rect> {
-    if !app.refs.commit_menu_open {
+    if !app.refs.commit_menu_is_open() {
         return None;
     }
     if !floating_menu_fits_terminal(area) || app.refs.comparison_commits.is_empty() {
@@ -315,7 +316,7 @@ pub(crate) fn commit_menu_area(app: &DiffApp, area: Rect) -> Option<Rect> {
     Some(centered_floating_rect(area, width, height))
 }
 
-pub(crate) fn branch_menu_width(branches: &[String]) -> u16 {
+pub(crate) fn branch_menu_width(branches: &[BranchName]) -> u16 {
     branches
         .iter()
         .map(|branch| branch.width() + 8)

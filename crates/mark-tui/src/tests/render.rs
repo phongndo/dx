@@ -7,22 +7,22 @@ fn hunk_focus_moves_between_hunks_when_diff_fits_viewport() {
     app.set_viewport_rows(20);
 
     assert_eq!(app.max_scroll(), 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 2)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_2)));
 
     app.previous_hunk();
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.previous_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -32,19 +32,19 @@ fn layout_toggle_resets_manual_hunk_focus_when_diff_fits_viewport() {
     app.set_viewport_rows(20);
 
     assert_eq!(app.max_scroll(), 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.next_hunk();
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 1)));
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.toggle_layout();
 
     assert_eq!(app.viewport.layout, DiffLayoutMode::Split);
     assert_eq!(app.viewport.scroll, 0);
     assert_eq!(app.viewport.manual_hunk_focus, None);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -54,26 +54,26 @@ fn j_and_k_move_hunk_focus_when_diff_fits_viewport() {
     app.set_viewport_rows(20);
 
     assert_eq!(app.max_scroll(), 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("j should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
         .expect("j should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 2)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_2)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("k should be handled");
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
         .expect("k should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn bracket_hunk_navigation_centers_hunk_that_fits_viewport() {
         app.viewport.scroll + viewport_center_offset(app.viewport.viewport_rows),
         hunk_center
     );
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -120,9 +120,9 @@ fn hunk_navigation_keeps_adjacent_file_header_with_oversized_hunk() {
     );
     assert_eq!(
         app.document.model.row(app.viewport.scroll),
-        Some(UiRow::FileHeader(0))
+        Some(UiRow::FileHeader(FILE_0))
     );
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn hunk_navigation_keeps_file_header_before_collapsed_context() {
     );
     assert_eq!(
         app.document.model.row(app.viewport.scroll),
-        Some(UiRow::FileHeader(0))
+        Some(UiRow::FileHeader(FILE_0))
     );
     assert!(matches!(
         app.document.model.row(app.viewport.scroll + 1),
@@ -153,9 +153,12 @@ fn hunk_navigation_keeps_file_header_before_collapsed_context() {
     ));
     assert_eq!(
         app.document.model.row(app.viewport.scroll + 2),
-        Some(UiRow::HunkHeader { file: 0, hunk: 0 })
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_0
+        })
     );
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_0)));
 }
 
 #[test]
@@ -198,12 +201,12 @@ fn focused_hunk_editor_target_uses_manual_focus_when_diff_fits_viewport() {
 fn debug_notifications_emit_terminal_event_toasts() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.notifications.toasts = Toasts::new(NotificationSettings {
-        mode: NotificationMode::Debug,
-        corner: ToastCorner::TopRight,
-        timeout_ms: 1_500,
-        max_visible: 3,
-    });
+    app.notifications.toasts = Toasts::new(NotificationSettings::new(
+        NotificationMode::Debug,
+        ToastCorner::TopRight,
+        1_500,
+        3,
+    ));
     let (_tx, rx) = mpsc::channel(1);
     let mut events = crate::event_reader::TerminalEventReader::from_receiver(rx);
     let mut live_diff = None;
@@ -245,8 +248,8 @@ fn ui_model_expands_context_before_hunk_from_nearest_lines() {
     assert_eq!(
         model.row(1),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             old_start: 1,
             new_start: 1,
             lines: 49,
@@ -254,14 +257,20 @@ fn ui_model_expands_context_before_hunk_from_nearest_lines() {
         })
     );
 
-    expansions.insert(ContextKey { file: 0, hunk: 0 }, step);
+    expansions.insert(
+        ContextKey {
+            file: FILE_0,
+            hunk: HUNK_0,
+        },
+        step,
+    );
     let model = UiModel::new(&changeset, DiffLayoutMode::Unified, &expansions);
 
     assert_eq!(
         model.row(1),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             old_start: 1,
             new_start: 1,
             lines: 29,
@@ -271,7 +280,7 @@ fn ui_model_expands_context_before_hunk_from_nearest_lines() {
     assert_eq!(
         model.row(2),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 30,
             new_line: 30,
         })
@@ -279,12 +288,18 @@ fn ui_model_expands_context_before_hunk_from_nearest_lines() {
     assert_eq!(
         model.row(22),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             lines: step,
         })
     );
-    assert_eq!(model.row(23), Some(UiRow::HunkHeader { file: 0, hunk: 0 }));
+    assert_eq!(
+        model.row(23),
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_0
+        })
+    );
 }
 
 #[test]
@@ -302,15 +317,16 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
 
     assert!(app.expand_context_at_row(1));
     assert_eq!(
-        app.document
-            .context_expansions
-            .get(&ContextKey { file: 0, hunk: 0 }),
+        app.document.context_expansions.get(&ContextKey {
+            file: FILE_0,
+            hunk: HUNK_0
+        }),
         Some(&49)
     );
     assert_eq!(
         app.document.model.row(1),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 1,
             new_line: 1,
         })
@@ -318,7 +334,7 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
     assert_eq!(
         app.document.model.row(49),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 49,
             new_line: 49,
         })
@@ -326,14 +342,17 @@ fn full_context_expansion_config_shows_all_remaining_lines() {
     assert_eq!(
         app.document.model.row(50),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 0,
+            file: FILE_0,
+            hunk: HUNK_0,
             lines: 49,
         })
     );
     assert_eq!(
         app.document.model.row(51),
-        Some(UiRow::HunkHeader { file: 0, hunk: 0 })
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_0
+        })
     );
 }
 
@@ -422,9 +441,12 @@ fn n_and_p_navigate_grep_by_line_not_match_count() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
     app.filters.grep_filter = "line".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
-    assert_eq!(app.filters.grep_matches, vec![2, 3]);
+    assert_eq!(
+        app.filters.grep_matches,
+        vec![ModelRow::new(2), ModelRow::new(3)]
+    );
     assert_eq!(app.current_grep_match_row(), Some(2));
     assert_eq!(app.viewport.scroll, 0);
 
@@ -446,23 +468,23 @@ fn wrapped_grep_selection_stays_on_visible_continuation_row() {
     app.set_viewport_width(18);
     app.set_viewport_rows(2);
     app.filters.grep_filter = "needle".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
     assert_eq!(app.filters.grep_matches.len(), 2);
     let first = app.filters.grep_matches[0];
     let second = app.filters.grep_matches[1];
     let continuation_scroll = app
-        .wrapped_visual_scroll_for_model_row(first)
+        .wrapped_visual_scroll_for_model_row(first.get())
         .saturating_add(1);
 
     app.set_scroll(continuation_scroll);
 
-    assert_eq!(app.current_grep_match_row(), Some(first));
+    assert_eq!(app.current_grep_match_row(), Some(first.get()));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
         .expect("n should move to the next grep match");
 
-    assert_eq!(app.current_grep_match_row(), Some(second));
+    assert_eq!(app.current_grep_match_row(), Some(second.get()));
 }
 
 #[test]
@@ -496,7 +518,7 @@ fn grep_highlight_ignores_unified_gutter_numbers() {
     let changeset = changeset_with_line_text("abc");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.filters.grep_filter = "1".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
 
     let row = app
         .document
@@ -518,12 +540,7 @@ fn grep_highlight_ignores_unified_gutter_numbers() {
 #[test]
 fn wrapped_split_context_line_highlights_grep_on_continuation_rows() {
     let theme = DiffTheme::default();
-    let line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(12),
-        new_line: Some(12),
-        text: "prefix needle suffix".to_owned(),
-    };
+    let line = DiffLine::context(12, 12, "prefix needle suffix".to_owned());
 
     let lines = render_split_context_line_wrapped(&line, None, 0, 30, theme, "needle");
     let highlighted_line = lines
@@ -637,12 +654,12 @@ fn notices_expire_after_ttl() {
 
 #[test]
 fn notices_clamp_oversized_timeout() {
-    let mut toasts = Toasts::new(NotificationSettings {
-        mode: NotificationMode::Default,
-        corner: ToastCorner::TopRight,
-        timeout_ms: u64::MAX,
-        max_visible: 3,
-    });
+    let mut toasts = Toasts::new(NotificationSettings::new(
+        NotificationMode::Default,
+        ToastCorner::TopRight,
+        u64::MAX,
+        3,
+    ));
 
     let before = Instant::now();
     assert!(toasts.push(ToastLevel::Info, "saved"));
@@ -660,16 +677,16 @@ fn file_sidebar_tracks_selected_file() {
     app.sidebar.file_sidebar_open = true;
     app.set_viewport_rows(4);
 
-    app.sidebar.selected_file = 4;
+    app.sidebar.selected_file = FILE_4;
     app.ensure_file_sidebar_selection_visible(app.visible_file_sidebar_rows());
 
-    assert_eq!(app.sidebar.selected_file, 4);
+    assert_eq!(app.sidebar.selected_file, FILE_4);
     assert_eq!(app.sidebar.file_sidebar_scroll, 1);
 
-    app.sidebar.selected_file = 1;
+    app.sidebar.selected_file = FILE_1;
     app.ensure_file_sidebar_selection_visible(app.visible_file_sidebar_rows());
 
-    assert_eq!(app.sidebar.selected_file, 1);
+    assert_eq!(app.sidebar.selected_file, FILE_1);
     assert_eq!(app.sidebar.file_sidebar_scroll, 1);
 }
 
@@ -679,7 +696,7 @@ fn replace_changeset_keeps_remapped_file_sidebar_selection_visible() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.sidebar.file_sidebar_open = true;
     app.set_viewport_rows(2);
-    app.sidebar.selected_file = 4;
+    app.sidebar.selected_file = FILE_4;
     app.ensure_file_sidebar_selection_visible(app.visible_file_sidebar_rows());
 
     assert_eq!(app.sidebar.file_sidebar_scroll, 3);
@@ -692,19 +709,19 @@ fn replace_changeset_keeps_remapped_file_sidebar_selection_visible() {
         "fifth.rs",
     ]));
 
-    assert_eq!(app.sidebar.selected_file, 0);
+    assert_eq!(app.sidebar.selected_file, FILE_0);
     assert_eq!(app.sidebar.file_sidebar_scroll, 0);
 }
 
 #[test]
 fn file_sidebar_renders_changed_file_summary() {
     let mut changeset = changeset_with_files(&["src/lib.rs", "README.md"]);
-    changeset.files[1].status = FileStatus::Added;
+    set_test_file_added(&mut changeset.files[1]);
     changeset.files[1].additions = 12;
     changeset.files[1].deletions = 0;
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.sidebar.file_sidebar_open = true;
-    app.sidebar.selected_file = 1;
+    app.sidebar.selected_file = FILE_1;
 
     let lines = file_sidebar_lines(&app, 24, 2);
     let additions = lines[1]
@@ -747,7 +764,7 @@ fn file_sidebar_renders_changed_file_summary() {
 fn file_sidebar_truncates_long_paths_before_stats() {
     let mut changeset =
         changeset_with_files(&["src/runtime/test_runner/expect/toMatchInlineSnapshot.rs"]);
-    changeset.files[0].status = FileStatus::Added;
+    set_test_file_added(&mut changeset.files[0]);
     changeset.files[0].additions = 1290;
     changeset.files[0].deletions = 3910;
     let app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
@@ -815,7 +832,9 @@ fn statusline_header_hides_pending_diff_load() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let options = DiffOptions {
-        scope: DiffScope::Staged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Staged,
+        },
         ..DiffOptions::default()
     };
     app.jobs.pending_diff_load = Some(pending_diff_load(options));
@@ -892,12 +911,12 @@ fn live_reload_suppresses_toast_in_default_notification_mode() {
 fn live_reload_emits_success_toast_in_debug_notification_mode() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.notifications.toasts = Toasts::new(NotificationSettings {
-        mode: NotificationMode::Debug,
-        corner: ToastCorner::TopRight,
-        timeout_ms: 1_500,
-        max_visible: 3,
-    });
+    app.notifications.toasts = Toasts::new(NotificationSettings::new(
+        NotificationMode::Debug,
+        ToastCorner::TopRight,
+        1_500,
+        3,
+    ));
 
     app.mark_live_reload_pending();
 
@@ -980,13 +999,14 @@ fn line_wrapping_preserves_wide_glyphs_at_split_wrap_boundary() {
 #[test]
 fn file_header_truncates_path_before_delta() {
     let file = mark_diff::DiffFile {
-        old_path: Some("src/runtime/test_runner/expect/toMatchInlineSnapshot.rs".to_owned()),
-        new_path: Some("src/runtime/test_runner/expect/toMatchInlineSnapshot.rs".to_owned()),
-        status: FileStatus::Modified,
-        hunks: Vec::new(),
+        change: FileChange::from_status(
+            FileStatus::Modified,
+            Some("src/runtime/test_runner/expect/toMatchInlineSnapshot.rs".to_owned()),
+            Some("src/runtime/test_runner/expect/toMatchInlineSnapshot.rs".to_owned()),
+        ),
         additions: 1290,
         deletions: 3910,
-        is_binary: false,
+        body: mark_diff::DiffFileBody::Text { hunks: Vec::new() },
     };
 
     let theme = DiffTheme::default();
@@ -1021,35 +1041,12 @@ fn file_header_truncates_path_before_delta() {
 fn hunk_header_uses_raw_location_context_and_delta() {
     let hunk = mark_diff::DiffHunk {
         header: "@@ -200,2 +211,3 @@ render_diff_hunk".to_owned(),
-        old_start: 200,
-        old_count: 2,
-        new_start: 211,
-        new_count: 3,
+        ranges: HunkLineRanges::new(200, 2, 211, 3),
         lines: vec![
-            DiffLine {
-                kind: DiffLineKind::Context,
-                old_line: Some(200),
-                new_line: Some(211),
-                text: "context".to_owned(),
-            },
-            DiffLine {
-                kind: DiffLineKind::Deletion,
-                old_line: Some(201),
-                new_line: None,
-                text: "old".to_owned(),
-            },
-            DiffLine {
-                kind: DiffLineKind::Addition,
-                old_line: None,
-                new_line: Some(212),
-                text: "new".to_owned(),
-            },
-            DiffLine {
-                kind: DiffLineKind::Addition,
-                old_line: None,
-                new_line: Some(213),
-                text: "again".to_owned(),
-            },
+            DiffLine::context(200, 211, "context".to_owned()),
+            DiffLine::deletion(201, "old".to_owned()),
+            DiffLine::addition(212, "new".to_owned()),
+            DiffLine::addition(213, "again".to_owned()),
         ],
     };
 
@@ -1070,16 +1067,8 @@ fn hunk_header_uses_raw_location_context_and_delta() {
 fn hunk_header_line_matches_unified_gutter() {
     let hunk = mark_diff::DiffHunk {
         header: "@@ -200,2 +211,3 @@ render_diff_hunk".to_owned(),
-        old_start: 200,
-        old_count: 2,
-        new_start: 211,
-        new_count: 3,
-        lines: vec![DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(211),
-            text: "new".to_owned(),
-        }],
+        ranges: HunkLineRanges::new(200, 2, 211, 3),
+        lines: vec![DiffLine::addition(211, "new".to_owned())],
     };
 
     let theme = DiffTheme::default();
@@ -1126,23 +1115,10 @@ fn hunk_header_line_matches_unified_gutter() {
 fn hunk_header_truncates_context_before_delta() {
     let hunk = mark_diff::DiffHunk {
         header: "@@ -1 +1 @@ render_diff_hunk_with_a_really_long_name".to_owned(),
-        old_start: 1,
-        old_count: 1,
-        new_start: 1,
-        new_count: 1,
+        ranges: HunkLineRanges::new(1, 1, 1, 1),
         lines: vec![
-            DiffLine {
-                kind: DiffLineKind::Deletion,
-                old_line: Some(1),
-                new_line: None,
-                text: "old".to_owned(),
-            },
-            DiffLine {
-                kind: DiffLineKind::Addition,
-                old_line: None,
-                new_line: Some(1),
-                text: "new".to_owned(),
-            },
+            DiffLine::deletion(1, "old".to_owned()),
+            DiffLine::addition(1, "new".to_owned()),
         ],
     };
 
@@ -1164,16 +1140,8 @@ fn hunk_header_truncates_context_before_delta() {
 fn hunk_header_truncates_location_without_collapsing_range_styles() {
     let hunk = mark_diff::DiffHunk {
         header: "@@ -200,2 +211,3 @@ render_diff_hunk".to_owned(),
-        old_start: 200,
-        old_count: 2,
-        new_start: 211,
-        new_count: 3,
-        lines: vec![DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(200),
-            new_line: Some(211),
-            text: "context".to_owned(),
-        }],
+        ranges: HunkLineRanges::new(200, 2, 211, 3),
+        lines: vec![DiffLine::context(200, 211, "context".to_owned())],
     };
 
     let theme = DiffTheme::default();
@@ -1259,36 +1227,26 @@ fn split_empty_cells_use_default_gutter_and_hatched_fill() {
 #[test]
 fn split_wrapped_empty_cells_follow_visual_rows() {
     let changeset = Changeset {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: FileStatus::Modified,
-            hunks: vec![mark_diff::DiffHunk {
-                header: "@@ -0,0 +1,2 @@".to_owned(),
-                old_start: 0,
-                old_count: 0,
-                new_start: 1,
-                new_count: 2,
-                lines: vec![
-                    DiffLine {
-                        kind: DiffLineKind::Addition,
-                        old_line: None,
-                        new_line: Some(1),
-                        text: "abcdefgh".to_owned(),
-                    },
-                    DiffLine {
-                        kind: DiffLineKind::Addition,
-                        old_line: None,
-                        new_line: Some(2),
-                        text: "ijkl".to_owned(),
-                    },
-                ],
-            }],
+            change: FileChange::from_status(
+                FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 2,
             deletions: 0,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text {
+                hunks: vec![mark_diff::DiffHunk {
+                    header: "@@ -0,0 +1,2 @@".to_owned(),
+                    ranges: HunkLineRanges::new(0, 0, 1, 2),
+                    lines: vec![
+                        DiffLine::addition(1, "abcdefgh".to_owned()),
+                        DiffLine::addition(2, "ijkl".to_owned()),
+                    ],
+                }],
+            },
         }],
         raw_patch: Vec::new(),
     };
@@ -1344,12 +1302,7 @@ fn split_wrapped_empty_cells_follow_visual_rows() {
 #[test]
 fn line_gutters_use_theme_background() {
     let theme = DiffTheme::default();
-    let line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(7),
-        new_line: Some(7),
-        text: "same".to_owned(),
-    };
+    let line = DiffLine::context(7, 7, "same".to_owned());
 
     let rendered = render_unified_line_at_scroll(&line, None, &[], 0, 24, theme, 0);
 
@@ -1362,12 +1315,7 @@ fn line_gutters_use_theme_background() {
 #[test]
 fn changed_line_gutters_use_delta_colors_and_bold_signs() {
     let theme = DiffTheme::default();
-    let line = DiffLine {
-        kind: DiffLineKind::Addition,
-        old_line: None,
-        new_line: Some(7),
-        text: "added".to_owned(),
-    };
+    let line = DiffLine::addition(7, "added".to_owned());
 
     let rendered = render_unified_line_at_scroll(&line, None, &[], 0, 24, theme, 0);
 
@@ -1412,12 +1360,7 @@ fn split_view_uses_right_indicator_as_separator() {
 
 #[test]
 fn unified_diff_content_scrolls_horizontally() {
-    let line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(1),
-        new_line: Some(1),
-        text: "abcdef".to_owned(),
-    };
+    let line = DiffLine::context(1, 1, "abcdef".to_owned());
 
     let rendered = render_unified_line_at_scroll(&line, None, &[], 0, 18, DiffTheme::default(), 2);
 
@@ -1448,12 +1391,7 @@ fn split_diff_content_scrolls_horizontally() {
 
 #[test]
 fn diff_lines_start_with_change_indicator() {
-    let line = DiffLine {
-        kind: DiffLineKind::Addition,
-        old_line: None,
-        new_line: Some(3),
-        text: "new".to_owned(),
-    };
+    let line = DiffLine::addition(3, "new".to_owned());
 
     let rendered = render_unified_line_at_scroll(&line, None, &[], 0, 24, DiffTheme::default(), 0);
 
@@ -1467,12 +1405,7 @@ fn diff_lines_start_with_change_indicator() {
 
 #[test]
 fn highlighted_mouse_diff_content_line_highlights_only_code_columns() {
-    let line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(1),
-        new_line: Some(1),
-        text: "code".to_owned(),
-    };
+    let line = DiffLine::context(1, 1, "code".to_owned());
     let width = 24;
     let theme = DiffTheme::default();
     let rendered = render_unified_line_at_scroll(&line, None, &[], 0, width, theme, 0);
@@ -1692,15 +1625,9 @@ fn annotation_pairing_spans_no_newline_meta_line() {
     use crate::annotation::{AnnotationKey, AnnotationSide};
 
     let mut changeset = changeset_with_replacement_pair();
-    changeset.files[0].hunks[0].lines.insert(
-        1,
-        DiffLine {
-            kind: DiffLineKind::Meta,
-            old_line: None,
-            new_line: None,
-            text: "\\ No newline at end of file".to_owned(),
-        },
-    );
+    changeset.files[0].hunks_mut()[0]
+        .lines
+        .insert(1, DiffLine::meta("\\ No newline at end of file".to_owned()));
 
     let mut app = DiffApp::new(
         DiffOptions::default(),
@@ -1712,14 +1639,14 @@ fn annotation_pairing_spans_no_newline_meta_line() {
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: LINE_0, .. }))
         .expect("deletion line");
     let addition_row = app
         .document
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 2, .. }))
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: LINE_2, .. }))
         .expect("addition line");
 
     assert_eq!(
@@ -1752,7 +1679,7 @@ fn annotation_pairing_spans_no_newline_meta_line() {
             matches!(
                 row,
                 UiRow::SplitLine {
-                    left: Some(0),
+                    left: Some(LINE_0),
                     right: None,
                     ..
                 }
@@ -1778,8 +1705,11 @@ fn split_annotation_add_button_uses_right_edge_for_deletion_only_row() {
 
     let mut changeset = changeset_with_replacement_pair();
     changeset.files[0].additions = 0;
-    changeset.files[0].hunks[0].new_count = 0;
-    changeset.files[0].hunks[0].lines.truncate(1);
+    {
+        let hunk = &mut changeset.files[0].hunks_mut()[0];
+        hunk.ranges = HunkLineRanges::new(hunk.old_start(), hunk.old_count(), hunk.new_start(), 0);
+        hunk.lines.truncate(1);
+    }
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
     app.set_rendered_diff_area(Rect {
         x: 0,
@@ -2173,12 +2103,12 @@ fn diff_modals_suppress_stale_mouse_hover_highlight() {
         ("diff menu", |app| app.open_diff_menu()),
         ("review input", |app| app.open_review_input()),
         ("branch menu", |app| {
-            app.refs.comparison_branches = vec!["main".to_owned(), "topic".to_owned()];
+            app.refs.comparison_branches = branch_names(&["main", "topic"]);
             app.toggle_branch_menu(BranchMenu::Head);
         }),
         ("commit menu", |app| {
             app.refs.comparison_commits = vec![GitCommit {
-                sha: "abcdef0".to_owned(),
+                sha: "abcdef0".into(),
                 subject: "commit".to_owned(),
             }];
             app.toggle_commit_menu();
@@ -2239,12 +2169,7 @@ fn diff_modals_suppress_stale_mouse_hover_highlight() {
 
 #[test]
 fn ansi_theme_uses_terminal_palette_indices() {
-    let theme = diff_theme_from_config(&SyntaxThemeConfig {
-        source: SyntaxThemeSource::Ansi,
-        name: None,
-        path: None,
-    })
-    .expect("ansi theme should load");
+    let theme = diff_theme_from_config(&SyntaxThemeConfig::Ansi).expect("ansi theme should load");
 
     assert_eq!(theme.addition_fg, Color::Indexed(2));
     assert_eq!(
@@ -2525,12 +2450,7 @@ base0F = "ffffff"
 
 #[test]
 fn inline_emphasis_leaves_unpaired_changed_lines_to_line_style() {
-    let lines = vec![DiffLine {
-        kind: DiffLineKind::Deletion,
-        old_line: Some(1),
-        new_line: None,
-        text: "removed line".to_owned(),
-    }];
+    let lines = vec![DiffLine::deletion(1, "removed line".to_owned())];
 
     let emphasis = compute_hunk_inline_emphasis(&lines);
 
@@ -2540,60 +2460,15 @@ fn inline_emphasis_leaves_unpaired_changed_lines_to_line_style() {
 #[test]
 fn lazy_inline_emphasis_matches_eager_emphasis() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(1),
-            new_line: None,
-            text: "let count = 1;".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(1),
-            text: "let total = 2;".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(2),
-            new_line: None,
-            text: "removed only".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(3),
-            new_line: Some(2),
-            text: "context".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(3),
-            text: "added only".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(4),
-            new_line: None,
-            text: "alpha beta".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(5),
-            new_line: None,
-            text: "gamma".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(4),
-            text: "alpha zeta".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(5),
-            text: "delta".to_owned(),
-        },
+        DiffLine::deletion(1, "let count = 1;".to_owned()),
+        DiffLine::addition(1, "let total = 2;".to_owned()),
+        DiffLine::deletion(2, "removed only".to_owned()),
+        DiffLine::context(3, 2, "context".to_owned()),
+        DiffLine::addition(3, "added only".to_owned()),
+        DiffLine::deletion(4, "alpha beta".to_owned()),
+        DiffLine::deletion(5, "gamma".to_owned()),
+        DiffLine::addition(4, "alpha zeta".to_owned()),
+        DiffLine::addition(5, "delta".to_owned()),
     ];
     let expected = compute_hunk_inline_emphasis(&lines);
     let mut cache = InlineHunkEmphasisCache::new(&lines);
@@ -2615,18 +2490,8 @@ fn lazy_inline_emphasis_matches_eager_emphasis() {
 #[test]
 fn inline_diff_skips_expensive_long_line_pairs() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(1),
-            new_line: None,
-            text: "a".repeat(MAX_INLINE_DIFF_LINE_BYTES + 1),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(1),
-            text: "b".repeat(MAX_INLINE_DIFF_LINE_BYTES + 1),
-        },
+        DiffLine::deletion(1, "a".repeat(MAX_INLINE_DIFF_LINE_BYTES + 1)),
+        DiffLine::addition(1, "b".repeat(MAX_INLINE_DIFF_LINE_BYTES + 1)),
     ];
 
     let emphasis = compute_hunk_inline_emphasis(&lines);
@@ -2694,18 +2559,8 @@ fn content_spans_layers_inline_emphasis_over_syntax() {
 fn oversized_lines_disable_hunk_highlighting() {
     let limits = SyntaxLimits::default();
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(1),
-            new_line: Some(1),
-            text: "x".repeat(limits.max_line_bytes + 1),
-        },
-        DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(2),
-            new_line: Some(2),
-            text: "let value = 1;".to_owned(),
-        },
+        DiffLine::context(1, 1, "x".repeat(limits.max_line_bytes + 1)),
+        DiffLine::context(2, 2, "let value = 1;".to_owned()),
     ];
 
     assert_eq!(
@@ -2717,24 +2572,9 @@ fn oversized_lines_disable_hunk_highlighting() {
 #[test]
 fn hunk_source_excludes_diff_meta_lines_and_preserves_empty_lines() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(1),
-            new_line: Some(1),
-            text: "let a = 1;".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Meta,
-            old_line: None,
-            new_line: None,
-            text: "\\ No newline at end of file".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(2),
-            text: String::new(),
-        },
+        DiffLine::context(1, 1, "let a = 1;".to_owned()),
+        DiffLine::meta("\\ No newline at end of file".to_owned()),
+        DiffLine::addition(2, String::new()),
     ];
 
     let source = build_hunk_source(&lines, DiffSide::New, SyntaxLimits::default()).unwrap();
@@ -2747,18 +2587,8 @@ fn hunk_source_excludes_diff_meta_lines_and_preserves_empty_lines() {
 #[test]
 fn hunk_source_preserves_leading_empty_lines() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(1),
-            text: String::new(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(2),
-            text: "let value = 1;".to_owned(),
-        },
+        DiffLine::addition(1, String::new()),
+        DiffLine::addition(2, "let value = 1;".to_owned()),
     ];
 
     let source = build_hunk_source(&lines, DiffSide::New, SyntaxLimits::default()).unwrap();
@@ -2771,24 +2601,9 @@ fn hunk_source_preserves_leading_empty_lines() {
 #[test]
 fn full_file_line_map_uses_absolute_line_numbers() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(10),
-            new_line: None,
-            text: "old".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(11),
-            text: "new".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(12),
-            new_line: Some(12),
-            text: "same".to_owned(),
-        },
+        DiffLine::deletion(10, "old".to_owned()),
+        DiffLine::addition(11, "new".to_owned()),
+        DiffLine::context(12, 12, "same".to_owned()),
     ];
 
     assert_eq!(

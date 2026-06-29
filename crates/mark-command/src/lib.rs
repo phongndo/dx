@@ -2,7 +2,11 @@ mod config;
 mod diff;
 mod syntax;
 
-pub use mark_diff::{DiffOptions, DiffScope, DiffSource, PatchSource};
+pub use mark_diff::{
+    BranchName, CommitSha, DiffOptions, DiffOutput, DiffPath, DiffScope, DiffSource, DisplayPath,
+    NewLineNumber, OldLineNumber, PatchLabel, PatchSource, PullRequestId, RefName, RemoteName,
+    RepoArg, RepoRelativePath, RepoRoot, RevSpec, ReviewId, UntrackedMode, WorktreePath,
+};
 pub use mark_syntax::{
     SyntaxAddOptions, SyntaxAddResult, SyntaxAvailableFilter, SyntaxCleanResult,
     SyntaxDoctorReport, SyntaxLanguageStatus, SyntaxLimits, SyntaxMode, SyntaxRemoveResult,

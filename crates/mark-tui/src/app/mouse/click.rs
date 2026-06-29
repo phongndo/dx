@@ -13,7 +13,7 @@ impl DiffApp {
             .flatten();
         let clicked_commit_selector = row == 0 && self.commit_selector_at(column);
 
-        if self.overlays.review_input_open {
+        if self.overlays.review_input_is_open() {
             if self.is_rendered_review_input_position(column, row) {
                 self.runtime.dirty = true;
                 return;
@@ -26,7 +26,7 @@ impl DiffApp {
             return;
         }
 
-        if self.refs.commit_menu_open {
+        if self.refs.commit_menu_is_open() {
             if let Some(rev) = self.commit_choice_at(column, row) {
                 self.close_commit_menu();
                 self.select_show_commit(rev);
@@ -49,7 +49,7 @@ impl DiffApp {
             return;
         }
 
-        if let Some(menu) = self.refs.branch_menu_open {
+        if let Some(menu) = self.refs.branch_menu_open() {
             if let Some(branch) = self.branch_choice_at(menu, column, row) {
                 self.close_branch_menu();
                 self.select_branch(menu, branch);
@@ -72,7 +72,7 @@ impl DiffApp {
             return;
         }
 
-        if self.overlays.diff_menu_open {
+        if self.overlays.diff_menu_is_open() {
             if let Some(choice) = self.diff_choice_at(column, row) {
                 self.close_diff_menu();
                 self.select_diff_choice(choice);
@@ -98,12 +98,12 @@ impl DiffApp {
             return;
         }
 
-        if self.overlays.color_scheme_picker_open {
+        if self.overlays.color_scheme_picker_is_open() {
             self.close_color_scheme_picker();
             return;
         }
 
-        if self.overlays.options_menu_open {
+        if self.overlays.options_menu_is_open() {
             self.close_options_menu();
             return;
         }
@@ -132,7 +132,7 @@ impl DiffApp {
             return false;
         };
 
-        self.select_file(file);
+        self.select_file(file.get());
         true
     }
 

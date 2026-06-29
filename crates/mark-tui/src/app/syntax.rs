@@ -1,5 +1,5 @@
 use super::DiffApp;
-use crate::model::{ContextSourceKey, UiRow};
+use crate::model::{ContextSourceKey, FileIndex, UiRow};
 use crate::syntax::{DiffSide, SyntaxPosition, SyntaxPriority, SyntaxRuntime, unified_syntax_side};
 use crate::theme::{MAX_SYNTAX_RESULTS_PER_FRAME, SyntaxBenchmarkReport};
 use mark_syntax::HighlightedLine;
@@ -83,14 +83,14 @@ impl DiffApp {
                     .document
                     .changeset
                     .files
-                    .get(file)
-                    .and_then(|file_diff| file_diff.hunks.get(hunk))
-                    .and_then(|hunk_diff| hunk_diff.lines.get(line))
+                    .get(file.get())
+                    .and_then(|file_diff| file_diff.hunks().get(hunk.get()))
+                    .and_then(|hunk_diff| hunk_diff.lines.get(line.get()))
                 else {
                     return;
                 };
-                if let Some(side) = unified_syntax_side(diff_line.kind) {
-                    self.queue_syntax_hunk(file, hunk, side, priority, requested);
+                if let Some(side) = unified_syntax_side(diff_line.kind()) {
+                    self.queue_syntax_hunk(file.get(), hunk.get(), side, priority, requested);
                 }
             }
             UiRow::SplitLine {
@@ -100,19 +100,31 @@ impl DiffApp {
                 right,
             } => {
                 if left.is_some() {
-                    self.queue_syntax_hunk(file, hunk, DiffSide::Old, priority, requested);
+                    self.queue_syntax_hunk(
+                        file.get(),
+                        hunk.get(),
+                        DiffSide::Old,
+                        priority,
+                        requested,
+                    );
                 }
                 if right.is_some() {
-                    self.queue_syntax_hunk(file, hunk, DiffSide::New, priority, requested);
+                    self.queue_syntax_hunk(
+                        file.get(),
+                        hunk.get(),
+                        DiffSide::New,
+                        priority,
+                        requested,
+                    );
                 }
             }
             UiRow::ContextLine { file, .. } => {
-                if let Some(side) = self.context_source_side(file) {
-                    self.queue_syntax_file(file, side, priority, requested_files);
+                if let Some(side) = self.context_source_side(file.get()) {
+                    self.queue_syntax_file(file.get(), side, priority, requested_files);
                 }
             }
             UiRow::FileHeader(_)
-            | UiRow::BinaryFile(_)
+            | UiRow::FileBodyNotice(_)
             | UiRow::Collapsed { .. }
             | UiRow::ContextHide { .. }
             | UiRow::HunkHeader { .. }
@@ -154,7 +166,10 @@ impl DiffApp {
         priority: SyntaxPriority,
         requested: &mut HashSet<ContextSourceKey>,
     ) {
-        if !requested.insert(ContextSourceKey { file, side }) {
+        if !requested.insert(ContextSourceKey {
+            file: FileIndex::new(file),
+            side,
+        }) {
             return;
         }
         if let Some(syntax) = self.config.syntax.as_mut() {

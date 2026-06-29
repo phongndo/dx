@@ -146,14 +146,14 @@ impl DiffApp {
     ) -> MarkResult<ActionOutcome> {
         let mut outcome =
             ActionOutcome::from_component_event_result(route_mouse_through_layers(self, mouse)?);
-        outcome.effects.extend(self.take_queued_effects());
+        outcome.extend_effects(self.take_queued_effects());
         Ok(outcome)
     }
 
     #[cfg(test)]
     pub(crate) fn handle_mouse(&mut self, mouse: MouseEvent) -> MarkResult<()> {
         let outcome = self.handle_mouse_with_effects(mouse)?;
-        self.run_effects(outcome.effects)
+        self.run_effects(outcome.into_effects())
     }
 }
 

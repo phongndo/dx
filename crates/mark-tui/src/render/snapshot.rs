@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use crate::{
     app::{DiffApp, ERROR_LOG_MAX_HEIGHT, ERROR_LOG_MIN_HEIGHT},
     controls::DiffLayoutMode,
+    model::FileIndex,
     theme::DiffTheme,
 };
 
@@ -26,7 +27,7 @@ pub(crate) struct DiffViewportSnapshot {
     pub(crate) line_wrapping: bool,
     pub(crate) viewport_rows: usize,
     pub(crate) viewport_width: usize,
-    pub(crate) selected_file: usize,
+    pub(crate) selected_file: FileIndex,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

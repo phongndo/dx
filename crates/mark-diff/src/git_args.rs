@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use mark_core::{MarkError, MarkResult};
+use mark_core::MarkResult;
 use mark_git::{
     existing_commitish_revision, existing_object_revision, merge_base_revision,
     range_right_operand_is_pathspec, revision_expression_exists, show_target,
@@ -9,30 +9,7 @@ use mark_git::{
 
 use crate::{DiffOptions, DiffScope, DiffSource, PatchSource, difftool::difftool_display_path};
 
-pub(super) fn validate_options(options: &DiffOptions) -> MarkResult<()> {
-    if matches!(options.source, DiffSource::Patch(_)) {
-        if options.scope != DiffScope::All {
-            return Err(MarkError::Usage(
-                "--staged and --unstaged do not apply to patch input".to_owned(),
-            ));
-        }
-        return Ok(());
-    }
-
-    if matches!(options.source, DiffSource::Difftool { .. }) {
-        if options.scope != DiffScope::All {
-            return Err(MarkError::Usage(
-                "--staged and --unstaged do not apply to difftool input".to_owned(),
-            ));
-        }
-        return Ok(());
-    }
-
-    if !matches!(options.source, DiffSource::Worktree) && options.scope != DiffScope::All {
-        return Err(MarkError::Usage(
-            "--staged and --unstaged only apply to working tree diffs".to_owned(),
-        ));
-    }
+pub(super) fn validate_options(_options: &DiffOptions) -> MarkResult<()> {
     Ok(())
 }
 
@@ -50,7 +27,7 @@ pub(super) fn git_diff_args(options: &DiffOptions, repo: &Path) -> MarkResult<Ve
     ];
 
     match &options.source {
-        DiffSource::Worktree => match options.scope {
+        DiffSource::Worktree { scope } => match scope {
             DiffScope::All => {
                 args.push("--end-of-options".to_owned());
                 args.push(worktree_base_revision(repo)?);
@@ -113,7 +90,7 @@ pub(super) fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> MarkR
     ];
 
     match &options.source {
-        DiffSource::Worktree => match options.scope {
+        DiffSource::Worktree { scope } => match scope {
             DiffScope::All => {
                 args.push("--end-of-options".to_owned());
                 args.push(worktree_base_revision(repo)?);
@@ -182,14 +159,17 @@ fn git_show_numstat_args(repo: &Path, rev: &str) -> MarkResult<Vec<String>> {
 }
 
 pub(super) fn should_include_untracked(options: &DiffOptions) -> bool {
-    options.include_untracked
-        && matches!(options.source, DiffSource::Worktree | DiffSource::Base(_))
-        && matches!(options.scope, DiffScope::All | DiffScope::Unstaged)
+    options.include_untracked()
+        && match options.source {
+            DiffSource::Worktree { scope } => matches!(scope, DiffScope::All | DiffScope::Unstaged),
+            DiffSource::Base(_) => true,
+            _ => false,
+        }
 }
 
 pub(super) fn diff_title(options: &DiffOptions) -> String {
     match &options.source {
-        DiffSource::Worktree => match options.scope {
+        DiffSource::Worktree { scope } => match scope {
             DiffScope::All => "working tree vs HEAD".to_owned(),
             DiffScope::Staged => "staged changes".to_owned(),
             DiffScope::Unstaged => "unstaged changes".to_owned(),
@@ -208,6 +188,7 @@ pub(super) fn diff_title(options: &DiffOptions) -> String {
         }
         DiffSource::Patch(PatchSource::File(path)) => format!("patch {}", path.display()),
         DiffSource::Patch(PatchSource::Stdin(_)) => "patch stdin".to_owned(),
-        DiffSource::Patch(PatchSource::Text { label, .. }) => label.clone(),
+        DiffSource::Patch(PatchSource::Text { label, .. })
+        | DiffSource::Patch(PatchSource::Review { label, .. }) => label.to_string(),
     }
 }

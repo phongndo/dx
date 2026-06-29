@@ -20,8 +20,8 @@ fn hunk_focus_uses_rendered_rows_when_annotations_hide_model_rows() {
             matches!(
                 row,
                 UiRow::UnifiedLine {
-                    file: 0,
-                    hunk: 0,
+                    file: FILE_0,
+                    hunk: HUNK_0,
                     ..
                 }
             )
@@ -55,7 +55,7 @@ fn hunk_focus_uses_rendered_rows_when_annotations_hide_model_rows() {
     assert!(!rendered_hunks.contains(&(0, 1)));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some((0, 0))
+        Some((FILE_0, HUNK_0))
     );
     assert_eq!(
         app.focused_hunk_editor_target(),
@@ -85,8 +85,8 @@ fn hunk_navigation_scrolls_past_annotation_blocks_to_show_target_hunk() {
             matches!(
                 row,
                 UiRow::UnifiedLine {
-                    file: 0,
-                    hunk: 0,
+                    file: FILE_0,
+                    hunk: HUNK_0,
                     ..
                 }
             )
@@ -107,7 +107,7 @@ fn hunk_navigation_scrolls_past_annotation_blocks_to_show_target_hunk() {
 
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some((0, 0))
+        Some((FILE_0, HUNK_0))
     );
 
     app.next_hunk();
@@ -125,16 +125,16 @@ fn hunk_navigation_scrolls_past_annotation_blocks_to_show_target_hunk() {
         })
         .collect();
     assert!(rendered_rows.contains(&target_hunk_row));
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 1)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_1)));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some((0, 1))
+        Some((FILE_0, HUNK_1))
     );
 
     app.next_hunk();
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some((0, 2))
+        Some((FILE_0, HUNK_2))
     );
 }
 
@@ -349,8 +349,10 @@ fn live_reload_started_state_marks_pending_until_loaded() {
         .expect("started reload should send");
     drain_live_reloads(&mut app, Some(&mut reload_rx));
 
-    assert!(app.jobs.live_reload_invalidated);
-    assert!(app.jobs.live_reload_pending);
+    assert_eq!(
+        app.jobs.live_updates.status(),
+        Some(LiveReloadStatus::Pending)
+    );
     app.runtime.dirty = false;
 
     reload_tx
@@ -358,8 +360,7 @@ fn live_reload_started_state_marks_pending_until_loaded() {
         .expect("loaded reload should send");
     drain_live_reloads(&mut app, Some(&mut reload_rx));
 
-    assert!(!app.jobs.live_reload_invalidated);
-    assert!(!app.jobs.live_reload_pending);
+    assert_eq!(app.jobs.live_updates.status(), Some(LiveReloadStatus::Idle));
     assert!(app.runtime.dirty);
 }
 
@@ -382,9 +383,9 @@ fn grep_jump_scrolls_past_annotation_blocks_to_show_match() {
             matches!(
                 row,
                 UiRow::UnifiedLine {
-                    file: 0,
-                    hunk: 0,
-                    line: 0
+                    file: FILE_0,
+                    hunk: HUNK_0,
+                    line: LINE_0
                 }
             )
         })
@@ -402,7 +403,7 @@ fn grep_jump_scrolls_past_annotation_blocks_to_show_match() {
         .insert(key, "note".to_owned());
 
     app.filters.grep_filter = "needle".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
 
     let match_row = app
         .current_grep_match_row()
@@ -422,41 +423,41 @@ fn question_mark_key_opens_help_menu_and_filters_when_open() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
-    assert!(!app.overlays.help_menu_open);
+    assert!(!app.overlays.help_menu_is_open());
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
         .expect("? should be handled");
     assert!(!should_quit);
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
 
     app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
         .expect("? should filter help");
-    assert!(app.overlays.help_menu_open);
+    assert!(app.overlays.help_menu_is_open());
     assert_eq!(app.overlays.help_menu_input, "?");
 
     app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
         .expect("Esc should close help");
-    assert!(!app.overlays.help_menu_open);
+    assert!(!app.overlays.help_menu_is_open());
 }
 
 #[test]
 fn question_mark_key_filters_branch_menu() {
     let options = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(options, changeset, DiffLayoutMode::Unified);
-    app.refs.branch_menu_open = Some(BranchMenu::Head);
-    app.refs.comparison_branches = vec!["main".to_owned(), "feature/header".to_owned()];
+    app.refs.open_branch_menu(BranchMenu::Head);
+    app.refs.comparison_branches = branch_names(&["main", "feature/header"]);
 
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT))
         .expect("? should be handled by branch filter");
 
     assert!(!should_quit);
-    assert!(!app.overlays.help_menu_open);
+    assert!(!app.overlays.help_menu_is_open());
     assert_eq!(app.refs.branch_menu.input, "?");
 }
 
@@ -465,8 +466,7 @@ fn copy_marks_writes_structured_json_to_clipboard_sequence() {
     use crate::annotation::AnnotationKey;
 
     let mut changeset = changeset_with_line_text("hello");
-    changeset.files[0].hunks[0].lines[0].kind = DiffLineKind::Addition;
-    changeset.files[0].hunks[0].lines[0].old_line = None;
+    changeset.files[0].hunks_mut()[0].lines[0] = DiffLine::addition(1, "hello");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let code_row = app
         .document
@@ -515,10 +515,10 @@ fn copy_marks_omits_annotations_without_current_diff_line() {
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 1, .. }))
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: LINE_1, .. }))
         .expect("addition line");
     let old_key = AnnotationKey {
-        path: "file.rs".to_owned(),
+        path: "file.rs".into(),
         side: AnnotationSide::Old,
         line: 1,
     };
@@ -537,12 +537,13 @@ fn copy_marks_omits_annotations_without_current_diff_line() {
         .insert(new_key, "new note".to_owned());
 
     let mut replacement = changeset_with_line_text("new");
-    replacement.files[0].old_path = None;
-    replacement.files[0].status = FileStatus::Added;
+    set_test_file_added(&mut replacement.files[0]);
     replacement.files[0].additions = 1;
-    replacement.files[0].hunks[0].old_count = 0;
-    replacement.files[0].hunks[0].lines[0].kind = DiffLineKind::Addition;
-    replacement.files[0].hunks[0].lines[0].old_line = None;
+    {
+        let hunk = &mut replacement.files[0].hunks_mut()[0];
+        hunk.ranges = HunkLineRanges::new(hunk.old_start(), 0, hunk.new_start(), hunk.new_count());
+        hunk.lines[0] = DiffLine::addition(1, "new");
+    }
     app.replace_loaded_diff(DiffOptions::default(), replacement);
 
     let expected = concat!(
@@ -721,12 +722,12 @@ fn osc52_clipboard_sequence_base64_encodes_text() {
 fn notices_mark_dirty_when_configured_max_visible_is_zero() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.notifications.toasts = Toasts::new(NotificationSettings {
-        mode: NotificationMode::Default,
-        corner: ToastCorner::TopRight,
-        timeout_ms: 1_500,
-        max_visible: 0,
-    });
+    app.notifications.toasts = Toasts::new(NotificationSettings::new(
+        NotificationMode::Default,
+        ToastCorner::TopRight,
+        1_500,
+        0,
+    ));
     app.runtime.dirty = false;
     app.runtime.terminal_clear_requested = true;
 
@@ -784,8 +785,11 @@ fn old_side_annotation_renders_and_edits_on_deletion_only_split_row() {
 
     let mut changeset = changeset_with_replacement_pair();
     changeset.files[0].additions = 0;
-    changeset.files[0].hunks[0].new_count = 0;
-    changeset.files[0].hunks[0].lines.truncate(1);
+    {
+        let hunk = &mut changeset.files[0].hunks_mut()[0];
+        hunk.ranges = HunkLineRanges::new(hunk.old_start(), hunk.old_count(), hunk.new_start(), 0);
+        hunk.lines.truncate(1);
+    }
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
     app.set_rendered_diff_area(Rect {
         x: 0,
@@ -839,9 +843,7 @@ fn renamed_file_annotations_use_side_specific_paths() {
     use crate::annotation::{AnnotationKey, AnnotationSide};
 
     let mut changeset = changeset_with_replacement_pair();
-    changeset.files[0].old_path = Some("old.rs".to_owned());
-    changeset.files[0].new_path = Some("new.rs".to_owned());
-    changeset.files[0].status = FileStatus::Renamed;
+    set_test_file_renamed(&mut changeset.files[0], "old.rs", "new.rs");
 
     let app = DiffApp::new(
         DiffOptions::default(),
@@ -853,10 +855,10 @@ fn renamed_file_annotations_use_side_specific_paths() {
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 0, .. }))
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: LINE_0, .. }))
         .expect("deletion line");
     let old_key = AnnotationKey {
-        path: "old.rs".to_owned(),
+        path: "old.rs".into(),
         side: AnnotationSide::Old,
         line: 1,
     };
@@ -866,7 +868,7 @@ fn renamed_file_annotations_use_side_specific_paths() {
         .model
         .rows
         .iter()
-        .position(|row| matches!(row, UiRow::UnifiedLine { line: 1, .. }))
+        .position(|row| matches!(row, UiRow::UnifiedLine { line: LINE_1, .. }))
         .expect("addition line");
     assert_eq!(
         AnnotationKey::from_ui_row(
@@ -912,11 +914,8 @@ fn renamed_file_annotations_use_side_specific_paths() {
 #[test]
 fn meta_rows_do_not_render_annotation_add_button() {
     let mut changeset = changeset_with_line_text("placeholder");
-    let line = &mut changeset.files[0].hunks[0].lines[0];
-    line.kind = DiffLineKind::Meta;
-    line.old_line = None;
-    line.new_line = None;
-    line.text = "\\ No newline at end of file".to_owned();
+    let line = &mut changeset.files[0].hunks_mut()[0].lines[0];
+    *line = DiffLine::meta("\\ No newline at end of file");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Split);
     app.set_rendered_diff_area(Rect {
         x: 0,
@@ -968,8 +967,7 @@ fn annotations_are_keyed_by_path_and_line_across_model_changes() {
     assert!(rendered.iter().any(|line| line_text(line).contains("note")));
 
     let mut replacement = changeset_with_line_text("hello");
-    replacement.files[0].old_path = Some("other.rs".to_owned());
-    replacement.files[0].new_path = Some("other.rs".to_owned());
+    set_test_file_modified(&mut replacement.files[0], "other.rs");
     app.replace_loaded_diff(DiffOptions::default(), replacement);
 
     let rendered = crate::render::diff::build_diff_viewport_lines(&mut app, 40, 6);
@@ -1452,28 +1450,18 @@ fn annotation_compose_scrolls_with_annotated_line() {
 #[test]
 fn inline_emphasis_marks_changed_tokens_in_paired_lines() {
     let lines = vec![
-        DiffLine {
-            kind: DiffLineKind::Deletion,
-            old_line: Some(1),
-            new_line: None,
-            text: "let count = 1;".to_owned(),
-        },
-        DiffLine {
-            kind: DiffLineKind::Addition,
-            old_line: None,
-            new_line: Some(1),
-            text: "let total = 2;".to_owned(),
-        },
+        DiffLine::deletion(1, "let count = 1;".to_owned()),
+        DiffLine::addition(1, "let total = 2;".to_owned()),
     ];
 
     let emphasis = compute_hunk_inline_emphasis(&lines);
 
     assert_eq!(
-        range_texts(&lines[0].text, &emphasis[0].ranges),
+        range_texts(lines[0].text(), &emphasis[0].ranges),
         ["count", "1"]
     );
     assert_eq!(
-        range_texts(&lines[1].text, &emphasis[1].ranges),
+        range_texts(lines[1].text(), &emphasis[1].ranges),
         ["total", "2"]
     );
 }
@@ -1510,12 +1498,7 @@ fn closed_queue_marks_full_file_source_skipped() {
 
 #[test]
 fn hunk_source_keeps_single_line_without_trailing_newline_marker() {
-    let lines = vec![DiffLine {
-        kind: DiffLineKind::Addition,
-        old_line: None,
-        new_line: Some(1),
-        text: "let value = 1;".to_owned(),
-    }];
+    let lines = vec![DiffLine::addition(1, "let value = 1;".to_owned())];
 
     let source = build_hunk_source(&lines, DiffSide::New, SyntaxLimits::default()).unwrap();
 

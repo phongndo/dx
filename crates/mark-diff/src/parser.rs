@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::{DiffFile, DiffHunk, DiffLine, DiffLineKind, FileStatus};
+use crate::{DiffFile, DiffFileBody, DiffHunk, DiffLine, FileChange, FileStatus, HunkLineRanges};
 
 pub fn parse_patch(patch: &str) -> Vec<DiffFile> {
     let mut files = Vec::new();
@@ -98,7 +98,7 @@ struct DiffFileBuilder {
     hunks: Vec<DiffHunk>,
     additions: usize,
     deletions: usize,
-    is_binary: bool,
+    body: DiffFileBody,
 }
 
 impl DiffFileBuilder {
@@ -112,7 +112,7 @@ impl DiffFileBuilder {
             hunks: Vec::new(),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: DiffFileBody::default(),
         }
     }
 
@@ -124,7 +124,7 @@ impl DiffFileBuilder {
             hunks: Vec::new(),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: DiffFileBody::default(),
         };
         builder.apply_header(old_header);
         builder.apply_header(new_header);
@@ -153,7 +153,7 @@ impl DiffFileBuilder {
                 self.status = FileStatus::TypeChanged;
             }
         } else if line.starts_with("Binary files ") || line == "GIT binary patch" {
-            self.is_binary = true;
+            self.body = DiffFileBody::Binary;
         } else if let Some(path) = line.strip_prefix("--- ") {
             let path = unified_header_path(path);
             if path.as_ref() != "/dev/null" {
@@ -174,14 +174,18 @@ impl DiffFileBuilder {
     }
 
     fn finish(self) -> DiffFile {
+        let body = if matches!(self.body, DiffFileBody::Binary) {
+            DiffFileBody::Binary
+        } else if self.hunks.is_empty() {
+            DiffFileBody::NoTextualChanges
+        } else {
+            DiffFileBody::Text { hunks: self.hunks }
+        };
         DiffFile {
-            old_path: self.old_path,
-            new_path: self.new_path,
-            status: self.status,
-            hunks: self.hunks,
+            change: FileChange::from_status(self.status, self.old_path, self.new_path),
             additions: self.additions,
             deletions: self.deletions,
-            is_binary: self.is_binary,
+            body,
         }
     }
 }
@@ -328,10 +332,7 @@ fn push_octal_escape(bytes: &[u8], index: &mut usize, output: &mut Vec<u8>) {
 #[derive(Debug)]
 struct DiffHunkBuilder {
     header: String,
-    old_start: usize,
-    old_count: usize,
-    new_start: usize,
-    new_count: usize,
+    ranges: HunkLineRanges,
     old_line: usize,
     new_line: usize,
     additions: usize,
@@ -344,10 +345,7 @@ impl DiffHunkBuilder {
         let (old_start, old_count, new_start, new_count) = parse_hunk_header(header);
         Self {
             header: header.to_owned(),
-            old_start,
-            old_count,
-            new_start,
-            new_count,
+            ranges: HunkLineRanges::new(old_start, old_count, new_start, new_count),
             old_line: old_start,
             new_line: new_start,
             additions: 0,
@@ -367,33 +365,24 @@ impl DiffHunkBuilder {
                 let new_line = self.new_line;
                 self.new_line += 1;
                 self.additions += 1;
-                self.lines.push(DiffLine {
-                    kind: DiffLineKind::Addition,
-                    old_line: None,
-                    new_line: Some(new_line),
-                    text: raw.get(1..).unwrap_or_default().to_owned(),
-                });
+                self.lines.push(DiffLine::addition(
+                    new_line,
+                    raw.get(1..).unwrap_or_default(),
+                ));
             }
             b'-' => {
                 let old_line = self.old_line;
                 self.old_line += 1;
                 self.deletions += 1;
-                self.lines.push(DiffLine {
-                    kind: DiffLineKind::Deletion,
-                    old_line: Some(old_line),
-                    new_line: None,
-                    text: raw.get(1..).unwrap_or_default().to_owned(),
-                });
+                self.lines.push(DiffLine::deletion(
+                    old_line,
+                    raw.get(1..).unwrap_or_default(),
+                ));
             }
             b' ' => self.push_context_owned(raw.get(1..).unwrap_or_default().to_owned()),
             b'\\' => {
                 if !is_diff_no_newline_marker(raw) {
-                    self.lines.push(DiffLine {
-                        kind: DiffLineKind::Meta,
-                        old_line: None,
-                        new_line: None,
-                        text: raw.to_owned(),
-                    });
+                    self.lines.push(DiffLine::meta(raw));
                 }
             }
             _ => self.push_context(raw),
@@ -401,8 +390,8 @@ impl DiffHunkBuilder {
     }
 
     fn is_complete(&self) -> bool {
-        self.old_line.saturating_sub(self.old_start) >= self.old_count
-            && self.new_line.saturating_sub(self.new_start) >= self.new_count
+        self.old_line.saturating_sub(self.ranges.old_start()) >= self.ranges.old_count()
+            && self.new_line.saturating_sub(self.ranges.new_start()) >= self.ranges.new_count()
     }
 
     fn push_context(&mut self, text: &str) {
@@ -414,21 +403,13 @@ impl DiffHunkBuilder {
         let new_line = self.new_line;
         self.old_line += 1;
         self.new_line += 1;
-        self.lines.push(DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(old_line),
-            new_line: Some(new_line),
-            text,
-        });
+        self.lines.push(DiffLine::context(old_line, new_line, text));
     }
 
     fn finish(self) -> DiffHunk {
         DiffHunk {
             header: self.header,
-            old_start: self.old_start,
-            old_count: self.old_count,
-            new_start: self.new_start,
-            new_count: self.new_count,
+            ranges: self.ranges,
             lines: self.lines,
         }
     }

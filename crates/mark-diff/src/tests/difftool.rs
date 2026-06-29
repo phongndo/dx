@@ -8,14 +8,14 @@ fn difftool_source_renders_file_pair_with_display_path() {
     fs::write(test_dir.join("remote.tmp"), "new\nnext\n").expect("right file should be written");
 
     let options = DiffOptions {
-        repo: Some(test_dir.clone()),
+        repo: Some(test_dir.clone().into()),
         source: DiffSource::Difftool {
-            left: PathBuf::from("local.tmp"),
-            right: PathBuf::from("remote.tmp"),
-            path: Some(PathBuf::from("src/example.rs")),
+            left: PathBuf::from("local.tmp").into(),
+            right: PathBuf::from("remote.tmp").into(),
+            path: Some(PathBuf::from("src/example.rs").into()),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = render(options.clone()).expect("difftool patch should render");
@@ -33,7 +33,7 @@ fn difftool_source_renders_file_pair_with_display_path() {
     assert_eq!(changeset.files[0].deletions, 1);
 
     let stat = render(DiffOptions {
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..options
     })
     .expect("difftool stat should render");
@@ -76,15 +76,14 @@ fn difftool_stat_counts_non_utf8_text_hunks() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(test_dir.clone()),
+            repo: Some(test_dir.clone().into()),
             source: DiffSource::Difftool {
-                left: PathBuf::from("local.tmp"),
-                right: PathBuf::from("remote.tmp"),
-                path: Some(PathBuf::from("bytes.txt")),
+                left: PathBuf::from("local.tmp").into(),
+                right: PathBuf::from("remote.tmp").into(),
+                path: Some(PathBuf::from("bytes.txt").into()),
             },
-            include_untracked: false,
-            stat: true,
-            ..DiffOptions::default()
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Stat,
         })
         .expect("difftool stat should render"),
     )
@@ -117,14 +116,14 @@ fn difftool_source_drops_mode_only_temp_file_changes() {
     .expect("right file mode should be set");
 
     let options = DiffOptions {
-        repo: Some(test_dir.clone()),
+        repo: Some(test_dir.clone().into()),
         source: DiffSource::Difftool {
-            left: PathBuf::from("local.tmp"),
-            right: PathBuf::from("remote.tmp"),
-            path: Some(PathBuf::from("mode-only.txt")),
+            left: PathBuf::from("local.tmp").into(),
+            right: PathBuf::from("remote.tmp").into(),
+            path: Some(PathBuf::from("mode-only.txt").into()),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = render_bytes(options.clone()).expect("patch should render");
@@ -132,7 +131,7 @@ fn difftool_source_drops_mode_only_temp_file_changes() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            stat: true,
+            output: crate::DiffOutput::Stat,
             ..options.clone()
         })
         .expect("stat should render"),
@@ -169,14 +168,14 @@ fn difftool_source_suppresses_temp_file_mode_changes() {
     .expect("right file mode should be set");
 
     let options = DiffOptions {
-        repo: Some(test_dir.clone()),
+        repo: Some(test_dir.clone().into()),
         source: DiffSource::Difftool {
-            left: PathBuf::from("local.tmp"),
-            right: PathBuf::from("remote.tmp"),
-            path: Some(PathBuf::from("bin/script.sh")),
+            left: PathBuf::from("local.tmp").into(),
+            right: PathBuf::from("remote.tmp").into(),
+            path: Some(PathBuf::from("bin/script.sh").into()),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = String::from_utf8(render_bytes(options.clone()).expect("patch should render"))
@@ -187,7 +186,7 @@ fn difftool_source_suppresses_temp_file_mode_changes() {
     assert!(patch.contains("+echo new"));
 
     let changeset = load_review_ref(&options).expect("difftool changeset should load");
-    assert_eq!(changeset.files[0].status, FileStatus::Modified);
+    assert_eq!(changeset.files[0].status(), FileStatus::Modified);
 
     fs::remove_dir_all(test_dir).expect("test directory should be removed");
 }
@@ -199,14 +198,14 @@ fn difftool_source_uses_left_display_path_for_deleted_pair() {
     fs::write(test_dir.join("old-name.txt"), "gone\n").expect("left file should be written");
 
     let options = DiffOptions {
-        repo: Some(test_dir.clone()),
+        repo: Some(test_dir.clone().into()),
         source: DiffSource::Difftool {
-            left: PathBuf::from("old-name.txt"),
-            right: PathBuf::from("/dev/null"),
+            left: PathBuf::from("old-name.txt").into(),
+            right: PathBuf::from("/dev/null").into(),
             path: None,
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = String::from_utf8(render_bytes(options.clone()).expect("patch should render"))
@@ -217,7 +216,7 @@ fn difftool_source_uses_left_display_path_for_deleted_pair() {
     assert!(!patch.contains("a/null b/null"));
 
     let stat = render(DiffOptions {
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..options.clone()
     })
     .expect("stat should render");
@@ -226,7 +225,7 @@ fn difftool_source_uses_left_display_path_for_deleted_pair() {
 
     let changeset = load_review_ref(&options).expect("difftool changeset should load");
     assert_eq!(changeset.files[0].display_path(), "old-name.txt");
-    assert_eq!(changeset.files[0].status, FileStatus::Deleted);
+    assert_eq!(changeset.files[0].status(), FileStatus::Deleted);
 
     fs::remove_dir_all(test_dir).expect("test directory should be removed");
 }
@@ -238,14 +237,14 @@ fn difftool_source_rejects_missing_input_paths() {
     fs::write(test_dir.join("local.tmp"), "left\n").expect("left file should be written");
 
     let error = render_bytes(DiffOptions {
-        repo: Some(test_dir.clone()),
+        repo: Some(test_dir.clone().into()),
         source: DiffSource::Difftool {
-            left: PathBuf::from("local.tmp"),
-            right: PathBuf::from("missing.tmp"),
-            path: Some(PathBuf::from("src/example.rs")),
+            left: PathBuf::from("local.tmp").into(),
+            right: PathBuf::from("missing.tmp").into(),
+            path: Some(PathBuf::from("src/example.rs").into()),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect_err("missing difftool input should fail");
 

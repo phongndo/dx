@@ -1,4 +1,4 @@
-use super::{AppEffect, DiffApp};
+use super::{AppEffect, DiffApp, LiveReloadStatus};
 use crate::controls::CrosstermTerminal;
 use crate::event_reader::TerminalEventReader;
 use crate::live_diff::{LiveDiff, LiveDiffReload, live_diff_supported};
@@ -89,14 +89,13 @@ pub(crate) fn sync_live_diff(
     live_updates: bool,
 ) {
     if !live_updates
-        || !app.jobs.live_updates_allowed
-        || !app.jobs.live_updates_enabled
+        || !app.jobs.live_updates.allowed()
+        || !app.jobs.live_updates.enabled()
         || !live_diff_supported(&app.document.options)
     {
         *live_diff = None;
         app.jobs.live_diff_failed_options = None;
-        app.jobs.live_reload_invalidated = false;
-        app.jobs.live_reload_pending = false;
+        app.jobs.live_updates.reset_reload();
         app.clear_cached_diff_choices();
         return;
     }
@@ -114,15 +113,13 @@ pub(crate) fn sync_live_diff(
     match LiveDiff::start(app.document.options.clone(), &app.document.changeset.repo) {
         Ok(next_live_diff) => {
             app.jobs.live_diff_failed_options = None;
-            app.jobs.live_reload_invalidated = false;
-            app.jobs.live_reload_pending = false;
+            app.jobs.live_updates.reset_reload();
             *live_diff = Some(next_live_diff);
         }
         Err(error) => {
             *live_diff = None;
             app.jobs.live_diff_failed_options = Some(app.document.options.clone());
-            app.jobs.live_reload_invalidated = false;
-            app.jobs.live_reload_pending = false;
+            app.jobs.live_updates.reset_reload();
             app.clear_cached_diff_choices();
             app.set_error_log(format!("live reload unavailable: {error}"));
         }
@@ -140,14 +137,13 @@ pub(crate) fn drain_live_reloads(
     while let Ok(reload) = live_reload_rx.try_recv() {
         match reload {
             LiveDiffReload::Started => {
-                if !app.jobs.live_reload_pending {
+                if app.jobs.live_updates.status() != Some(LiveReloadStatus::Pending) {
                     app.mark_live_reload_pending();
                 }
             }
             LiveDiffReload::Loaded(Ok(changeset)) => app.replace_changeset(changeset),
             LiveDiffReload::Loaded(Err(error)) => {
-                app.jobs.live_reload_invalidated = false;
-                app.jobs.live_reload_pending = false;
+                app.jobs.live_updates.reset_reload();
                 app.set_error_log(format!("live reload failed: {error}"));
             }
         }
@@ -171,7 +167,7 @@ pub(crate) fn handle_event(
         Event::Mouse(mouse) => {
             let outcome = app.handle_mouse_with_effects(mouse)?;
             let should_quit = outcome.clone().into_legacy_quit().unwrap_or(false);
-            run_event_effects(app, outcome.effects, live_diff, events)?;
+            run_event_effects(app, outcome.into_effects(), live_diff, events)?;
             Ok(should_quit)
         }
         Event::FocusLost => {
@@ -201,7 +197,7 @@ fn handle_key_event(
 ) -> MarkResult<bool> {
     let outcome = app.handle_key_with_effects(key)?;
     let should_quit = outcome.clone().into_legacy_quit().unwrap_or(false);
-    run_event_effects(app, outcome.effects, live_diff, events)?;
+    run_event_effects(app, outcome.into_effects(), live_diff, events)?;
     Ok(should_quit)
 }
 

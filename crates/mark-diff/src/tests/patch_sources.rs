@@ -55,16 +55,16 @@ fn render_bytes_preserves_non_utf8_git_diff_output() {
     assert!(expected.stdout.contains(&0xfe));
 
     let actual = render_bytes(DiffOptions {
-        repo: Some(repo.clone()),
-        include_untracked: false,
+        repo: Some(repo.clone().into()),
+        local_untracked: crate::UntrackedMode::Exclude,
         ..DiffOptions::default()
     })
     .expect("diff bytes should render");
 
     assert_eq!(actual, expected.stdout);
     let error = render(DiffOptions {
-        repo: Some(repo),
-        include_untracked: false,
+        repo: Some(repo.into()),
+        local_untracked: crate::UntrackedMode::Exclude,
         ..DiffOptions::default()
     })
     .expect_err("text rendering should reject non-UTF-8 output");
@@ -79,7 +79,7 @@ fn patch_stdin_source_parses_stats_without_raw_patch_retention() {
         );
     let options = DiffOptions {
         source: DiffSource::Patch(PatchSource::Stdin(patch)),
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..DiffOptions::default()
     };
 
@@ -99,7 +99,7 @@ fn patch_text_source_uses_label_title() {
     );
     let options = DiffOptions {
         source: DiffSource::Patch(PatchSource::Text {
-            label: "github pr owner/repo#1".to_owned(),
+            label: "github pr owner/repo#1".into(),
             patch,
         }),
         ..DiffOptions::default()

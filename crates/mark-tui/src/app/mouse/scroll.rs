@@ -120,20 +120,20 @@ impl DiffApp {
             _ => return false,
         };
 
-        if self.overlays.help_menu_open {
+        if self.overlays.help_menu_is_open() {
             self.scroll_help_menu(delta);
-        } else if self.overlays.color_scheme_picker_open {
+        } else if self.overlays.color_scheme_picker_is_open() {
             self.move_color_scheme_selection(delta);
-        } else if self.refs.branch_menu_open.is_some() {
+        } else if self.refs.branch_menu_is_open() {
             self.move_branch_selection(delta);
-        } else if self.refs.commit_menu_open {
+        } else if self.refs.commit_menu_is_open() {
             self.move_commit_selection(delta);
-        } else if self.overlays.review_input_open {
+        } else if self.overlays.review_input_is_open() {
             // Review input has no scrollable content, but the open modal should
             // still consume wheel events instead of scrolling the diff behind it.
-        } else if self.overlays.diff_menu_open {
+        } else if self.overlays.diff_menu_is_open() {
             self.move_diff_menu_selection(delta);
-        } else if self.overlays.options_menu_open {
+        } else if self.overlays.options_menu_is_open() {
             self.move_options_menu_selection(delta);
         } else {
             return false;

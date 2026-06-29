@@ -58,7 +58,7 @@ impl DiffApp {
     }
 
     pub(super) fn sync_help_menu_visible_rows(&mut self) {
-        if !self.overlays.help_menu_open {
+        if !self.overlays.help_menu_is_open() {
             return;
         }
         let Some(visible) = help_menu_list_visible_rows(self, self.viewport.terminal_area) else {
@@ -77,26 +77,28 @@ impl DiffApp {
     }
 
     pub(crate) fn toggle_help_menu(&mut self) {
-        self.overlays.help_menu_open = !self.overlays.help_menu_open;
-        self.overlays.help_menu_input.clear();
-        self.overlays.help_menu_input_cursor = 0;
-        self.overlays.help_menu_scroll = 0;
+        if self.overlays.help_menu_is_open() {
+            self.overlays.close_help_menu();
+        } else {
+            self.close_color_scheme_picker();
+            self.overlays.open_help_menu();
+            self.overlays.help_menu_input.clear();
+            self.overlays.help_menu_input_cursor = 0;
+            self.overlays.help_menu_scroll = 0;
+        }
         self.input.clear_key_prefix();
-        if self.overlays.help_menu_open {
+        if self.overlays.help_menu_is_open() {
             self.sync_help_menu_visible_rows();
         }
         self.runtime.dirty = true;
     }
 
     pub(crate) fn close_help_menu(&mut self) {
-        if self.overlays.help_menu_open
+        if self.overlays.help_menu_is_open()
             || !self.overlays.help_menu_input.is_empty()
             || self.overlays.help_menu_scroll != 0
         {
-            self.overlays.help_menu_open = false;
-            self.overlays.help_menu_input.clear();
-            self.overlays.help_menu_input_cursor = 0;
-            self.overlays.help_menu_scroll = 0;
+            self.overlays.close_help_menu();
             self.input.clear_key_prefix();
             self.runtime.dirty = true;
         }

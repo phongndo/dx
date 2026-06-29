@@ -28,8 +28,11 @@ pub use parser::parse_patch;
 use stats::parse_patch_stats;
 use stats::{patch_stats, render_patch_stats, terminal_safe_text};
 pub use types::{
-    Changeset, DiffFile, DiffHunk, DiffLine, DiffLineKind, DiffOptions, DiffRowRef, DiffScope,
-    DiffSource, DiffStats, DiffViewModel, FileStatus, PatchSource,
+    BranchName, Changeset, CommitSha, DiffFile, DiffFileBody, DiffHunk, DiffLine, DiffLineKind,
+    DiffOptions, DiffOutput, DiffPath, DiffRowRef, DiffScope, DiffSource, DiffStats, DiffViewModel,
+    DisplayPath, FileChange, FileStatus, HunkLineRanges, LineSpan, NewLineNumber, OldLineNumber,
+    PatchLabel, PatchSource, PullRequestId, RefName, RemoteName, RepoArg, RepoRelativePath,
+    RepoRoot, RevSpec, ReviewId, UntrackedMode, WorktreePath,
 };
 
 pub fn load(options: DiffOptions) -> MarkResult<Changeset> {
@@ -100,7 +103,7 @@ fn changeset_from_patch(
     };
 
     Ok(Changeset {
-        repo,
+        repo: repo.into(),
         title,
         files,
         raw_patch,
@@ -141,7 +144,11 @@ fn diff_patch_bytes_paths(
 fn diff_patch_bytes(options: &DiffOptions) -> MarkResult<(PathBuf, Cow<'_, [u8]>)> {
     if let DiffSource::Patch(source) = &options.source {
         validate_options(options)?;
-        let repo = options.repo.clone().unwrap_or_default();
+        let repo = options
+            .repo
+            .clone()
+            .map(RepoArg::into_path_buf)
+            .unwrap_or_default();
         return Ok((repo, patch_source_bytes(source)?));
     }
 
@@ -172,7 +179,7 @@ pub fn render(options: DiffOptions) -> MarkResult<String> {
 }
 
 pub fn render_bytes(options: DiffOptions) -> MarkResult<Vec<u8>> {
-    if options.stat {
+    if options.is_stat() {
         return render_stat_bytes(&options);
     }
     let (_, patch) = diff_patch_bytes(&options)?;
@@ -184,7 +191,7 @@ pub fn render_to_writer(options: DiffOptions, writer: impl Write) -> MarkResult<
 }
 
 pub fn render_to_writer_ref(options: &DiffOptions, mut writer: impl Write) -> MarkResult<()> {
-    if options.stat {
+    if options.is_stat() {
         writer.write_all(&render_stat_bytes(options)?)?;
         return Ok(());
     }
@@ -224,7 +231,9 @@ fn write_patch_source(source: &PatchSource, mut writer: impl Write) -> MarkResul
             copy_to_writer(&mut file, &mut writer)?;
         }
         PatchSource::Stdin(patch) => writer.write_all(patch.as_ref())?,
-        PatchSource::Text { patch, .. } => writer.write_all(patch.as_ref())?,
+        PatchSource::Text { patch, .. } | PatchSource::Review { patch, .. } => {
+            writer.write_all(patch.as_ref())?
+        }
     }
     Ok(())
 }
@@ -247,7 +256,9 @@ fn patch_source_bytes(source: &PatchSource) -> MarkResult<Cow<'_, [u8]>> {
     match source {
         PatchSource::File(path) => Ok(Cow::Owned(fs::read(path)?)),
         PatchSource::Stdin(patch) => Ok(Cow::Borrowed(patch.as_ref())),
-        PatchSource::Text { patch, .. } => Ok(Cow::Borrowed(patch.as_ref())),
+        PatchSource::Text { patch, .. } | PatchSource::Review { patch, .. } => {
+            Ok(Cow::Borrowed(patch.as_ref()))
+        }
     }
 }
 

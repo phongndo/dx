@@ -40,12 +40,12 @@ pub(crate) fn file_header_spans(
 ) -> Vec<Span<'static>> {
     let bg = base_bg(theme);
     header_spans(
-        status_code(file.status),
+        status_code(file.status()),
         file.display_path(),
         &file_delta_parts(file.additions, file.deletions),
         width,
         HeaderStyles {
-            prefix: file_sidebar_style(file.status, theme)
+            prefix: file_sidebar_style(file.status(), theme)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
             body: Style::default().fg(theme.foreground).bg(bg),

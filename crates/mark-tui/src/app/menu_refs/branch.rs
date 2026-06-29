@@ -24,17 +24,16 @@ impl DiffApp {
         if self.refs.comparison_branches.is_empty() {
             return;
         }
-        if self.refs.branch_menu_open == Some(menu) {
+        if self.refs.branch_menu_open() == Some(menu) {
             self.close_branch_menu();
             return;
         }
 
-        self.refs.branch_menu_open = Some(menu);
+        self.refs.open_branch_menu(menu);
         self.overlays.close_diff_menu();
         self.runtime.hit_map.diff_menu_area = None;
         self.close_review_input();
-        self.overlays.close_options_menu();
-        self.close_color_scheme_picker();
+        self.close_options_menu();
         self.close_commit_menu();
         self.refs.branch_menu.reset_input();
         self.refs.branch_menu.selected = self
@@ -77,7 +76,7 @@ impl DiffApp {
         column: u16,
         row: u16,
     ) -> Option<String> {
-        if self.refs.branch_menu_open != Some(menu) {
+        if self.refs.branch_menu_open() != Some(menu) {
             return None;
         }
 
@@ -181,7 +180,7 @@ impl DiffApp {
     }
 
     pub(crate) fn filtered_branches(&self) -> Vec<&str> {
-        let menu = self.refs.branch_menu_open.unwrap_or(BranchMenu::Base);
+        let menu = self.refs.branch_menu_open().unwrap_or(BranchMenu::Base);
         let query = self.refs.branch_menu.input.trim().to_ascii_lowercase();
         let selected = self.selected_branch_menu_choice(menu);
         if query.is_empty() {
@@ -286,14 +285,14 @@ impl DiffApp {
         let outcome = SelectorController::new(&mut self.refs.branch_menu, len)
             .with_visible_rows(rows)
             .apply_input_key(key);
-        if outcome.changed {
+        if outcome.changed() {
             self.runtime.dirty = true;
         }
-        outcome.handled
+        outcome.handled()
     }
 
     pub(crate) fn select_highlighted_branch_match(&mut self) {
-        let Some(menu) = self.refs.branch_menu_open else {
+        let Some(menu) = self.refs.branch_menu_open() else {
             return;
         };
         let Some(branch) = self

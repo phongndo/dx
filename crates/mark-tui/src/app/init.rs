@@ -1,9 +1,9 @@
 use super::{
-    AnnotationState, AppConfigState, ColorSchemeChoice, DiffApp, DocumentState,
-    ERROR_LOG_DEFAULT_HEIGHT, FileSidebarState, FilterState, InputState, JobState, MouseScroll,
-    NotificationState, OptionsDraft, OverlayState, ReferenceState, RuntimeState, SyntaxStartupMode,
-    ViewportState, color_scheme_from_config, layout_override_from_setting,
-    layout_setting_from_override, show_rev_from_options,
+    ActiveOverlay, ActiveReferenceMenu, AnnotationState, AppConfigState, ColorSchemeChoice,
+    DiffApp, DocumentState, ERROR_LOG_DEFAULT_HEIGHT, FileSidebarState, FilterState, InputState,
+    JobState, LiveUpdatesState, MouseScroll, NotificationState, OptionsDraft, OverlayState,
+    ReferenceState, RuntimeState, SyntaxStartupMode, ViewportState, color_scheme_from_config,
+    layout_override_from_setting, layout_setting_from_override, show_rev_from_options,
 };
 use crate::annotation::AnnotationStore;
 use crate::controls::{
@@ -11,7 +11,7 @@ use crate::controls::{
     current_head_label, default_branch_base,
 };
 use crate::keymap::Keymap;
-use crate::model::{UiModel, UiRow};
+use crate::model::{FileIndex, HunkIndex, UiModel, UiRow};
 use crate::render::snapshot::HitMap;
 use crate::search::DiffSearchIndex;
 use crate::selector::SelectorState;
@@ -285,7 +285,8 @@ impl DiffApp {
         let manual_hunk_focus = model
             .hunk_start_rows
             .first()
-            .and_then(|row| model.row(*row).and_then(UiRow::hunk_key));
+            .and_then(|row| model.row(row.get()).and_then(UiRow::hunk_key))
+            .map(|(file, hunk)| (FileIndex::new(file), HunkIndex::new(hunk)));
         let stats = changeset.stats();
         let total_stats = stats.clone();
         let branch_base = default_branch_base(&options, &changeset.repo);
@@ -370,7 +371,7 @@ impl DiffApp {
                 mouse_hover: None,
             },
             sidebar: FileSidebarState {
-                selected_file: 0,
+                selected_file: FileIndex::new(0),
                 file_sidebar_open: false,
                 file_sidebar_scroll: 0,
                 file_sidebar_width: None,
@@ -382,19 +383,15 @@ impl DiffApp {
                 annotation_draft: None,
             },
             overlays: OverlayState {
-                help_menu_open: false,
+                active_overlay: ActiveOverlay::None,
                 help_menu_input: String::new(),
                 help_menu_input_cursor: 0,
                 help_menu_scroll: 0,
                 help_menu_visible_rows: 1,
-                diff_menu_open: false,
                 diff_menu: SelectorState::default(),
-                review_input_open: false,
                 review_input: String::new(),
                 review_input_cursor: 0,
-                options_menu_open: false,
                 options_menu: SelectorState::default(),
-                annotation_menu_open: false,
                 annotation_menu: SelectorState::default(),
                 options_menu_draft: OptionsDraft {
                     layout: layout_setting_from_override(layout_override),
@@ -403,12 +400,11 @@ impl DiffApp {
                     syntax_enabled: syntax.is_some(),
                     line_wrapping: settings.line_wrapping,
                     color_scheme,
-                    notification_mode: settings.notifications.mode,
-                    toast_corner: settings.notifications.corner,
-                    toast_timeout_ms: settings.notifications.timeout_ms,
-                    toast_max_visible: settings.notifications.max_visible,
+                    notification_mode: settings.notifications.mode(),
+                    toast_corner: settings.notifications.corner(),
+                    toast_timeout_ms: settings.notifications.timeout_ms(),
+                    toast_max_visible: settings.notifications.max_visible(),
                 },
-                color_scheme_picker_open: false,
                 color_scheme_picker: SelectorState::default(),
                 color_scheme_preview_original: None,
                 rendered_diff_menu_area: None,
@@ -431,13 +427,12 @@ impl DiffApp {
                 selected_grep_match: None,
             },
             refs: ReferenceState {
-                branch_menu_open: None,
+                active_menu: ActiveReferenceMenu::None,
                 branch_menu: SelectorState::default(),
                 branch_base,
                 branch_head,
                 current_head,
                 comparison_branches,
-                commit_menu_open: false,
                 commit_menu: SelectorState::default(),
                 show_rev,
                 comparison_commits,
@@ -447,10 +442,10 @@ impl DiffApp {
                 editor_reload: None,
                 pending_editor_reload: None,
                 post_editor_quit_key_ignore_until: None,
-                live_updates_allowed: true,
-                live_updates_enabled: settings.live_reload,
-                live_reload_invalidated: false,
-                live_reload_pending: false,
+                live_updates: LiveUpdatesState::from_allowed_and_enabled(
+                    true,
+                    settings.live_reload,
+                ),
                 pending_diff_load: None,
                 pending_review_load: None,
                 diff_cache: Vec::new(),

@@ -56,7 +56,7 @@ impl SyntaxRuntime {
             self.skip(position, SyntaxSkipReason::NoLanguage);
             return;
         };
-        let Some(hunk_diff) = file_diff.hunks.get(hunk) else {
+        let Some(hunk_diff) = file_diff.hunks().get(hunk) else {
             self.skip(position, SyntaxSkipReason::InvalidPosition);
             return;
         };

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::sync::oneshot;
 
-use super::super::{DiffApp, PendingReviewLoad};
+use super::super::{AsyncJob, DiffApp, PendingReviewLoad};
 use crate::runtime;
 
 impl DiffApp {
@@ -22,7 +22,7 @@ impl DiffApp {
 
         self.jobs.pending_review_load = Some(PendingReviewLoad {
             error_prefix: "review unavailable".to_owned(),
-            rx,
+            job: AsyncJob::new(rx),
         });
         self.jobs.pending_diff_load = None;
         self.set_success_notice("loading review");
@@ -44,7 +44,7 @@ impl DiffApp {
     pub(crate) fn drain_pending_review_load(&mut self) {
         let Some(outcome) =
             self.jobs.pending_review_load.as_mut().and_then(|pending| {
-                match pending.rx.try_recv() {
+                match pending.job.try_recv() {
                     Ok(result) => Some(Some(result)),
                     Err(oneshot::error::TryRecvError::Empty) => None,
                     Err(oneshot::error::TryRecvError::Closed) => Some(None),
@@ -59,7 +59,7 @@ impl DiffApp {
 
         match outcome {
             Some(Ok((mut options, changeset))) => {
-                options.include_untracked = self.document.options.include_untracked;
+                options.local_untracked = self.document.options.local_untracked;
                 self.replace_loaded_diff(options, changeset);
             }
             Some(Err(error)) => self.set_error_log(format!("{}: {error}", pending.error_prefix)),

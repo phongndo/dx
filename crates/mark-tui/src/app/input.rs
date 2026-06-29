@@ -14,14 +14,14 @@ impl DiffApp {
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> MarkResult<bool> {
         let outcome = self.handle_key_with_effects(key)?;
         let legacy = outcome.clone().into_legacy_quit().unwrap_or(false);
-        self.run_effects(outcome.effects)?;
+        self.run_effects(outcome.into_effects())?;
         Ok(legacy)
     }
 
     pub(crate) fn handle_key_with_effects(&mut self, key: KeyEvent) -> MarkResult<ActionOutcome> {
         let mut outcome =
             ActionOutcome::from_component_event_result(route_key_through_layers(self, key)?);
-        outcome.effects.extend(self.take_queued_effects());
+        outcome.extend_effects(self.take_queued_effects());
         Ok(outcome)
     }
 

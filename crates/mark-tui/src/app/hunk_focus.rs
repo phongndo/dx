@@ -1,4 +1,5 @@
 use super::DiffApp;
+use crate::model::{FileIndex, HunkIndex};
 
 impl DiffApp {
     pub(crate) fn next_hunk(&mut self) {
@@ -35,7 +36,7 @@ impl DiffApp {
 
     pub(crate) fn hunk_navigation_anchor_row(&self) -> usize {
         if let Some((file, hunk)) = self.focused_hunk_for_viewport(self.viewport.viewport_rows)
-            && let Some(row) = self.document.model.hunk_start_row(file, hunk)
+            && let Some(row) = self.document.model.hunk_start_row(file.get(), hunk.get())
         {
             return row;
         }
@@ -63,8 +64,8 @@ impl DiffApp {
             )
         {
             let previous_file = self.sidebar.selected_file;
-            self.viewport.manual_hunk_focus = Some((file, hunk));
-            self.sidebar.selected_file = file;
+            self.viewport.manual_hunk_focus = Some((FileIndex::new(file), HunkIndex::new(hunk)));
+            self.sidebar.selected_file = FileIndex::new(file);
             self.ensure_file_sidebar_selection_visible(self.visible_file_sidebar_rows());
             if self.viewport.manual_hunk_focus != previous_hunk
                 || self.sidebar.selected_file != previous_file

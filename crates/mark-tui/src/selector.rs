@@ -9,9 +9,20 @@ pub(crate) enum SelectorMovement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SelectorInputOutcome {
-    pub(crate) handled: bool,
-    pub(crate) changed: bool,
+pub(crate) enum SelectorInputOutcome {
+    Ignored,
+    Handled,
+    Changed,
+}
+
+impl SelectorInputOutcome {
+    pub(crate) fn handled(self) -> bool {
+        !matches!(self, Self::Ignored)
+    }
+
+    pub(crate) fn changed(self) -> bool {
+        matches!(self, Self::Changed)
+    }
 }
 
 /// Shared controller for searchable selector-style UI.
@@ -64,23 +75,11 @@ impl<'a> SelectorController<'a> {
         match self.state.apply_input_key(key) {
             TextInputKeyResult::Edited => {
                 self.ensure_selected_visible();
-                SelectorInputOutcome {
-                    handled: true,
-                    changed: true,
-                }
+                SelectorInputOutcome::Changed
             }
-            TextInputKeyResult::Moved => SelectorInputOutcome {
-                handled: true,
-                changed: true,
-            },
-            TextInputKeyResult::Handled => SelectorInputOutcome {
-                handled: true,
-                changed: false,
-            },
-            TextInputKeyResult::Ignored => SelectorInputOutcome {
-                handled: false,
-                changed: false,
-            },
+            TextInputKeyResult::Moved => SelectorInputOutcome::Changed,
+            TextInputKeyResult::Handled => SelectorInputOutcome::Handled,
+            TextInputKeyResult::Ignored => SelectorInputOutcome::Ignored,
         }
     }
 
@@ -262,13 +261,7 @@ mod tests {
             .with_visible_rows(3)
             .apply_input_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
 
-        assert_eq!(
-            outcome,
-            SelectorInputOutcome {
-                handled: true,
-                changed: true,
-            }
-        );
+        assert_eq!(outcome, SelectorInputOutcome::Changed);
         assert_eq!(state.input, "x");
         assert_eq!(state.selected, 0);
         assert_eq!(state.scroll, 0);

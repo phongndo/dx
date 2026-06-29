@@ -91,7 +91,7 @@ pub(crate) fn draw_diff_menu(frame: &mut Frame<'_>, app: &DiffApp, area: Rect) {
 }
 
 pub(crate) fn diff_menu_area(app: &DiffApp, area: Rect, choices: &[DiffChoice]) -> Option<Rect> {
-    if !app.overlays.diff_menu_open
+    if !app.overlays.diff_menu_is_open()
         || !floating_menu_fits_terminal(area)
         || app.diff_menu_choices().is_empty()
     {
@@ -164,7 +164,7 @@ pub(crate) fn draw_review_input(frame: &mut Frame<'_>, app: &DiffApp, area: Rect
 }
 
 pub(crate) fn review_input_area(app: &DiffApp, area: Rect) -> Option<Rect> {
-    if !app.overlays.review_input_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.review_input_is_open() || !floating_menu_fits_terminal(area) {
         return None;
     }
 
@@ -232,7 +232,7 @@ pub(crate) fn diff_type_label(options: &DiffOptions) -> &'static str {
         DiffSource::Range { .. } => "Range",
         DiffSource::Difftool { .. } => "Difftool",
         DiffSource::Patch(_) => "Patch",
-        DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
+        DiffSource::Worktree { .. } | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
     }
 }
 
@@ -241,21 +241,25 @@ pub(crate) fn diff_choice_from_options(options: &DiffOptions) -> Option<DiffChoi
         return Some(DiffChoice::Review);
     }
 
-    match (&options.source, options.scope) {
-        (DiffSource::Base(_) | DiffSource::Branch { .. }, DiffScope::All) => {
-            Some(DiffChoice::Branch)
-        }
-        (DiffSource::Worktree, DiffScope::All) => Some(DiffChoice::All),
-        (DiffSource::Worktree, DiffScope::Unstaged) => Some(DiffChoice::Unstaged),
-        (DiffSource::Worktree, DiffScope::Staged) => Some(DiffChoice::Staged),
-        (DiffSource::Show(_), DiffScope::All) => Some(DiffChoice::Show),
+    match &options.source {
+        DiffSource::Base(_) | DiffSource::Branch { .. } => Some(DiffChoice::Branch),
+        DiffSource::Worktree {
+            scope: DiffScope::All,
+        } => Some(DiffChoice::All),
+        DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        } => Some(DiffChoice::Unstaged),
+        DiffSource::Worktree {
+            scope: DiffScope::Staged,
+        } => Some(DiffChoice::Staged),
+        DiffSource::Show(_) => Some(DiffChoice::Show),
         _ => None,
     }
 }
 
 pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
     match &options.source {
-        DiffSource::Worktree => match options.scope {
+        DiffSource::Worktree { scope } => match scope {
             DiffScope::All => "HEAD → working tree".to_owned(),
             DiffScope::Staged => "HEAD → index".to_owned(),
             DiffScope::Unstaged => "index → working tree".to_owned(),
@@ -276,6 +280,7 @@ pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
             format!("patch {}", path.display())
         }
         DiffSource::Patch(mark_diff::PatchSource::Stdin(_)) => "patch stdin".to_owned(),
-        DiffSource::Patch(mark_diff::PatchSource::Text { label, .. }) => label.clone(),
+        DiffSource::Patch(mark_diff::PatchSource::Text { label, .. })
+        | DiffSource::Patch(mark_diff::PatchSource::Review { label, .. }) => label.to_string(),
     }
 }

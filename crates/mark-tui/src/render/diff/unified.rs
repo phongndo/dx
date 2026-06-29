@@ -82,7 +82,7 @@ pub(crate) fn render_unified_line_wrapped_with_focus(
     grep_filter: &str,
 ) -> Vec<Line<'static>> {
     let content_width = unified_content_width(width);
-    let scrolls = wrapped_line_start_columns(&line.text, content_width);
+    let scrolls = wrapped_line_start_columns(line.text(), content_width);
     let mut lines = Vec::with_capacity(scrolls.len());
     for (wrap_index, horizontal_scroll) in scrolls.iter().copied().enumerate() {
         let rendered = render_unified_line_segment_with_focus(
@@ -130,7 +130,7 @@ fn render_unified_line_segment_with_focus(
     let sign = if continuation {
         " "
     } else {
-        match line.kind {
+        match line.kind() {
             DiffLineKind::Context => " ",
             DiffLineKind::Addition => "+",
             DiffLineKind::Deletion => "-",
@@ -143,20 +143,26 @@ fn render_unified_line_segment_with_focus(
     let gutter = if continuation {
         spaces(UNIFIED_GUTTER_WIDTH.saturating_sub(1)).into_owned()
     } else {
-        unified_gutter_text(line.old_line, line.new_line)
+        unified_gutter_text(line.old_line(), line.new_line())
     };
     let mut spans = Vec::new();
     if indicator_width > 0 {
-        spans.push(diff_indicator_span_for_focus(line.kind, theme, focused));
+        spans.push(diff_indicator_span_for_focus(line.kind(), theme, focused));
     }
     if gutter_width > 0 {
-        spans.extend(gutter_spans(&gutter, sign, gutter_width, line.kind, theme));
+        spans.extend(gutter_spans(
+            &gutter,
+            sign,
+            gutter_width,
+            line.kind(),
+            theme,
+        ));
     }
     spans.extend(content_spans_at_scroll(
-        &line.text,
+        line.text(),
         syntax,
         inline,
-        line.kind,
+        line.kind(),
         content_width,
         theme,
         horizontal_scroll,
@@ -181,7 +187,7 @@ fn highlight_wrapped_unified_grep_line(
         &rendered.spans,
         unified_content_start_column(width),
         width,
-        1 + scrolled_text_byte_start(&line.text, horizontal_scroll),
+        1 + scrolled_text_byte_start(line.text(), horizontal_scroll),
     )
     .into_iter()
     .collect();

@@ -7,7 +7,7 @@ use crate::render::menus::{commit_menu_block, commit_menu_list_visible_rows, dif
 use crate::selector::{SelectorController, SelectorMovement};
 use crate::theme::{MAX_BRANCH_MENU_ROWS, STATUSLINE_SELECTOR_GAP};
 use crossterm::event::KeyEvent;
-use mark_diff::{DiffScope, DiffSource};
+use mark_diff::DiffSource;
 use unicode_width::UnicodeWidthStr;
 
 impl DiffApp {
@@ -23,20 +23,19 @@ impl DiffApp {
             self.set_warning_notice("commit list unavailable");
             return;
         }
-        if self.refs.commit_menu_open {
+        if self.refs.commit_menu_is_open() {
             self.close_commit_menu();
             return;
         }
 
-        self.refs.commit_menu_open = true;
+        self.refs.open_commit_menu();
         self.overlays.close_diff_menu();
         self.runtime.hit_map.diff_menu_area = None;
         self.close_review_input();
-        self.refs.branch_menu_open = None;
+        self.refs.close_branch_menu(&mut self.overlays);
         self.refs.branch_menu.reset_input();
         self.set_rendered_branch_menu_area(None);
-        self.overlays.close_options_menu();
-        self.close_color_scheme_picker();
+        self.close_options_menu();
         self.refs.commit_menu.reset_input();
         self.refs.commit_menu.selected = self
             .selected_commit_menu_choice()
@@ -151,16 +150,16 @@ impl DiffApp {
         let outcome = SelectorController::new(&mut self.refs.commit_menu, len)
             .with_visible_rows(rows)
             .apply_input_key(key);
-        if outcome.changed {
+        if outcome.changed() {
             self.runtime.dirty = true;
         }
-        outcome.handled
+        outcome.handled()
     }
 
     pub(crate) fn selected_commit_menu_choice(&self) -> Option<&GitCommit> {
         let rev = self.refs.show_rev.as_deref()?;
         self.refs.comparison_commits.iter().find(|commit| {
-            commit.sha == rev
+            commit.sha.as_str() == rev
                 || commit.sha.starts_with(rev)
                 || rev.starts_with(&commit.sha[..commit.sha.len().min(7)])
         })
@@ -222,13 +221,12 @@ impl DiffApp {
             return;
         };
         self.close_commit_menu();
-        self.select_show_commit(commit.sha);
+        self.select_show_commit(commit.sha.to_string());
     }
 
     pub(crate) fn select_show_commit(&mut self, rev: String) {
         let mut options = self.document.options.clone();
-        options.source = DiffSource::Show(rev.clone());
-        options.scope = DiffScope::All;
+        options.source = DiffSource::Show(rev.clone().into());
 
         if options == self.document.options {
             self.refs.show_rev = Some(rev);
@@ -246,7 +244,7 @@ impl DiffApp {
             .refs
             .comparison_commits
             .iter()
-            .find(|commit| commit.sha == rev || commit.sha.starts_with(rev))
+            .find(|commit| commit.sha.as_str() == rev || commit.sha.starts_with(rev))
             .map(|commit| {
                 let short = commit_short_sha(commit);
                 if commit.subject.is_empty() {
@@ -296,7 +294,7 @@ impl DiffApp {
     }
 
     pub(crate) fn commit_choice_at(&self, column: u16, row: u16) -> Option<String> {
-        if !self.refs.commit_menu_open {
+        if !self.refs.commit_menu_is_open() {
             return None;
         }
 
@@ -323,6 +321,6 @@ impl DiffApp {
         }
 
         self.filtered_commit(commit_index)
-            .map(|commit| commit.sha.clone())
+            .map(|commit| commit.sha.to_string())
     }
 }

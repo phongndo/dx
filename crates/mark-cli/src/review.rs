@@ -11,11 +11,13 @@ pub(crate) struct ReviewRequest {
 }
 
 pub(crate) fn run_review(request: ReviewRequest) -> CliResult<()> {
-    if io::stdout().is_terminal() && !request.options.stat {
-        mark_tui::run_diff_with_live_updates_and_syntax(
+    if io::stdout().is_terminal() && !request.options.is_stat() {
+        mark_tui::run_diff_with_options(
             request.options,
-            request.live_updates,
-            request.syntax_enabled,
+            mark_tui::DiffRunOptions {
+                live_updates: request.live_updates,
+                syntax_enabled: request.syntax_enabled,
+            },
         )?;
         Ok(())
     } else {

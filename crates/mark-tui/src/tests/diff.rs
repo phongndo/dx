@@ -18,13 +18,13 @@ fn hunk_focus_uses_sliding_viewport_anchor() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
 
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_0)));
 
     app.set_scroll(1);
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_1)));
 
     app.set_scroll(usize::MAX);
-    assert_eq!(app.focused_hunk_for_viewport(5), Some((0, 2)));
+    assert_eq!(app.focused_hunk_for_viewport(5), Some((FILE_0, HUNK_2)));
     assert_eq!(app.viewport.scroll, app.max_scroll());
 }
 
@@ -49,9 +49,12 @@ fn bracket_hunk_navigation_places_oversized_hunk_at_top() {
     ));
     assert_eq!(
         app.document.model.row(app.viewport.scroll + 1),
-        Some(UiRow::HunkHeader { file: 0, hunk: 1 })
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_1
+        })
     );
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -84,7 +87,7 @@ fn hunk_navigation_centers_with_surrounding_collapsed_context() {
         app.viewport.scroll + viewport_center_offset(app.viewport.viewport_rows),
         center
     );
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -93,7 +96,10 @@ fn hunk_navigation_keeps_target_visible_after_expanded_pre_hunk_context() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(9);
     app.document.context_expansions.insert(
-        ContextKey { file: 0, hunk: 1 },
+        ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1,
+        },
         default_context_expand_step(),
     );
     app.document.model = UiModel::new(
@@ -119,7 +125,7 @@ fn hunk_navigation_keeps_target_visible_after_expanded_pre_hunk_context() {
 
     assert!(hunk_row >= app.viewport.scroll);
     assert!(hunk_row < app.viewport.scroll + app.viewport.viewport_rows);
-    assert_eq!(app.focused_hunk_for_viewport(9), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(9), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -127,9 +133,13 @@ fn hunk_navigation_includes_expanded_context_before_hunk() {
     let changeset = changeset_with_hunks_at(PathBuf::from("/repo"), &[50, 100, 150]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(8);
-    app.document
-        .context_expansions
-        .insert(ContextKey { file: 0, hunk: 1 }, 3);
+    app.document.context_expansions.insert(
+        ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1,
+        },
+        3,
+    );
     app.document.model = UiModel::new(
         &app.document.changeset,
         app.viewport.layout,
@@ -144,8 +154,8 @@ fn hunk_navigation_includes_expanded_context_before_hunk() {
             matches!(
                 row,
                 UiRow::ContextHide {
-                    file: 0,
-                    hunk: 1,
+                    file: FILE_0,
+                    hunk: HUNK_1,
                     ..
                 }
             )
@@ -165,12 +175,12 @@ fn hunk_navigation_includes_expanded_context_before_hunk() {
     assert_eq!(
         app.document.model.row(app.viewport.scroll),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             lines: 3
         })
     );
-    assert_eq!(app.focused_hunk_for_viewport(8), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(8), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -193,8 +203,8 @@ fn selecting_file_centers_and_focuses_its_first_hunk() {
         app.viewport.scroll + viewport_center_offset(app.viewport.viewport_rows),
         hunk_center
     );
-    assert_eq!(app.sidebar.selected_file, 1);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((1, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_1);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_1, HUNK_0)));
 }
 
 #[test]
@@ -206,18 +216,18 @@ fn paren_file_navigation_focuses_first_hunk_and_updates_selected_file() {
     app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE))
         .expect(") should be handled");
 
-    assert_eq!(app.sidebar.selected_file, 1);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((1, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_1);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_1, HUNK_0)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char(')'), KeyModifiers::NONE))
         .expect(") should be handled");
-    assert_eq!(app.sidebar.selected_file, 2);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((2, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_2);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_2, HUNK_0)));
 
     app.handle_key(KeyEvent::new(KeyCode::Char('('), KeyModifiers::NONE))
         .expect("( should be handled");
-    assert_eq!(app.sidebar.selected_file, 1);
-    assert_eq!(app.focused_hunk_for_viewport(7), Some((1, 0)));
+    assert_eq!(app.sidebar.selected_file, FILE_1);
+    assert_eq!(app.focused_hunk_for_viewport(7), Some((FILE_1, HUNK_0)));
 }
 
 #[test]
@@ -227,13 +237,13 @@ fn selecting_current_file_preserves_focused_hunk() {
     app.set_viewport_rows(20);
 
     app.next_hunk();
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 1)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_1)));
 
     app.select_file(0);
 
-    assert_eq!(app.sidebar.selected_file, 0);
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 1)));
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.sidebar.selected_file, FILE_0);
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 }
 
 #[test]
@@ -245,7 +255,7 @@ fn replace_loaded_diff_clears_manual_hunk_focus() {
 
     app.next_hunk();
     app.next_hunk();
-    assert_eq!(app.viewport.manual_hunk_focus, Some((0, 2)));
+    assert_eq!(app.viewport.manual_hunk_focus, Some((FILE_0, HUNK_2)));
     assert_eq!(
         app.focused_hunk_editor_target(),
         Some(EditorTarget {
@@ -260,7 +270,7 @@ fn replace_loaded_diff_clears_manual_hunk_focus() {
     );
 
     assert_eq!(app.viewport.manual_hunk_focus, None);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
     assert_eq!(
         app.focused_hunk_editor_target(),
         Some(EditorTarget {
@@ -290,8 +300,7 @@ fn focused_hunk_editor_target_falls_back_to_hunk_start() {
 #[test]
 fn focused_hunk_editor_target_skips_deleted_files() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].status = FileStatus::Deleted;
-    changeset.files[0].new_path = None;
+    set_test_file_deleted(&mut changeset.files[0]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
 
@@ -303,7 +312,7 @@ fn focused_hunk_editor_target_skips_show_sources() {
     let changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
     let mut app = DiffApp::new(
         DiffOptions {
-            source: DiffSource::Show("HEAD~1".to_owned()),
+            source: DiffSource::Show("HEAD~1".into()),
             ..DiffOptions::default()
         },
         changeset,
@@ -333,15 +342,15 @@ fn editor_reload_behavior_supports_worktree_backed_diffs() {
         EditorReloadBehavior::Sync
     );
 
-    app.document.options.source = DiffSource::Base("main".to_owned());
+    app.document.options.source = DiffSource::Base("main".into());
     assert_eq!(
         app.editor_reload_behavior(true, Some(Path::new("src/file.rs"))),
         EditorReloadBehavior::ScopedAsync
     );
 
     app.document.options.source = DiffSource::Branch {
-        base: "main".to_owned(),
-        head: "feature".to_owned(),
+        base: "main".into(),
+        head: "feature".into(),
     };
     assert_eq!(
         app.editor_reload_behavior(true, Some(Path::new("src/file.rs"))),
@@ -352,9 +361,7 @@ fn editor_reload_behavior_supports_worktree_backed_diffs() {
 #[test]
 fn focused_editor_reload_request_preserves_rename_pair() {
     let mut changeset = changeset_with_hunk_at(PathBuf::from("/repo"), 20);
-    changeset.files[0].old_path = Some("old.rs".to_owned());
-    changeset.files[0].new_path = Some("new.rs".to_owned());
-    changeset.files[0].status = FileStatus::Renamed;
+    set_test_file_renamed(&mut changeset.files[0], "old.rs", "new.rs");
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
 
@@ -446,15 +453,15 @@ fn path_changeset_replaces_only_edited_file() {
 
     assert_eq!(visible_paths(&app), vec!["a.rs", "b.rs", "c.rs"]);
     assert_eq!(
-        app.document.changeset.files[0].hunks[0].lines[0].text,
+        app.document.changeset.files[0].hunks()[0].lines[0].text(),
         "line 0"
     );
     assert_eq!(
-        app.document.changeset.files[1].hunks[0].lines[0].text,
+        app.document.changeset.files[1].hunks()[0].lines[0].text(),
         "line 0"
     );
     assert_eq!(
-        app.document.changeset.files[2].hunks[0].lines[0].text,
+        app.document.changeset.files[2].hunks()[0].lines[0].text(),
         "line 2"
     );
 }
@@ -463,7 +470,7 @@ fn path_changeset_replaces_only_edited_file() {
 fn path_changeset_removes_file_when_diff_disappears() {
     let changeset = changeset_with_files(&["a.rs", "b.rs", "c.rs"]);
     let mut replacement = changeset_with_files(&[]);
-    replacement.repo = PathBuf::from("/repo");
+    replacement.repo = PathBuf::from("/repo").into();
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.replace_path_changeset(Path::new("b.rs"), replacement);
@@ -479,7 +486,7 @@ fn ui_model_inserts_file_separator_between_files() {
     assert_eq!(model.file_start_row(0), Some(0));
     assert_eq!(model.file_start_row(1), Some(4));
     assert_eq!(model.row(3), Some(UiRow::FileSeparator));
-    assert_eq!(model.row(4), Some(UiRow::FileHeader(1)));
+    assert_eq!(model.row(4), Some(UiRow::FileHeader(FILE_1)));
     assert_eq!(model.file_at_row(3), Some(0));
     assert_eq!(model.file_at_row(4), Some(1));
 }
@@ -494,8 +501,8 @@ fn ui_model_expands_context_after_previous_hunk_downward() {
     assert_eq!(
         model.row(4),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             old_start: 51,
             new_start: 51,
             lines: 49,
@@ -503,21 +510,27 @@ fn ui_model_expands_context_after_previous_hunk_downward() {
         })
     );
 
-    expansions.insert(ContextKey { file: 0, hunk: 1 }, step);
+    expansions.insert(
+        ContextKey {
+            file: FILE_0,
+            hunk: HUNK_1,
+        },
+        step,
+    );
     let model = UiModel::new(&changeset, DiffLayoutMode::Unified, &expansions);
 
     assert_eq!(
         model.row(4),
         Some(UiRow::ContextHide {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             lines: step,
         })
     );
     assert_eq!(
         model.row(5),
         Some(UiRow::ContextLine {
-            file: 0,
+            file: FILE_0,
             old_line: 51,
             new_line: 51,
         })
@@ -525,15 +538,21 @@ fn ui_model_expands_context_after_previous_hunk_downward() {
     assert_eq!(
         model.row(25),
         Some(UiRow::Collapsed {
-            file: 0,
-            hunk: 1,
+            file: FILE_0,
+            hunk: HUNK_1,
             old_start: 71,
             new_start: 71,
             lines: 29,
             expanded: step,
         })
     );
-    assert_eq!(model.row(26), Some(UiRow::HunkHeader { file: 0, hunk: 1 }));
+    assert_eq!(
+        model.row(26),
+        Some(UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_1
+        })
+    );
 }
 
 #[test]
@@ -650,7 +669,9 @@ fn live_reload_invalidation_clears_cache_without_visible_pending_state() {
     let changeset = changeset_with_files(&["src/lib.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let options = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
 
@@ -659,8 +680,10 @@ fn live_reload_invalidation_clears_cache_without_visible_pending_state() {
 
     app.mark_live_reload_invalidated();
 
-    assert!(app.jobs.live_reload_invalidated);
-    assert!(!app.jobs.live_reload_pending);
+    assert_eq!(
+        app.jobs.live_updates.status(),
+        Some(LiveReloadStatus::Invalidated)
+    );
     assert!(app.jobs.diff_cache.is_empty());
 
     let line = statusline_header_line(&app, 80);
@@ -677,10 +700,10 @@ fn explicit_diff_load_returns_before_replacing_changeset() {
     );
     let options = DiffOptions {
         source: DiffSource::Patch(PatchSource::Text {
-            label: "test patch".to_owned(),
+            label: "test patch".into(),
             patch,
         }),
-        include_untracked: false,
+        local_untracked: mark_diff::UntrackedMode::Exclude,
         ..DiffOptions::default()
     };
 
@@ -700,7 +723,7 @@ fn explicit_diff_load_returns_before_replacing_changeset() {
     assert!(app.jobs.pending_diff_load.is_none());
     assert_eq!(app.document.changeset.files[0].display_path(), "other.rs");
     assert_eq!(app.document.options.source, DiffSource::Patch(PatchSource::Text {
-        label: "test patch".to_owned(),
+        label: "test patch".into(),
         patch: Arc::<[u8]>::from(
             b"diff --git a/other.rs b/other.rs\n--- a/other.rs\n+++ b/other.rs\n@@ -1 +1 @@\n-old\n+new\n"
                 .as_slice(),
@@ -714,7 +737,7 @@ fn file_filter_edit_with_active_grep_preserves_current_grep_match() {
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     app.set_viewport_rows(5);
     app.filters.grep_filter = "line".to_owned();
-    app.apply_filters(true);
+    app.apply_filters(PostFilterNavigation::JumpToGrep);
     app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE))
         .expect("n should move to next grep match");
     let scroll_before_file_filter = app.viewport.scroll;
@@ -753,13 +776,13 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .pending_diff_load
         .as_ref()
         .expect("leader n should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Show("HEAD".to_owned()));
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
+    assert_eq!(load.options.worktree_scope(), None);
     assert!(app.input.key_prefix_pending.is_none());
 
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
@@ -771,8 +794,13 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .pending_diff_load
         .as_ref()
         .expect("leader p should queue diff load");
-    assert_eq!(load.options.source, DiffSource::Worktree);
-    assert_eq!(load.options.scope, DiffScope::All);
+    assert_eq!(
+        load.options.source,
+        DiffSource::Worktree {
+            scope: DiffScope::All
+        }
+    );
+    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
     assert!(app.input.key_prefix_pending.is_none());
 }
 
@@ -780,8 +808,8 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
 fn range_diff_has_no_diff_type_choices() {
     let options = DiffOptions {
         source: DiffSource::Range {
-            left: "main".to_owned(),
-            right: "feature".to_owned(),
+            left: "main".into(),
+            right: "feature".into(),
         },
         ..DiffOptions::default()
     };
@@ -805,13 +833,15 @@ fn cached_current_diff_rebuilds_model_while_filter_apply_is_pending() {
         DiffLayoutMode::Unified,
     );
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["unstaged.rs"]));
 
     app.filters.file_filter = "filtered".to_owned();
-    app.apply_filters(false);
+    app.apply_filters(PostFilterNavigation::Preserve);
     assert_eq!(visible_paths(&app), vec!["filtered.rs"]);
 
     app.filters.file_filter.clear();
@@ -835,18 +865,19 @@ fn cached_diff_choice_is_not_reused_without_live_invalidator() {
         DiffLayoutMode::Unified,
     );
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["stale.rs"]));
-    app.jobs.live_updates_allowed = false;
-    app.jobs.live_updates_enabled = false;
+    app.jobs.live_updates = LiveUpdatesState::DisabledByCli;
 
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
         .expect("tab should cycle to show");
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
 
@@ -861,10 +892,7 @@ fn cached_diff_choice_is_not_reused_without_live_invalidator() {
         .as_ref()
         .expect("tab should queue a fresh diff load");
     assert_eq!(load.options, unstaged);
-    assert_eq!(
-        app.document.options.source,
-        DiffSource::Show("HEAD".to_owned())
-    );
+    assert_eq!(app.document.options.source, DiffSource::Show("HEAD".into()));
     assert_eq!(visible_paths(&app), vec!["all.rs"]);
     assert!(app.jobs.diff_cache.is_empty());
 }
@@ -877,7 +905,9 @@ fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
         DiffLayoutMode::Unified,
     );
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["stale.rs"]));
@@ -887,7 +917,7 @@ fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
         .expect("tab should cycle to show");
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
 
@@ -902,13 +932,13 @@ fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
         .as_ref()
         .expect("tab should queue a fresh diff load");
     assert_eq!(load.options, unstaged);
-    assert_eq!(
-        app.document.options.source,
-        DiffSource::Show("HEAD".to_owned())
-    );
+    assert_eq!(app.document.options.source, DiffSource::Show("HEAD".into()));
     assert_eq!(visible_paths(&app), vec!["all.rs"]);
     assert!(app.jobs.diff_cache.is_empty());
-    assert!(app.jobs.live_reload_pending);
+    assert_eq!(
+        app.jobs.live_updates.status(),
+        Some(LiveReloadStatus::Pending)
+    );
 }
 
 #[test]
@@ -918,8 +948,7 @@ fn diff_prefetch_skips_when_live_reload_is_disabled() {
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
-    app.jobs.live_updates_allowed = false;
-    app.jobs.live_updates_enabled = false;
+    app.jobs.live_updates = LiveUpdatesState::DisabledByCli;
 
     app.start_diff_prefetches();
 
@@ -932,8 +961,8 @@ fn diff_prefetch_skips_when_live_reload_is_disabled() {
 fn diff_prefetch_skips_for_sources_without_live_reload() {
     let options = DiffOptions {
         source: DiffSource::Range {
-            left: "main".to_owned(),
-            right: "HEAD".to_owned(),
+            left: "main".into(),
+            right: "HEAD".into(),
         },
         ..DiffOptions::default()
     };
@@ -977,7 +1006,9 @@ fn reload_invalidates_cached_diff_choices() {
         DiffLayoutMode::Unified,
     );
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.cache_loaded_diff(unstaged, changeset_with_files(&["unstaged.rs"]));
@@ -998,7 +1029,9 @@ fn cache_invalidation_preserves_pending_diff_load() {
         DiffLayoutMode::Unified,
     );
     let pending_options = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     app.jobs.pending_diff_load = Some(pending_diff_load(pending_options.clone()));
@@ -1052,15 +1085,18 @@ fn live_diff_filter_ignores_non_state_git_paths() {
 fn live_diff_watch_paths_upgrade_to_recursive() {
     let mut spec = LiveDiffWatchSpec::new(Path::new("repo"));
 
-    spec.add_watch_path(PathBuf::from("repo/.git"), false);
-    spec.add_watch_path(PathBuf::from("repo/.git"), true);
+    spec.add_watch_path(
+        PathBuf::from("repo/.git"),
+        notify::RecursiveMode::NonRecursive,
+    );
+    spec.add_watch_path(PathBuf::from("repo/.git"), notify::RecursiveMode::Recursive);
 
     let watch_path = spec
         .watch_paths
         .iter()
         .find(|watch_path| watch_path.path == Path::new("repo/.git"))
         .unwrap();
-    assert!(watch_path.recursive);
+    assert_eq!(watch_path.mode, notify::RecursiveMode::Recursive);
 }
 
 #[test]
@@ -1079,9 +1115,12 @@ fn focused_hunk_highlights_diff_indicators() {
     let header = render_row_with_focus(
         &mut app,
         1,
-        UiRow::HunkHeader { file: 0, hunk: 0 },
+        UiRow::HunkHeader {
+            file: FILE_0,
+            hunk: HUNK_0,
+        },
         24,
-        Some((0, 0)),
+        Some((FILE_0, HUNK_0)),
     );
     assert_eq!(header.spans[0].style.fg, Some(theme.hunk));
     assert!(header.spans[0].style.add_modifier.contains(Modifier::BOLD));
@@ -1091,8 +1130,8 @@ fn focused_hunk_highlights_diff_indicators() {
         .model
         .row(2)
         .expect("diff line should be visible");
-    let focused = render_row_with_focus(&mut app, 2, row, 24, Some((0, 0)));
-    let unfocused = render_row_with_focus(&mut app, 2, row, 24, Some((0, 1)));
+    let focused = render_row_with_focus(&mut app, 2, row, 24, Some((FILE_0, HUNK_0)));
+    let unfocused = render_row_with_focus(&mut app, 2, row, 24, Some((FILE_0, HUNK_1)));
 
     assert_eq!(focused.spans[0].style.fg, Some(theme.hunk));
     assert!(focused.spans[0].style.add_modifier.contains(Modifier::BOLD));
@@ -1129,12 +1168,7 @@ fn oversized_hunks_fall_back_to_plain_diff_text() {
     let text = "x".repeat(limits.max_line_bytes);
     let line_count = (limits.max_source_bytes / limits.max_line_bytes) + 2;
     let lines = (0..line_count)
-        .map(|index| DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(index + 1),
-            new_line: Some(index + 1),
-            text: text.clone(),
-        })
+        .map(|index| DiffLine::context(index + 1, index + 1, text.clone()))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -1147,13 +1181,14 @@ fn oversized_hunks_fall_back_to_plain_diff_text() {
 fn full_file_sources_cover_diff_modes_and_statuses() {
     let repo = std::env::temp_dir();
     let file = mark_diff::DiffFile {
-        old_path: Some("old.rs".to_owned()),
-        new_path: Some("new.rs".to_owned()),
-        status: mark_diff::FileStatus::Renamed,
-        hunks: Vec::new(),
+        change: mark_diff::FileChange::from_status(
+            mark_diff::FileStatus::Renamed,
+            Some("old.rs".to_owned()),
+            Some("new.rs".to_owned()),
+        ),
         additions: 0,
         deletions: 0,
-        is_binary: false,
+        body: mark_diff::DiffFileBody::Text { hunks: Vec::new() },
     };
 
     assert_eq!(
@@ -1161,8 +1196,8 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitRevision {
-            rev: "HEAD".to_owned(),
-            path: "old.rs".to_owned(),
+            rev: "HEAD".into(),
+            path: "old.rs".into(),
         }
     );
     assert_eq!(
@@ -1170,12 +1205,14 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::Worktree {
-            path: "new.rs".to_owned(),
+            path: "new.rs".into(),
         }
     );
 
     let staged = DiffOptions {
-        scope: DiffScope::Staged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Staged,
+        },
         ..DiffOptions::default()
     };
     assert_eq!(
@@ -1183,12 +1220,14 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitIndex {
-            path: "new.rs".to_owned(),
+            path: "new.rs".into(),
         }
     );
 
     let unstaged = DiffOptions {
-        scope: DiffScope::Unstaged,
+        source: DiffSource::Worktree {
+            scope: DiffScope::Unstaged,
+        },
         ..DiffOptions::default()
     };
     assert_eq!(
@@ -1196,12 +1235,12 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitIndex {
-            path: "old.rs".to_owned(),
+            path: "old.rs".into(),
         }
     );
 
     let base = DiffOptions {
-        source: DiffSource::Base("main".to_owned()),
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
     assert_eq!(
@@ -1209,9 +1248,9 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitMergeBase {
-            base: "main".to_owned(),
-            head: "HEAD".to_owned(),
-            path: "old.rs".to_owned(),
+            base: "main".into(),
+            head: "HEAD".into(),
+            path: "old.rs".into(),
         }
     );
     assert_eq!(
@@ -1219,14 +1258,14 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::Worktree {
-            path: "new.rs".to_owned(),
+            path: "new.rs".into(),
         }
     );
 
     let range = DiffOptions {
         source: DiffSource::Range {
-            left: "left".to_owned(),
-            right: "right".to_owned(),
+            left: "left".into(),
+            right: "right".into(),
         },
         ..DiffOptions::default()
     };
@@ -1235,13 +1274,13 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
             .unwrap()
             .kind,
         FullFileSourceKind::GitRevision {
-            rev: "right".to_owned(),
-            path: "new.rs".to_owned(),
+            rev: "right".into(),
+            path: "new.rs".into(),
         }
     );
 
     let show = DiffOptions {
-        source: DiffSource::Show("HEAD".to_owned()),
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     assert!(full_file_source(&repo, &show, &file, DiffSide::Old).is_none());
@@ -1253,11 +1292,12 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
     };
     assert!(full_file_source(&repo, &patch, &file, DiffSide::New).is_none());
 
-    let deleted = mark_diff::DiffFile {
-        new_path: None,
-        status: mark_diff::FileStatus::Deleted,
-        ..file.clone()
-    };
+    let mut deleted = file.clone();
+    deleted.change = mark_diff::FileChange::from_status(
+        mark_diff::FileStatus::Deleted,
+        Some("old.rs".to_owned()),
+        None,
+    );
     assert!(full_file_source(&repo, &DiffOptions::default(), &deleted, DiffSide::New).is_none());
 }
 
@@ -1276,10 +1316,10 @@ fn full_file_source_loads_worktree_index_and_revision_contents() {
     fs::write(repo.join("file.rs"), "fn new() {}\n").expect("new file should be written");
     assert_eq!(
         load_full_file_source(&FullFileSource {
-            repo: repo.clone(),
+            repo: repo.clone().into(),
             kind: FullFileSourceKind::GitRevision {
-                rev: "HEAD".to_owned(),
-                path: "file.rs".to_owned(),
+                rev: "HEAD".into(),
+                path: "file.rs".into(),
             },
         })
         .unwrap(),
@@ -1287,9 +1327,9 @@ fn full_file_source_loads_worktree_index_and_revision_contents() {
     );
     assert_eq!(
         load_full_file_source(&FullFileSource {
-            repo: repo.clone(),
+            repo: repo.clone().into(),
             kind: FullFileSourceKind::Worktree {
-                path: "file.rs".to_owned(),
+                path: "file.rs".into(),
             },
         })
         .unwrap(),
@@ -1299,9 +1339,9 @@ fn full_file_source_loads_worktree_index_and_revision_contents() {
     git(&repo, &["add", "file.rs"]);
     assert_eq!(
         load_full_file_source(&FullFileSource {
-            repo: repo.clone(),
+            repo: repo.clone().into(),
             kind: FullFileSourceKind::GitIndex {
-                path: "file.rs".to_owned(),
+                path: "file.rs".into(),
             },
         })
         .unwrap(),

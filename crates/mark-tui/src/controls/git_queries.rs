@@ -28,7 +28,7 @@ pub(crate) fn git_log_commits(repo: &Path) -> Vec<GitCommit> {
             continue;
         }
         commits.push(GitCommit {
-            sha: sha.to_owned(),
+            sha: sha.into(),
             subject: subject.trim().to_owned(),
         });
     }

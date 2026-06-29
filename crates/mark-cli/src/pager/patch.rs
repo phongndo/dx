@@ -19,11 +19,11 @@ fn parseable_patch_has_renderable_change(patch: &str) -> bool {
 }
 
 fn diff_file_has_renderable_change(file: &mark_diff::DiffFile, input_has_git_header: bool) -> bool {
-    !file.hunks.is_empty()
-        || file.is_binary
+    file.has_textual_changes()
+        || file.is_binary()
         || (input_has_git_header
             && matches!(
-                file.status,
+                file.status(),
                 mark_diff::FileStatus::Added
                     | mark_diff::FileStatus::Deleted
                     | mark_diff::FileStatus::Renamed

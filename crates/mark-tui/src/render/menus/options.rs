@@ -81,7 +81,7 @@ pub(crate) fn options_menu_area(
     area: Rect,
     items: &[OptionsMenuItem],
 ) -> Option<Rect> {
-    if !app.overlays.options_menu_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.options_menu_is_open() || !floating_menu_fits_terminal(area) {
         return None;
     }
 
@@ -204,7 +204,7 @@ pub(crate) fn draw_color_scheme_picker(frame: &mut Frame<'_>, app: &DiffApp, are
 }
 
 pub(crate) fn color_scheme_picker_area(app: &DiffApp, area: Rect) -> Option<Rect> {
-    if !app.overlays.color_scheme_picker_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.color_scheme_picker_is_open() || !floating_menu_fits_terminal(area) {
         return None;
     }
 

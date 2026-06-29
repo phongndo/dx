@@ -655,7 +655,7 @@ fn measure_editor_reload(args: EditorReloadArgs) -> BenchResult<()> {
     let manifest = load_manifest(&scenario_dir)?;
     let repo = scenario_dir.join(&manifest.paths.repo);
     let options = mark_diff::DiffOptions {
-        repo: Some(repo),
+        repo: Some(repo.into()),
         ..mark_diff::DiffOptions::default()
     };
     let path = match args.path {
@@ -718,8 +718,8 @@ fn measure_editor_reload(args: EditorReloadArgs) -> BenchResult<()> {
 fn measure_repo(args: MeasureRepoArgs) -> BenchResult<()> {
     let repo = args.repo.clone();
     let diff_options = mark_diff::DiffOptions {
-        repo: Some(repo.clone()),
-        include_untracked: !args.no_untracked,
+        repo: Some(repo.clone().into()),
+        local_untracked: mark_diff::UntrackedMode::from_include(!args.no_untracked),
         ..mark_diff::DiffOptions::default()
     };
     measure_one_diff_source(
@@ -737,9 +737,8 @@ fn measure_patch(args: MeasurePatchArgs) -> BenchResult<()> {
     let diff_options = mark_diff::DiffOptions {
         repo: None,
         source: mark_diff::DiffSource::Patch(mark_diff::PatchSource::File(patch.clone())),
-        scope: mark_diff::DiffScope::All,
-        include_untracked: false,
-        stat: false,
+        local_untracked: mark_diff::UntrackedMode::Exclude,
+        output: mark_diff::DiffOutput::Patch,
     };
     measure_one_diff_source(
         format!("patch:{}", patch.display()),
@@ -822,9 +821,8 @@ fn measure_fixture_run(
     let diff_options = mark_diff::DiffOptions {
         repo: None,
         source: mark_diff::DiffSource::Patch(mark_diff::PatchSource::File(patch)),
-        scope: mark_diff::DiffScope::All,
-        include_untracked: false,
-        stat: false,
+        local_untracked: mark_diff::UntrackedMode::Exclude,
+        output: mark_diff::DiffOutput::Patch,
     };
     measure_diff_options_run(
         scenario.name().to_owned(),
@@ -1965,7 +1963,7 @@ mod tests {
         );
         let options = mark_diff::DiffOptions {
             source: mark_diff::DiffSource::Patch(mark_diff::PatchSource::Stdin(patch.clone())),
-            include_untracked: false,
+            local_untracked: mark_diff::UntrackedMode::Exclude,
             ..mark_diff::DiffOptions::default()
         };
 

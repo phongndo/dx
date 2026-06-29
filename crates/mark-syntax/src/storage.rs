@@ -12,13 +12,13 @@ use std::{
 use crate::{
     ARTIFACT_SOURCE, ASM_HIGHLIGHTS_QUERY, BASENAME_LANGUAGES, CORE_LANGUAGES,
     CUSTOM_PARSER_SOURCE, CUSTOM_PARSER_VERSION, DiffContextExpansion, DiffSettings,
-    HIGHLIGHT_NAMES, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION, MAX_NOTIFICATION_TIMEOUT_MS,
-    NotificationSettings, StoredDiffContextExpansion, StoredDiffContextExpansionMode,
-    StoredDiffSettings, StoredLanguageMapping, StoredNotificationSettings, StoredParserArtifact,
-    StoredSyntaxConfig, StoredSyntaxLimits, StoredSyntaxSettings, StoredSyntaxThemeConfig,
-    StoredSyntaxThemeTable, SyntaxLimits, SyntaxMode, SyntaxSettings, SyntaxThemeConfig,
-    SyntaxThemeSource, TRUSTED_PARSER_MANIFEST, TRUSTED_PARSER_MANIFEST_SHA256, cache_dir,
-    config_path, load_settings, parsers_dir, queries_dir,
+    HIGHLIGHT_NAMES, LANGUAGE_ALIASES, LANGUAGE_PACK_VERSION, NotificationSettings,
+    StoredDiffContextExpansion, StoredDiffContextExpansionMode, StoredDiffSettings,
+    StoredLanguageMapping, StoredNotificationSettings, StoredParserArtifact, StoredSyntaxConfig,
+    StoredSyntaxLimits, StoredSyntaxSettings, StoredSyntaxThemeConfig, StoredSyntaxThemeTable,
+    SyntaxLimits, SyntaxMode, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
+    TRUSTED_PARSER_MANIFEST, TRUSTED_PARSER_MANIFEST_SHA256, cache_dir, config_path, load_settings,
+    parsers_dir, queries_dir,
 };
 use mark_core::{MarkError, MarkResult};
 use sha2::{Digest, Sha256};
@@ -102,15 +102,12 @@ pub(crate) fn notifications_from_stored(
     stored: StoredNotificationSettings,
 ) -> NotificationSettings {
     let defaults = NotificationSettings::default();
-    NotificationSettings {
-        mode: stored.mode.unwrap_or(defaults.mode),
-        corner: stored.corner.unwrap_or(defaults.corner),
-        timeout_ms: stored
-            .timeout_ms
-            .unwrap_or(defaults.timeout_ms)
-            .min(MAX_NOTIFICATION_TIMEOUT_MS),
-        max_visible: stored.max_visible.unwrap_or(defaults.max_visible).max(1),
-    }
+    NotificationSettings::new(
+        stored.mode.unwrap_or(defaults.mode()),
+        stored.corner.unwrap_or(defaults.corner()),
+        stored.timeout_ms.unwrap_or(defaults.timeout_ms()),
+        stored.max_visible.unwrap_or(defaults.max_visible()),
+    )
 }
 
 pub(crate) fn diff_from_stored(stored: StoredDiffSettings) -> DiffSettings {
@@ -153,17 +150,11 @@ pub(crate) fn theme_config_from_stored(stored: StoredSyntaxThemeConfig) -> Synta
 pub(crate) fn theme_config_from_name(name: String) -> SyntaxThemeConfig {
     let name = name.trim().to_owned();
     if let Some(source) = theme_source_from_name(&name) {
-        return SyntaxThemeConfig {
-            source,
-            name: None,
-            path: None,
-        };
+        return theme_config_from_source(source, None, None);
     }
 
-    SyntaxThemeConfig {
-        source: SyntaxThemeSource::Builtin,
+    SyntaxThemeConfig::Builtin {
         name: (!name.is_empty()).then_some(name),
-        path: None,
     }
 }
 
@@ -183,10 +174,20 @@ pub(crate) fn theme_config_from_table(table: StoredSyntaxThemeTable) -> SyntaxTh
         name
     };
 
-    SyntaxThemeConfig {
-        source,
-        name,
-        path: table.path,
+    theme_config_from_source(source, name, table.path)
+}
+
+fn theme_config_from_source(
+    source: SyntaxThemeSource,
+    name: Option<String>,
+    path: Option<PathBuf>,
+) -> SyntaxThemeConfig {
+    match source {
+        SyntaxThemeSource::Builtin => SyntaxThemeConfig::Builtin { name },
+        SyntaxThemeSource::Ansi => SyntaxThemeConfig::Ansi,
+        SyntaxThemeSource::Base16 => path
+            .map(|path| SyntaxThemeConfig::Base16 { path })
+            .unwrap_or(SyntaxThemeConfig::Base16MissingPath),
     }
 }
 

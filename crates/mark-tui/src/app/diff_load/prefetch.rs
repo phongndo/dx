@@ -1,7 +1,7 @@
 use mark_diff::DiffOptions;
 use tokio::sync::oneshot;
 
-use super::super::{DiffApp, PendingDiffPrefetch, cacheable_diff_options};
+use super::super::{AsyncJob, DiffApp, PendingDiffPrefetch, cacheable_diff_options};
 use crate::runtime;
 
 impl DiffApp {
@@ -80,7 +80,10 @@ impl DiffApp {
             runtime::spawn_detached_blocking(move || {
                 let _ = tx.send(mark_diff::load_review_ref(&load_options));
             });
-            self.jobs.pending_diff_prefetch = Some(PendingDiffPrefetch { options, rx });
+            self.jobs.pending_diff_prefetch = Some(PendingDiffPrefetch {
+                options,
+                job: AsyncJob::new(rx),
+            });
             return;
         }
     }
@@ -90,7 +93,7 @@ impl DiffApp {
             .jobs
             .pending_diff_prefetch
             .as_mut()
-            .and_then(|pending| match pending.rx.try_recv() {
+            .and_then(|pending| match pending.job.try_recv() {
                 Ok(result) => Some(Some(result)),
                 Err(oneshot::error::TryRecvError::Empty) => None,
                 Err(oneshot::error::TryRecvError::Closed) => Some(None),

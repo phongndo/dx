@@ -6,7 +6,7 @@ use super::super::{
 };
 use crate::{
     controls::DiffLayoutMode,
-    model::{ContextSourceEntry, ContextSourceKey, UiRow},
+    model::{ContextSourceEntry, ContextSourceKey, FileIndex, UiRow},
     syntax::DiffSide,
 };
 
@@ -22,7 +22,10 @@ impl DiffApp {
         new_line: usize,
     ) -> Option<&str> {
         for side in [DiffSide::New, DiffSide::Old] {
-            let key = ContextSourceKey { file, side };
+            let key = ContextSourceKey {
+                file: FileIndex::new(file),
+                side,
+            };
             match self.document.context_cache.get(&key) {
                 Some(ContextSourceEntry::Lines(lines)) => {
                     let line_number = match side {
@@ -64,11 +67,11 @@ impl DiffApp {
                 old_line,
                 new_line,
             } => self
-                .cached_context_line_text(file, old_line, new_line)
+                .cached_context_line_text(file.get(), old_line, new_line)
                 .map(|text| self.wrapped_visual_height_for_text(text))
                 .unwrap_or(1),
             UiRow::UnifiedLine { file, hunk, line } | UiRow::MetaLine { file, hunk, line } => {
-                let text = &self.document.changeset.files[file].hunks[hunk].lines[line].text;
+                let text = &self.document.changeset.files[file].hunks()[hunk].lines[line].text();
                 wrapped_line_count(text, unified_content_width(self.viewport.viewport_width))
             }
             UiRow::SplitLine {
@@ -77,24 +80,24 @@ impl DiffApp {
                 left,
                 right,
             } => {
-                let lines = &self.document.changeset.files[file].hunks[hunk].lines;
+                let lines = &self.document.changeset.files[file].hunks()[hunk].lines;
                 let left_width = self.viewport.viewport_width / 2;
                 let right_width = self.viewport.viewport_width.saturating_sub(left_width);
                 let left_content_width = split_cell_content_width(left_width);
                 let right_content_width = split_cell_content_width(right_width);
                 let left_rows = left
-                    .and_then(|index| lines.get(index))
-                    .map(|line| wrapped_line_count(&line.text, left_content_width))
+                    .and_then(|index| lines.get(index.get()))
+                    .map(|line| wrapped_line_count(line.text(), left_content_width))
                     .unwrap_or(1);
                 let right_rows = right
-                    .and_then(|index| lines.get(index))
-                    .map(|line| wrapped_line_count(&line.text, right_content_width))
+                    .and_then(|index| lines.get(index.get()))
+                    .map(|line| wrapped_line_count(line.text(), right_content_width))
                     .unwrap_or(1);
                 left_rows.max(right_rows).max(1)
             }
             UiRow::FileSeparator
             | UiRow::FileHeader(_)
-            | UiRow::BinaryFile(_)
+            | UiRow::FileBodyNotice(_)
             | UiRow::Collapsed { .. }
             | UiRow::ContextHide { .. }
             | UiRow::HunkHeader { .. } => 1,

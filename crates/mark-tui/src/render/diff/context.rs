@@ -113,12 +113,11 @@ pub(crate) fn render_context_line(
         };
         app.syntax_file_line(file, side, line_number)
     });
-    let diff_line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(old_line),
-        new_line: Some(new_line),
-        text: app.context_line_text(file, old_line, new_line),
-    };
+    let diff_line = DiffLine::context(
+        old_line,
+        new_line,
+        app.context_line_text(file, old_line, new_line),
+    );
 
     match app.viewport.layout {
         DiffLayoutMode::Unified => render_unified_line_at_scroll(
@@ -158,12 +157,11 @@ pub(crate) fn render_context_line_wrapped(
         };
         app.syntax_file_line(file, side, line_number)
     });
-    let diff_line = DiffLine {
-        kind: DiffLineKind::Context,
-        old_line: Some(old_line),
-        new_line: Some(new_line),
-        text: app.context_line_text(file, old_line, new_line),
-    };
+    let diff_line = DiffLine::context(
+        old_line,
+        new_line,
+        app.context_line_text(file, old_line, new_line),
+    );
 
     match app.viewport.layout {
         DiffLayoutMode::Unified => render_unified_line_wrapped_with_focus(
@@ -246,9 +244,9 @@ pub(crate) fn render_split_context_line_wrapped(
     let right_width = width.saturating_sub(left_width);
     let left_content_width = split_cell_content_width(left_width);
     let right_content_width = split_cell_content_width(right_width);
-    let left_scrolls = wrapped_line_start_columns(&line.text, left_content_width);
-    let right_scrolls = wrapped_line_start_columns(&line.text, right_content_width);
-    let text_width = line.text.width();
+    let left_scrolls = wrapped_line_start_columns(line.text(), left_content_width);
+    let right_scrolls = wrapped_line_start_columns(line.text(), right_content_width);
+    let text_width = line.text().width();
     let rows = left_scrolls.len().max(right_scrolls.len());
     let mut lines = Vec::with_capacity(rows);
     for wrap_index in 0..rows {

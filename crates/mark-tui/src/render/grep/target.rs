@@ -20,13 +20,13 @@ pub(crate) fn grep_highlight_targets_for_row(
 ) -> Vec<GrepHighlightTarget> {
     match row {
         UiRow::FileHeader(_) => Vec::new(),
-        UiRow::BinaryFile(file) => app
+        UiRow::FileBodyNotice(file) => app
             .document
             .changeset
             .files
-            .get(file)
+            .get(file.get())
             .and_then(|file| {
-                let message = if file.is_binary {
+                let message = if file.is_binary() {
                     "binary file"
                 } else {
                     "no textual changes"
@@ -45,8 +45,8 @@ pub(crate) fn grep_highlight_targets_for_row(
             .document
             .changeset
             .files
-            .get(file)
-            .and_then(|file| file.hunks.get(hunk))
+            .get(file.get())
+            .and_then(|file| file.hunks().get(hunk.get()))
             .and_then(|hunk| {
                 grep_highlight_target_for_columns(
                     hunk.header.clone(),
@@ -71,9 +71,9 @@ pub(crate) fn grep_highlight_targets_for_row(
             .document
             .changeset
             .files
-            .get(file)
-            .and_then(|file| file.hunks.get(hunk))
-            .and_then(|hunk| hunk.lines.get(line_index))
+            .get(file.get())
+            .and_then(|file| file.hunks().get(hunk.get()))
+            .and_then(|hunk| hunk.lines.get(line_index.get()))
             .and_then(|diff_line| {
                 let content_start = unified_content_start_column(width);
                 grep_highlight_target_for_columns(
@@ -99,8 +99,8 @@ pub(crate) fn grep_highlight_targets_for_row(
                 .document
                 .changeset
                 .files
-                .get(file)
-                .and_then(|file| file.hunks.get(hunk))
+                .get(file.get())
+                .and_then(|file| file.hunks().get(hunk.get()))
             else {
                 return Vec::new();
             };
@@ -109,7 +109,7 @@ pub(crate) fn grep_highlight_targets_for_row(
             let right_width = width.saturating_sub(left_width);
             let mut targets = Vec::with_capacity(2);
             if let Some(target) =
-                left.and_then(|index| hunk.lines.get(index))
+                left.and_then(|index| hunk.lines.get(index.get()))
                     .and_then(|diff_line| {
                         split_diff_line_grep_highlight_target(
                             diff_line,
@@ -122,18 +122,17 @@ pub(crate) fn grep_highlight_targets_for_row(
             {
                 targets.push(target);
             }
-            if let Some(target) =
-                right
-                    .and_then(|index| hunk.lines.get(index))
-                    .and_then(|diff_line| {
-                        split_diff_line_grep_highlight_target(
-                            diff_line,
-                            &line.spans,
-                            left_width,
-                            right_width,
-                            app.viewport.horizontal_scroll,
-                        )
-                    })
+            if let Some(target) = right
+                .and_then(|index| hunk.lines.get(index.get()))
+                .and_then(|diff_line| {
+                    split_diff_line_grep_highlight_target(
+                        diff_line,
+                        &line.spans,
+                        left_width,
+                        right_width,
+                        app.viewport.horizontal_scroll,
+                    )
+                })
             {
                 targets.push(target);
             }
@@ -177,9 +176,9 @@ pub(crate) fn split_content_start_column(width: usize) -> usize {
 }
 
 pub(crate) fn diff_line_grep_highlight_text(line: &DiffLine) -> String {
-    let mut text = String::with_capacity(line.text.len().saturating_add(1));
-    text.push(diff_line_grep_prefix(line.kind));
-    text.push_str(&line.text);
+    let mut text = String::with_capacity(line.text().len().saturating_add(1));
+    text.push(diff_line_grep_prefix(line.kind()));
+    text.push_str(line.text());
     text
 }
 
@@ -187,7 +186,7 @@ pub(crate) fn diff_line_grep_rendered_text_byte_start(
     line: &DiffLine,
     horizontal_scroll: usize,
 ) -> usize {
-    1 + scrolled_text_byte_start(&line.text, horizontal_scroll)
+    1 + scrolled_text_byte_start(line.text(), horizontal_scroll)
 }
 
 pub(crate) fn scrolled_text_byte_start(text: &str, horizontal_scroll: usize) -> usize {

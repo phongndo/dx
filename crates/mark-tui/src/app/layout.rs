@@ -139,7 +139,7 @@ impl DiffApp {
         let scroll = self
             .document
             .model
-            .file_start_row(self.sidebar.selected_file)
+            .file_start_row(self.sidebar.selected_file.get())
             .map(|row| self.scroll_for_model_row(row))
             .unwrap_or_default();
         self.set_scroll(scroll);

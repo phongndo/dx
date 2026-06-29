@@ -20,8 +20,8 @@ mod theme;
 mod toast;
 
 pub use run::{
-    benchmark_diff_view, run, run_diff, run_diff_with_live_updates,
-    run_diff_with_live_updates_and_syntax,
+    DiffRunOptions, benchmark_diff_view, run, run_diff, run_diff_with_live_updates,
+    run_diff_with_live_updates_and_syntax, run_diff_with_options,
 };
 pub use static_pager::{
     StaticPagerLayout, StaticPagerOptions, render_static_changeset,

@@ -8,12 +8,13 @@ fn range_diff_reports_unknown_revision() {
     init_repo(&repo);
 
     let error = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD".to_owned(),
-            right: "missing-branch".to_owned(),
+            left: "HEAD".into(),
+            right: "missing-branch".into(),
         },
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect_err("missing range side should fail before git diff");
 
@@ -36,13 +37,13 @@ fn range_diff_accepts_pathspec_right_operand() {
     fs::write(repo.join("src/other.rs"), "two\n").expect("other file should change");
 
     let options = DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD".to_owned(),
-            right: "src/lib.rs".to_owned(),
+            left: "HEAD".into(),
+            right: "src/lib.rs".into(),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = render(options.clone()).expect("pathspec range should render");
@@ -51,7 +52,7 @@ fn range_diff_accepts_pathspec_right_operand() {
     assert!(!patch.contains("src/other.rs"));
 
     let stat = render(DiffOptions {
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..options
     })
     .expect("pathspec range stat should render");
@@ -73,26 +74,25 @@ fn range_diff_accepts_treeish_revisions() {
     git(["commit", "-q", "-m", "change base"], &repo);
 
     let patch = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: base_tree,
-            right: "HEAD".to_owned(),
+            left: base_tree.into(),
+            right: "HEAD".into(),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect("tree object range should render");
     assert!(patch.contains("+changed"));
 
     let stat = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD~1^{tree}".to_owned(),
-            right: "HEAD".to_owned(),
+            left: "HEAD~1^{tree}".into(),
+            right: "HEAD".into(),
         },
-        include_untracked: false,
-        stat: true,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Stat,
     })
     .expect("tree-ish range stat should render");
     assert!(stat.contains("base.txt"));
@@ -115,14 +115,13 @@ fn range_diff_accepts_multi_object_left_revision() {
     git(["merge", "-q", "--no-ff", "side", "-m", "merge"], &repo);
 
     let stat = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD^@".to_owned(),
-            right: "HEAD".to_owned(),
+            left: "HEAD^@".into(),
+            right: "HEAD".into(),
         },
-        include_untracked: false,
-        stat: true,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Stat,
     })
     .expect("multi-object range should render");
 
@@ -147,13 +146,13 @@ fn range_diff_accepts_rev_path_tree_revisions() {
     git(["commit", "-q", "-m", "change source"], &repo);
 
     let patch = render(DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD~1:src".to_owned(),
-            right: "HEAD:src".to_owned(),
+            left: "HEAD~1:src".into(),
+            right: "HEAD:src".into(),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect("rev:path tree range should render");
 
@@ -177,13 +176,13 @@ fn range_diff_accepts_rev_path_blob_revisions() {
     git(["commit", "-q", "-m", "change file"], &repo);
 
     let options = DiffOptions {
-        repo: Some(repo.clone()),
+        repo: Some(repo.clone().into()),
         source: DiffSource::Range {
-            left: "HEAD~1:file.txt".to_owned(),
-            right: "HEAD:file.txt".to_owned(),
+            left: "HEAD~1:file.txt".into(),
+            right: "HEAD:file.txt".into(),
         },
-        include_untracked: false,
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     };
 
     let patch = render(options.clone()).expect("rev:path blob range should render");
@@ -191,7 +190,7 @@ fn range_diff_accepts_rev_path_blob_revisions() {
     assert!(patch.contains("+two"));
 
     let stat = render(DiffOptions {
-        stat: true,
+        output: crate::DiffOutput::Stat,
         ..options
     })
     .expect("rev:path blob range stat should render");
@@ -209,12 +208,13 @@ fn revision_operands_cannot_be_reinterpreted_as_git_diff_options() {
     let output_path = test_dir.join("poc.diff");
 
     let result = render(DiffOptions {
-        repo: Some(repo),
+        repo: Some(repo.into()),
         source: DiffSource::Range {
-            left: format!("--output={}", output_path.display()),
-            right: "HEAD".to_owned(),
+            left: format!("--output={}", output_path.display()).into(),
+            right: "HEAD".into(),
         },
-        ..DiffOptions::default()
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     });
 
     assert!(result.is_err());

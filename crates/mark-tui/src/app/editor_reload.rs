@@ -1,7 +1,7 @@
 use super::{
-    DiffApp, EditorReloadBehavior, EditorReloadRequest, EditorReloadWorker, EditorScopedReload,
-    FocusedEditorLaunch, POST_EDITOR_QUIT_KEY_IGNORE, editor_reload_request_for_file,
-    find_rendered_diff_row_outward, repo_relative_path,
+    AsyncJob, DiffApp, EditorReloadBehavior, EditorReloadRequest, EditorReloadWorker,
+    EditorScopedReload, FocusedEditorLaunch, POST_EDITOR_QUIT_KEY_IGNORE,
+    editor_reload_request_for_file, find_rendered_diff_row_outward, repo_relative_path,
 };
 use crate::editor::{EditorTarget, configured_editor, open_editor, repo_file_path};
 use crate::live_diff::LiveDiff;
@@ -55,12 +55,12 @@ impl DiffApp {
         }
 
         let (file, hunk) = self.focused_hunk_for_viewport(self.viewport.viewport_rows)?;
-        let file_diff = self.document.changeset.files.get(file)?;
-        let hunk_diff = file_diff.hunks.get(hunk)?;
-        let path = file_diff.new_path.as_deref()?;
+        let file_diff = self.document.changeset.files.get(file.get())?;
+        let hunk_diff = file_diff.hunks().get(hunk.get())?;
+        let path = file_diff.new_path()?;
         let line = self
-            .focused_hunk_editor_line(file, hunk)
-            .unwrap_or_else(|| hunk_diff.new_start.max(1));
+            .focused_hunk_editor_line(file.get(), hunk.get())
+            .unwrap_or_else(|| hunk_diff.new_start().max(1));
 
         Some(EditorTarget {
             path: repo_file_path(&self.document.changeset.repo, path),
@@ -77,7 +77,7 @@ impl DiffApp {
         }
 
         let (file, _) = self.focused_hunk_for_viewport(self.viewport.viewport_rows)?;
-        editor_reload_request_for_file(self.document.changeset.files.get(file)?)
+        editor_reload_request_for_file(self.document.changeset.files.get(file.get())?)
     }
 
     pub(crate) fn focused_hunk_editor_line(&self, file: usize, hunk: usize) -> Option<usize> {
@@ -95,7 +95,7 @@ impl DiffApp {
         file: usize,
         hunk: usize,
     ) -> Option<usize> {
-        let hunk_diff = self.document.changeset.files.get(file)?.hunks.get(hunk)?;
+        let hunk_diff = self.document.changeset.files.get(file)?.hunks().get(hunk)?;
         match self.document.model.row(row_index)? {
             UiRow::UnifiedLine {
                 file: row_file,
@@ -106,18 +106,20 @@ impl DiffApp {
                 file: row_file,
                 hunk: row_hunk,
                 line,
-            } if row_file == file && row_hunk == hunk => {
-                hunk_diff.lines.get(line)?.new_line.map(|line| line.max(1))
-            }
+            } if row_file.get() == file && row_hunk.get() == hunk => hunk_diff
+                .lines
+                .get(line.get())?
+                .new_line()
+                .map(|line| line.max(1)),
             UiRow::SplitLine {
                 file: row_file,
                 hunk: row_hunk,
                 left,
                 right,
-            } if row_file == file && row_hunk == hunk => right
+            } if row_file.get() == file && row_hunk.get() == hunk => right
                 .or(left)
-                .and_then(|line| hunk_diff.lines.get(line))
-                .and_then(|line| line.new_line)
+                .and_then(|line| hunk_diff.lines.get(line.get()))
+                .and_then(|line| line.new_line())
                 .map(|line| line.max(1)),
             _ => None,
         }
@@ -171,16 +173,14 @@ impl DiffApp {
         mut live_diff: Option<&mut Option<LiveDiff>>,
     ) {
         let FocusedEditorLaunch { target, editor } = editor;
-        self.overlays.diff_menu_open = false;
-        self.overlays.diff_menu.reset_input();
-        self.set_rendered_diff_menu_area(None);
-        self.overlays.options_menu_open = false;
         self.close_color_scheme_picker();
+        self.overlays.hide_diff_menu();
+        self.overlays.hide_options_menu();
         self.close_review_input();
         self.close_branch_menu();
         self.runtime.request_terminal_clear();
         let mut paused_live_diff = false;
-        if matches!(self.document.options.source, DiffSource::Worktree)
+        if matches!(self.document.options.source, DiffSource::Worktree { .. })
             && let Some(live_diff) = live_diff.as_mut().and_then(|live_diff| live_diff.as_mut())
         {
             live_diff.set_paused(true);
@@ -238,7 +238,7 @@ impl DiffApp {
         if !target_changed
             || !matches!(
                 self.document.options.source,
-                DiffSource::Worktree | DiffSource::Base(_)
+                DiffSource::Worktree { .. } | DiffSource::Base(_)
             )
         {
             return EditorReloadBehavior::None;
@@ -262,7 +262,7 @@ impl DiffApp {
         });
         self.jobs.editor_reload = Some(EditorReloadWorker {
             generation: self.document.generation,
-            rx,
+            job: AsyncJob::new(rx),
         });
     }
 
@@ -284,7 +284,7 @@ impl DiffApp {
             return false;
         };
 
-        match worker.rx.try_recv() {
+        match worker.job.try_recv() {
             Ok(reload) => {
                 if worker.generation != self.document.generation {
                     return false;

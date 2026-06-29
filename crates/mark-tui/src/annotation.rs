@@ -47,13 +47,13 @@ impl AnnotationKey {
     pub(crate) fn candidates_from_ui_row(changeset: &Changeset, row: UiRow) -> Vec<Self> {
         match row {
             UiRow::UnifiedLine { file, hunk, line } | UiRow::MetaLine { file, hunk, line } => {
-                let Some(file) = changeset.files.get(file) else {
+                let Some(file) = changeset.files.get(file.get()) else {
                     return Vec::new();
                 };
-                let Some(hunk) = file.hunks.get(hunk) else {
+                let Some(hunk) = file.hunks().get(hunk.get()) else {
                     return Vec::new();
                 };
-                Self::candidates_from_hunk_line(file, &hunk.lines, line)
+                Self::candidates_from_hunk_line(file, &hunk.lines, line.get())
             }
             UiRow::SplitLine {
                 file,
@@ -61,10 +61,10 @@ impl AnnotationKey {
                 left,
                 right,
             } => {
-                let Some(file) = changeset.files.get(file) else {
+                let Some(file) = changeset.files.get(file.get()) else {
                     return Vec::new();
                 };
-                let Some(hunk) = file.hunks.get(hunk) else {
+                let Some(hunk) = file.hunks().get(hunk.get()) else {
                     return Vec::new();
                 };
                 let lines = &hunk.lines;
@@ -72,18 +72,23 @@ impl AnnotationKey {
                 if let Some(index) = right {
                     // Prefer the right/current side when a split row has both sides;
                     // unpaired left-only rows remain old-side deletion marks.
-                    if let Some(line) = lines.get(index).and_then(|line| line.new_line) {
+                    if let Some(line) = lines.get(index.get()).and_then(|line| line.new_line()) {
                         Self::push_candidate(&mut candidates, file, AnnotationSide::New, line);
                     }
                     return candidates;
                 }
                 if let Some(index) = left {
-                    Self::push_unpaired_deletion_candidate(&mut candidates, file, lines, index);
+                    Self::push_unpaired_deletion_candidate(
+                        &mut candidates,
+                        file,
+                        lines,
+                        index.get(),
+                    );
                 }
                 candidates
             }
             UiRow::ContextLine { file, new_line, .. } => {
-                let Some(file) = changeset.files.get(file) else {
+                let Some(file) = changeset.files.get(file.get()) else {
                     return Vec::new();
                 };
                 Self::path_for_side(file, AnnotationSide::New)
@@ -104,16 +109,16 @@ impl AnnotationKey {
         };
 
         let mut candidates = Vec::with_capacity(1);
-        match line.kind {
+        match line.kind() {
             DiffLineKind::Context => {
-                if let Some(line) = line.new_line {
+                if let Some(line) = line.new_line() {
                     Self::push_candidate(&mut candidates, file, AnnotationSide::New, line);
-                } else if let Some(line) = line.old_line {
+                } else if let Some(line) = line.old_line() {
                     Self::push_candidate(&mut candidates, file, AnnotationSide::Old, line);
                 }
             }
             DiffLineKind::Addition => {
-                if let Some(line) = line.new_line {
+                if let Some(line) = line.new_line() {
                     Self::push_candidate(&mut candidates, file, AnnotationSide::New, line);
                 }
             }
@@ -134,12 +139,12 @@ impl AnnotationKey {
         let Some(line) = lines.get(line_index) else {
             return;
         };
-        if !matches!(line.kind, DiffLineKind::Deletion)
+        if !matches!(line.kind(), DiffLineKind::Deletion)
             || deletion_has_paired_addition(lines, line_index)
         {
             return;
         }
-        if let Some(line) = line.old_line {
+        if let Some(line) = line.old_line() {
             Self::push_candidate(candidates, file, AnnotationSide::Old, line);
         }
     }
@@ -157,8 +162,8 @@ impl AnnotationKey {
 
     pub(crate) fn path_for_side(file: &DiffFile, side: AnnotationSide) -> Option<&str> {
         match side {
-            AnnotationSide::Old => file.old_path.as_deref().or(file.new_path.as_deref()),
-            AnnotationSide::New => file.new_path.as_deref().or(file.old_path.as_deref()),
+            AnnotationSide::Old => file.old_path().or(file.new_path()),
+            AnnotationSide::New => file.new_path().or(file.old_path()),
         }
     }
 
@@ -180,7 +185,7 @@ pub(crate) fn paired_old_line_for_addition(
         .iter()
         .position(|index| *index == addition_index)?;
     let deletion_index = *deletions.get(pair_index)?;
-    lines.get(deletion_index)?.old_line
+    lines.get(deletion_index)?.old_line()
 }
 
 fn deletion_has_paired_addition(lines: &[DiffLine], deletion_index: usize) -> bool {
@@ -212,7 +217,7 @@ fn change_block_line_indices(lines: &[DiffLine], index: usize) -> Option<(Vec<us
     let mut additions = Vec::new();
     for (offset, line) in lines[start..end].iter().enumerate() {
         let line_index = start + offset;
-        match line.kind {
+        match line.kind() {
             DiffLineKind::Deletion => deletions.push(line_index),
             DiffLineKind::Addition => additions.push(line_index),
             DiffLineKind::Context | DiffLineKind::Meta => {}
@@ -223,12 +228,12 @@ fn change_block_line_indices(lines: &[DiffLine], index: usize) -> Option<(Vec<us
 }
 
 fn is_change_line(line: &DiffLine) -> bool {
-    matches!(line.kind, DiffLineKind::Deletion | DiffLineKind::Addition)
+    matches!(line.kind(), DiffLineKind::Deletion | DiffLineKind::Addition)
 }
 
 fn is_change_block_line(line: &DiffLine) -> bool {
     matches!(
-        line.kind,
+        line.kind(),
         DiffLineKind::Deletion | DiffLineKind::Addition | DiffLineKind::Meta
     )
 }

@@ -39,6 +39,11 @@ impl PatchFileStat {
             .or(self.old_path.as_deref())
             .unwrap_or("/dev/null")
     }
+
+    #[cfg(test)]
+    pub(super) fn is_binary(&self) -> bool {
+        self.is_binary
+    }
 }
 
 pub(super) fn render_patch_stats(stats: &PatchStats) -> String {
@@ -108,7 +113,7 @@ fn patch_source_stats(source: &PatchSource) -> MarkResult<PatchStats> {
         PatchSource::Stdin(patch) => {
             parse_patch_stats(BufReader::new(patch.as_ref())).map_err(MarkError::Io)
         }
-        PatchSource::Text { patch, .. } => {
+        PatchSource::Text { patch, .. } | PatchSource::Review { patch, .. } => {
             parse_patch_stats(BufReader::new(patch.as_ref())).map_err(MarkError::Io)
         }
     }

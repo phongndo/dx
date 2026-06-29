@@ -19,7 +19,7 @@ impl DiffApp {
                 .changeset
                 .files
                 .get(file)
-                .and_then(|file_diff| file_diff.hunks.get(hunk))
+                .and_then(|file_diff| file_diff.hunks().get(hunk))
                 .map(|hunk_diff| InlineHunkEmphasisCache::new(&hunk_diff.lines))
                 .unwrap_or_else(|| InlineHunkEmphasisCache::new(&[]));
             self.document.inline_cache.insert(key, cache);
@@ -30,7 +30,7 @@ impl DiffApp {
             .changeset
             .files
             .get(file)
-            .and_then(|file_diff| file_diff.hunks.get(hunk))
+            .and_then(|file_diff| file_diff.hunks().get(hunk))
             .map(|hunk_diff| hunk_diff.lines.as_slice())
         else {
             return Vec::new();

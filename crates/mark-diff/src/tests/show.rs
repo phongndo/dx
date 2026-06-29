@@ -33,10 +33,10 @@ fn show_source_renders_commit_patch() {
     );
 
     let actual = render_bytes(DiffOptions {
-        repo: Some(repo.clone()),
-        source: DiffSource::Show("HEAD".to_owned()),
-        include_untracked: false,
-        ..DiffOptions::default()
+        repo: Some(repo.clone().into()),
+        source: DiffSource::Show("HEAD".into()),
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect("show source should render");
 
@@ -44,11 +44,10 @@ fn show_source_renders_commit_patch() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(repo),
-            source: DiffSource::Show("HEAD".to_owned()),
-            include_untracked: false,
-            stat: true,
-            ..DiffOptions::default()
+            repo: Some(repo.into()),
+            source: DiffSource::Show("HEAD".into()),
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Stat,
         })
         .expect("show source stats should render"),
     )
@@ -71,11 +70,10 @@ fn show_source_stat_peels_annotated_tag() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(repo.clone()),
-            source: DiffSource::Show("v1.0".to_owned()),
-            include_untracked: false,
-            stat: true,
-            ..DiffOptions::default()
+            repo: Some(repo.clone().into()),
+            source: DiffSource::Show("v1.0".into()),
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Stat,
         })
         .expect("show source stats should render"),
     )
@@ -108,10 +106,10 @@ fn show_source_patch_peels_annotated_tag() {
 
     let patch = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(repo.clone()),
-            source: DiffSource::Show("v1.0".to_owned()),
-            include_untracked: false,
-            ..DiffOptions::default()
+            repo: Some(repo.clone().into()),
+            source: DiffSource::Show("v1.0".into()),
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Patch,
         })
         .expect("show source patch should render"),
     )
@@ -134,11 +132,10 @@ fn show_source_stat_preserves_valid_revspec() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(repo.clone()),
-            source: DiffSource::Show("HEAD^!".to_owned()),
-            include_untracked: false,
-            stat: true,
-            ..DiffOptions::default()
+            repo: Some(repo.clone().into()),
+            source: DiffSource::Show("HEAD^!".into()),
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Stat,
         })
         .expect("show source stats should render valid revspec"),
     )
@@ -176,16 +173,16 @@ fn show_source_renders_merge_commit_as_parseable_parent_diffs() {
     git(["commit", "-q", "--no-edit"], &repo);
 
     let changeset = load(DiffOptions {
-        repo: Some(repo.clone()),
-        source: DiffSource::Show("HEAD".to_owned()),
-        include_untracked: false,
-        ..DiffOptions::default()
+        repo: Some(repo.clone().into()),
+        source: DiffSource::Show("HEAD".into()),
+        local_untracked: crate::UntrackedMode::Exclude,
+        output: crate::DiffOutput::Patch,
     })
     .expect("show source should load merge diff");
 
     assert_eq!(changeset.files.len(), 2);
     assert!(
-        changeset.files.iter().all(|file| !file.hunks.is_empty()),
+        changeset.files.iter().all(|file| !file.hunks().is_empty()),
         "merge parent diffs should parse into hunks"
     );
     let raw_patch = String::from_utf8_lossy(&changeset.raw_patch);
@@ -195,11 +192,10 @@ fn show_source_renders_merge_commit_as_parseable_parent_diffs() {
 
     let stat = String::from_utf8(
         render_bytes(DiffOptions {
-            repo: Some(repo),
-            source: DiffSource::Show("HEAD".to_owned()),
-            include_untracked: false,
-            stat: true,
-            ..DiffOptions::default()
+            repo: Some(repo.into()),
+            source: DiffSource::Show("HEAD".into()),
+            local_untracked: crate::UntrackedMode::Exclude,
+            output: crate::DiffOutput::Stat,
         })
         .expect("show source stats should render"),
     )

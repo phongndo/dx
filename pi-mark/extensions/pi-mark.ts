@@ -9,11 +9,10 @@ const INSTALL_HINT =
 
 type NotifyLevel = "info" | "warning" | "error";
 
-type MarkRunResult = {
-  status: number | null;
-  signal: string | null;
-  error?: string;
-};
+type MarkRunResult =
+  | { kind: "exited"; status: number }
+  | { kind: "signaled"; signal: string }
+  | { kind: "failed"; error: string };
 
 type MarkCommand = "diff" | "show" | "review" | "patch" | "help";
 
@@ -23,6 +22,8 @@ type MarkInvocation = {
   cliArgs: string[];
   label: string;
 };
+
+type RepoArg = { kind: "absent" } | { kind: "missing-value" } | { kind: "value"; path: string };
 
 export default function piMark(pi: ExtensionAPI) {
   pi.registerCommand("mark", {
@@ -66,13 +67,17 @@ async function handleMarkCommand(args: string, ctx: ExtensionCommandContext): Pr
   }
 
   if (markInvocationNeedsGit(invocation.command, invocation.argv)) {
-    const repoPath = repoPathFromArgs(invocation.argv);
-    if (repoPath === null) {
+    const repoArg = repoPathFromArgs(invocation.argv);
+    if (repoArg.kind === "missing-value") {
       report(ctx, `${invocation.label} --repo requires a repository path.`, "error");
       return;
     }
 
-    const gitError = checkGitRepository(invocation.label, ctx.cwd, repoPath);
+    const gitError = checkGitRepository(
+      invocation.label,
+      ctx.cwd,
+      repoArg.kind === "value" ? repoArg.path : undefined,
+    );
     if (gitError) {
       report(ctx, gitError, "error");
       return;
@@ -85,18 +90,17 @@ async function handleMarkCommand(args: string, ctx: ExtensionCommandContext): Pr
     return;
   }
 
-  if (result.error) {
-    report(ctx, `Failed to run mark: ${result.error}`, "error");
-    return;
-  }
-
-  if (result.signal) {
-    report(ctx, `mark terminated by signal ${result.signal}.`, "warning");
-    return;
-  }
-
-  if (result.status !== 0) {
-    report(ctx, `mark exited with status ${result.status}.`, "error");
+  switch (result.kind) {
+    case "failed":
+      report(ctx, `Failed to run mark: ${result.error}`, "error");
+      return;
+    case "signaled":
+      report(ctx, `mark terminated by signal ${result.signal}.`, "warning");
+      return;
+    case "exited":
+      if (result.status !== 0) {
+        report(ctx, `mark exited with status ${result.status}.`, "error");
+      }
   }
 }
 
@@ -276,8 +280,7 @@ async function runMarkInTerminal(
       result = await waitForChild(child);
     } catch (error) {
       result = {
-        status: null,
-        signal: null,
+        kind: "failed",
         error: errorMessage(error),
       };
     } finally {
@@ -302,10 +305,16 @@ function waitForChild(child: ReturnType<typeof spawn>): Promise<MarkRunResult> {
     };
 
     child.once("error", (error) => {
-      finish({ status: null, signal: null, error: errorMessage(error) });
+      finish({ kind: "failed", error: errorMessage(error) });
     });
     child.once("exit", (status, signal) => {
-      finish({ status, signal });
+      if (signal) {
+        finish({ kind: "signaled", signal });
+      } else if (typeof status === "number") {
+        finish({ kind: "exited", status });
+      } else {
+        finish({ kind: "failed", error: "child exited without status or signal" });
+      }
     });
   });
 }
@@ -452,7 +461,7 @@ function isVersionFlag(arg: string): boolean {
   return arg === "--version" || arg === "-V";
 }
 
-function repoPathFromArgs(argv: string[]): string | null | undefined {
+function repoPathFromArgs(argv: string[]): RepoArg {
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--repo" || arg === "-r") {
@@ -466,11 +475,11 @@ function repoPathFromArgs(argv: string[]): string | null | undefined {
       return repoPathValue(value.startsWith("=") ? value.slice("=".length) : value);
     }
   }
-  return undefined;
+  return { kind: "absent" };
 }
 
-function repoPathValue(value: string | undefined): string | null {
-  return value ? value : null;
+function repoPathValue(value: string | undefined): RepoArg {
+  return value ? { kind: "value", path: value } : { kind: "missing-value" };
 }
 
 function stdinPatchRequested(command: MarkCommand, argv: string[]): boolean {

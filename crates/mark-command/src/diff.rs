@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{DiffOptions, DiffScope, DiffSource, PatchSource};
+use crate::{DiffOptions, DiffOutput, DiffSource, PatchSource, PullRequestId, UntrackedMode};
 use mark_core::{MarkError, MarkResult};
 
 pub fn diff(input: DiffOptions) -> MarkResult<String> {
@@ -23,9 +23,39 @@ pub fn diff_to_writer(input: DiffOptions, writer: impl Write) -> MarkResult<()> 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitHubPullRequest {
-    pub(crate) owner: String,
-    pub(crate) repo: String,
-    pub(crate) number: u64,
+    pub(crate) owner: GitHubOwner,
+    pub(crate) repo: GitHubRepoName,
+    pub(crate) number: PullRequestId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitHubOwner(String);
+
+impl GitHubOwner {
+    fn parse(value: &str) -> Option<Self> {
+        valid_github_path_segment(value).then(|| Self(value.to_owned()))
+    }
+}
+
+impl std::fmt::Display for GitHubOwner {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitHubRepoName(String);
+
+impl GitHubRepoName {
+    fn parse(value: &str) -> Option<Self> {
+        valid_github_path_segment(value).then(|| Self(value.to_owned()))
+    }
+}
+
+impl std::fmt::Display for GitHubRepoName {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 pub fn github_pr_diff_options(
@@ -65,14 +95,17 @@ fn github_pull_request_diff_options(
     let patch = fetch_github_pull_request_diff(&pull_request)?;
 
     Ok(DiffOptions {
-        repo,
-        source: DiffSource::Patch(PatchSource::Text {
-            label,
+        repo: repo.map(Into::into),
+        source: DiffSource::Patch(PatchSource::Review {
+            label: label.into(),
             patch: Arc::from(patch.into_boxed_slice()),
         }),
-        scope: DiffScope::All,
-        include_untracked: false,
-        stat,
+        local_untracked: UntrackedMode::Exclude,
+        output: if stat {
+            DiffOutput::Stat
+        } else {
+            DiffOutput::Patch
+        },
     })
 }
 
@@ -80,16 +113,24 @@ pub(crate) fn local_github_pull_request_from_target(
     repo: Option<&Path>,
     target: &str,
 ) -> MarkResult<GitHubPullRequest> {
-    let number = target.trim().parse::<u64>().map_err(|_| {
-        MarkError::Usage("expected a review number for the current repository".to_owned())
-    })?;
-    if number == 0 {
-        return Err(MarkError::Usage(
-            "review number must be greater than zero".to_owned(),
-        ));
-    }
+    let number = parse_pull_request_id(
+        target.trim(),
+        "expected a review number for the current repository",
+        "review number must be greater than zero",
+    )?;
 
     local_github_pull_request(repo, number)
+}
+
+fn parse_pull_request_id(
+    value: &str,
+    parse_error: &str,
+    zero_error: &str,
+) -> MarkResult<PullRequestId> {
+    let number = value
+        .parse::<u64>()
+        .map_err(|_| MarkError::Usage(parse_error.to_owned()))?;
+    PullRequestId::new(number).ok_or_else(|| MarkError::Usage(zero_error.to_owned()))
 }
 
 pub(crate) fn github_pull_request_from_target(
@@ -97,12 +138,9 @@ pub(crate) fn github_pull_request_from_target(
     target: &str,
 ) -> MarkResult<GitHubPullRequest> {
     if let Ok(number) = target.parse::<u64>() {
-        if number == 0 {
-            return Err(MarkError::Usage(
-                "pull request number must be greater than zero".to_owned(),
-            ));
-        }
-
+        let number = PullRequestId::new(number).ok_or_else(|| {
+            MarkError::Usage("pull request number must be greater than zero".to_owned())
+        })?;
         return local_github_pull_request(repo, number);
     }
 
@@ -113,7 +151,7 @@ pub(crate) fn github_pull_request_from_target(
 
 pub(crate) fn local_github_pull_request(
     repo: Option<&Path>,
-    number: u64,
+    number: PullRequestId,
 ) -> MarkResult<GitHubPullRequest> {
     let root = mark_git::repository_root(repo)?;
     let remote_url = mark_git::remote_url(&root, "origin")?;
@@ -140,24 +178,21 @@ pub(crate) fn github_pull_request_from_url(url: &str) -> Option<GitHubPullReques
     let path = without_scheme.strip_prefix("github.com/")?;
     let path = path.split(['?', '#']).next().unwrap_or(path);
     let mut segments = path.split('/');
-    let owner = segments.next()?;
-    let repo = segments.next()?;
+    let owner = GitHubOwner::parse(segments.next()?)?;
+    let repo = GitHubRepoName::parse(segments.next()?)?;
     if segments.next()? != "pull" {
         return None;
     }
-    let number = segments.next()?.parse::<u64>().ok()?;
-    if number == 0 || !valid_github_path_segment(owner) || !valid_github_path_segment(repo) {
-        return None;
-    }
+    let number = PullRequestId::new(segments.next()?.parse::<u64>().ok()?)?;
 
     Some(GitHubPullRequest {
-        owner: owner.to_owned(),
-        repo: repo.to_owned(),
+        owner,
+        repo,
         number,
     })
 }
 
-pub(crate) fn github_repo_from_remote_url(url: &str) -> Option<(String, String)> {
+pub(crate) fn github_repo_from_remote_url(url: &str) -> Option<(GitHubOwner, GitHubRepoName)> {
     let url = url.trim();
     let path = if let Some(path) = url.strip_prefix("git@github.com:") {
         path
@@ -183,18 +218,15 @@ pub(crate) fn github_repo_from_remote_url(url: &str) -> Option<(String, String)>
         .unwrap_or(path)
         .trim_end_matches('/');
     let mut segments = path.split('/');
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+    let owner = GitHubOwner::parse(segments.next()?)?;
+    let repo_segment = segments.next()?;
+    let repo = GitHubRepoName::parse(repo_segment.strip_suffix(".git").unwrap_or(repo_segment))?;
 
-    if segments.next().is_some()
-        || !valid_github_path_segment(owner)
-        || !valid_github_path_segment(repo)
-    {
+    if segments.next().is_some() {
         return None;
     }
 
-    Some((owner.to_owned(), repo.to_owned()))
+    Some((owner, repo))
 }
 
 pub(crate) fn redact_url_userinfo(url: &str) -> String {

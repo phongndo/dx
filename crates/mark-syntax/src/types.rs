@@ -335,21 +335,94 @@ impl Default for SyntaxSettings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PositiveCount(std::num::NonZeroUsize);
+
+impl PositiveCount {
+    pub fn new(value: usize) -> Self {
+        Self(std::num::NonZeroUsize::new(value.max(1)).expect("positive count"))
+    }
+
+    pub fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+impl From<usize> for PositiveCount {
+    fn from(value: usize) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NotificationTimeoutMs(u64);
+
+impl NotificationTimeoutMs {
+    pub fn new(value: u64) -> Self {
+        Self(value.min(MAX_NOTIFICATION_TIMEOUT_MS))
+    }
+
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for NotificationTimeoutMs {
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotificationSettings {
-    pub mode: NotificationMode,
-    pub corner: ToastCorner,
-    pub timeout_ms: u64,
-    pub max_visible: usize,
+    mode: NotificationMode,
+    corner: ToastCorner,
+    timeout_ms: NotificationTimeoutMs,
+    max_visible: PositiveCount,
+}
+
+impl NotificationSettings {
+    pub fn new(
+        mode: NotificationMode,
+        corner: ToastCorner,
+        timeout_ms: u64,
+        max_visible: usize,
+    ) -> Self {
+        Self {
+            mode,
+            corner,
+            timeout_ms: NotificationTimeoutMs::new(timeout_ms),
+            max_visible: PositiveCount::new(max_visible),
+        }
+    }
+
+    pub fn mode(self) -> NotificationMode {
+        self.mode
+    }
+
+    pub fn corner(self) -> ToastCorner {
+        self.corner
+    }
+
+    pub fn timeout(self) -> NotificationTimeoutMs {
+        self.timeout_ms
+    }
+
+    pub fn visible_count(self) -> PositiveCount {
+        self.max_visible
+    }
+
+    pub fn timeout_ms(self) -> u64 {
+        self.timeout_ms.get()
+    }
+
+    pub fn max_visible(self) -> usize {
+        self.max_visible.get()
+    }
 }
 
 impl Default for NotificationSettings {
     fn default() -> Self {
-        Self {
-            mode: NotificationMode::Default,
-            corner: ToastCorner::TopRight,
-            timeout_ms: 1_500,
-            max_visible: 3,
-        }
+        Self::new(NotificationMode::Default, ToastCorner::TopRight, 1_500, 3)
     }
 }
 
@@ -533,18 +606,41 @@ pub enum SyntaxMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyntaxThemeConfig {
-    pub source: SyntaxThemeSource,
-    pub name: Option<String>,
-    pub path: Option<PathBuf>,
+pub enum SyntaxThemeConfig {
+    Builtin { name: Option<String> },
+    Ansi,
+    Base16 { path: PathBuf },
+    Base16MissingPath,
+}
+
+impl SyntaxThemeConfig {
+    pub fn source(&self) -> SyntaxThemeSource {
+        match self {
+            Self::Builtin { .. } => SyntaxThemeSource::Builtin,
+            Self::Ansi => SyntaxThemeSource::Ansi,
+            Self::Base16 { .. } | Self::Base16MissingPath => SyntaxThemeSource::Base16,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Builtin { name } => name.as_deref(),
+            Self::Ansi | Self::Base16 { .. } | Self::Base16MissingPath => None,
+        }
+    }
+
+    pub fn path(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Base16 { path } => Some(path),
+            Self::Builtin { .. } | Self::Ansi | Self::Base16MissingPath => None,
+        }
+    }
 }
 
 impl Default for SyntaxThemeConfig {
     fn default() -> Self {
-        Self {
-            source: SyntaxThemeSource::Builtin,
+        Self::Builtin {
             name: Some("system".to_owned()),
-            path: None,
         }
     }
 }

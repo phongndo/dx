@@ -38,8 +38,8 @@ fn normalized_patch_input_preserves_crlf_payloads() {
     let files = mark_diff::parse_patch(&text);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[0].text, "old\r");
-    assert_eq!(files[0].hunks[0].lines[1].text, "old");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "old\r");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "old");
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn normalized_patch_input_preserves_literal_terminal_sequences() {
     let files = mark_diff::parse_patch(&text);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mred\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "\x1b[31mred\x1b[0m");
 }
 
 #[test]
@@ -63,9 +63,9 @@ fn normalized_patch_input_preserves_literal_terminal_sequences_after_colored_hea
     let files = mark_diff::parse_patch(&text);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[0].text, "\x1b[33mctx\x1b[0m");
-    assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mold\x1b[0m");
-    assert_eq!(files[0].hunks[0].lines[2].text, "\x1b[32mnew\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "\x1b[33mctx\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "\x1b[31mold\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[2].text(), "\x1b[32mnew\x1b[0m");
 }
 
 #[test]
@@ -77,8 +77,8 @@ fn normalized_patch_input_strips_only_git_color_wrappers() {
     let files = mark_diff::parse_patch(&text);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[0].text, "old");
-    assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[31mred\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "old");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "\x1b[31mred\x1b[0m");
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn normalized_patch_input_preserves_literal_line_color_sequence() {
     let files = mark_diff::parse_patch(&text);
 
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[1].text, "\x1b[32mgreen\x1b[0m");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "\x1b[32mgreen\x1b[0m");
 }
 
 #[test]
@@ -103,9 +103,9 @@ fn normalized_patch_input_strips_git_resets_inside_colored_diff_lines() {
 
     assert!(!text.contains("\x1b[m"));
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].header, "@@ -1,2 +1,2 @@ fn");
-    assert_eq!(files[0].hunks[0].lines[0].text, "context");
-    assert_eq!(files[0].hunks[0].lines[2].text, "new");
+    assert_eq!(files[0].hunks()[0].header, "@@ -1,2 +1,2 @@ fn");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "context");
+    assert_eq!(files[0].hunks()[0].lines[2].text(), "new");
 }
 
 #[test]
@@ -118,10 +118,10 @@ fn normalized_patch_input_strips_standard_git_color_wrappers() {
 
     assert!(!text.contains('\x1b'));
     assert_eq!(files.len(), 1);
-    assert_eq!(files[0].hunks[0].lines[0].text, "context before");
-    assert_eq!(files[0].hunks[0].lines[1].text, "old");
-    assert_eq!(files[0].hunks[0].lines[2].text, "new");
-    assert_eq!(files[0].hunks[0].lines[3].text, "context after");
+    assert_eq!(files[0].hunks()[0].lines[0].text(), "context before");
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "old");
+    assert_eq!(files[0].hunks()[0].lines[2].text(), "new");
+    assert_eq!(files[0].hunks()[0].lines[3].text(), "context after");
 }
 
 #[test]
@@ -170,6 +170,6 @@ fn normalized_patch_input_preserves_diff_after_malformed_string_escape() {
 
     assert!(text.contains("diff --git a/b.txt b/b.txt"));
     assert_eq!(files.len(), 2);
-    assert_eq!(files[0].hunks[0].lines[1].text, "\u{1b}]unterminated");
-    assert_eq!(files[1].new_path.as_deref(), Some("b.txt"));
+    assert_eq!(files[0].hunks()[0].lines[1].text(), "\u{1b}]unterminated");
+    assert_eq!(files[1].new_path(), Some("b.txt"));
 }

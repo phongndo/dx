@@ -19,19 +19,18 @@ impl DiffApp {
     }
 
     pub(crate) fn set_rendered_diff_menu_area(&mut self, area: Option<Rect>) {
-        self.overlays.rendered_diff_menu_area = area.filter(|_| self.overlays.diff_menu_open);
+        self.overlays.rendered_diff_menu_area = area.filter(|_| self.overlays.diff_menu_is_open());
         self.runtime.hit_map.diff_menu_area = self.overlays.rendered_diff_menu_area;
     }
 
     pub(crate) fn set_rendered_branch_menu_area(&mut self, area: Option<Rect>) {
-        self.overlays.rendered_branch_menu_area =
-            area.filter(|_| self.refs.branch_menu_open.is_some());
+        self.overlays.rendered_branch_menu_area = area.filter(|_| self.refs.branch_menu_is_open());
         self.runtime.hit_map.branch_menu_area = self.overlays.rendered_branch_menu_area;
     }
 
     pub(crate) fn set_rendered_color_scheme_picker_area(&mut self, area: Option<Rect>) {
         self.overlays.rendered_color_scheme_picker_area =
-            area.filter(|_| self.overlays.color_scheme_picker_open);
+            area.filter(|_| self.overlays.color_scheme_picker_is_open());
         self.runtime.hit_map.color_scheme_picker_area =
             self.overlays.rendered_color_scheme_picker_area;
     }
@@ -39,25 +38,25 @@ impl DiffApp {
     pub(crate) fn apply_render_hit_map(&mut self, mut hit_map: HitMap) {
         hit_map.diff_menu_area = hit_map
             .diff_menu_area
-            .filter(|_| self.overlays.diff_menu_open);
+            .filter(|_| self.overlays.diff_menu_is_open());
         hit_map.branch_menu_area = hit_map
             .branch_menu_area
-            .filter(|_| self.refs.branch_menu_open.is_some());
+            .filter(|_| self.refs.branch_menu_is_open());
         hit_map.commit_menu_area = hit_map
             .commit_menu_area
-            .filter(|_| self.refs.commit_menu_open);
+            .filter(|_| self.refs.commit_menu_is_open());
         hit_map.options_menu_area = hit_map
             .options_menu_area
-            .filter(|_| self.overlays.options_menu_open);
+            .filter(|_| self.overlays.options_menu_is_open());
         hit_map.annotation_menu_area = hit_map
             .annotation_menu_area
-            .filter(|_| self.overlays.annotation_menu_open);
+            .filter(|_| self.overlays.annotation_menu_is_open());
         hit_map.review_input_area = hit_map
             .review_input_area
-            .filter(|_| self.overlays.review_input_open);
+            .filter(|_| self.overlays.review_input_is_open());
         hit_map.color_scheme_picker_area = hit_map
             .color_scheme_picker_area
-            .filter(|_| self.overlays.color_scheme_picker_open);
+            .filter(|_| self.overlays.color_scheme_picker_is_open());
         hit_map.error_log_separator_row = hit_map
             .error_log_separator_row
             .filter(|_| self.notifications.error_log.is_some());
@@ -96,7 +95,7 @@ impl DiffApp {
             self.ensure_annotation_menu_selection_visible(rows);
         }
         if let Some(rows) = state.color_scheme_picker_visible_rows
-            && self.overlays.color_scheme_picker_open
+            && self.overlays.color_scheme_picker_is_open()
         {
             let len = self.filtered_color_schemes().len();
             self.overlays
@@ -110,7 +109,7 @@ impl DiffApp {
             self.ensure_commit_selection_visible_for_rows(rows);
         }
         if let Some(rows) = state.help_menu_visible_rows
-            && self.overlays.help_menu_open
+            && self.overlays.help_menu_is_open()
         {
             self.overlays.help_menu_visible_rows = rows;
             self.clamp_help_menu_scroll(rows);

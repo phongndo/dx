@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use mark_diff::{DiffOptions, DiffSource};
+use mark_diff::{BranchName, CommitSha, DiffOptions, DiffSource};
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -13,7 +13,7 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitCommit {
-    pub(crate) sha: String,
+    pub(crate) sha: CommitSha,
     pub(crate) subject: String,
 }
 
@@ -30,21 +30,24 @@ pub(crate) fn default_branch_base(options: &DiffOptions, repo: &Path) -> Option<
         .or_else(|| git_local_branch_candidate(repo))
 }
 
-pub(crate) fn comparison_branches(repo: &Path, selected_refs: &[Option<&str>]) -> Vec<String> {
-    let mut branches = git_branches(repo);
+pub(crate) fn comparison_branches(repo: &Path, selected_refs: &[Option<&str>]) -> Vec<BranchName> {
+    let mut branches: Vec<_> = git_branches(repo)
+        .into_iter()
+        .map(BranchName::from)
+        .collect();
     for selected in selected_refs
         .iter()
         .filter_map(|selected| selected.filter(|reference| !reference.is_empty()))
     {
-        if !branches.iter().any(|branch| branch == selected) {
-            branches.push(selected.to_owned());
+        if !branches.iter().any(|branch| branch.as_str() == selected) {
+            branches.push(selected.into());
         }
     }
     branches
 }
 
 pub(crate) fn commit_match_score(query: &str, commit: &GitCommit) -> Option<(usize, usize)> {
-    let sha_lower = commit.sha.to_ascii_lowercase();
+    let sha_lower = commit.sha.as_str().to_ascii_lowercase();
     let short = commit.sha.get(..7).unwrap_or(commit.sha.as_str());
     let short_lower = short.to_ascii_lowercase();
     let subject_lower = commit.subject.to_ascii_lowercase();
@@ -61,13 +64,13 @@ pub(crate) fn comparison_commits(repo: &Path, selected_rev: Option<&str>) -> Vec
     if let Some(rev) = selected_rev.filter(|rev| !rev.is_empty()) {
         if !commits
             .iter()
-            .any(|commit| commit.sha == rev || commit.sha.starts_with(rev))
+            .any(|commit| commit.sha.as_str() == rev || commit.sha.starts_with(rev))
         {
             let subject = git_commit_subject(repo, rev).unwrap_or_default();
             commits.insert(
                 0,
                 GitCommit {
-                    sha: rev.to_owned(),
+                    sha: rev.into(),
                     subject,
                 },
             );
@@ -107,8 +110,8 @@ pub(crate) fn commit_menu_width(commits: &[GitCommit]) -> u16 {
 
 pub(crate) fn branch_base_from_options(options: &DiffOptions) -> Option<String> {
     match &options.source {
-        DiffSource::Base(base) if !base.is_empty() => Some(base.clone()),
-        DiffSource::Branch { base, .. } if !base.is_empty() => Some(base.clone()),
+        DiffSource::Base(base) if !base.is_empty() => Some(base.to_string()),
+        DiffSource::Branch { base, .. } if !base.is_empty() => Some(base.to_string()),
         _ => None,
     }
 }
@@ -119,7 +122,7 @@ pub(crate) fn branch_head_from_options(
 ) -> Option<String> {
     match &options.source {
         DiffSource::Base(_) => current_head.map(str::to_owned),
-        DiffSource::Branch { head, .. } if !head.is_empty() => Some(head.clone()),
+        DiffSource::Branch { head, .. } if !head.is_empty() => Some(head.to_string()),
         _ => None,
     }
 }

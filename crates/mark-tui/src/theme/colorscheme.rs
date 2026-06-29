@@ -6,7 +6,7 @@ use std::{
 };
 
 use mark_core::{MarkError, MarkResult};
-use mark_syntax::{SyntaxThemeConfig, SyntaxThemeSource};
+use mark_syntax::SyntaxThemeConfig;
 use ratatui::prelude::Color;
 
 use super::DiffTheme;
@@ -134,9 +134,9 @@ impl RgbColor {
 }
 
 pub(crate) fn diff_theme_from_config(config: &SyntaxThemeConfig) -> MarkResult<DiffTheme> {
-    match config.source {
-        SyntaxThemeSource::Builtin => {
-            let name = config.name.as_deref();
+    match config {
+        SyntaxThemeConfig::Builtin { name } => {
+            let name = name.as_deref();
             match builtin_diff_theme(name) {
                 Ok(theme) => Ok(theme),
                 Err(error) => {
@@ -149,13 +149,11 @@ pub(crate) fn diff_theme_from_config(config: &SyntaxThemeConfig) -> MarkResult<D
                 }
             }
         }
-        SyntaxThemeSource::Ansi => Ok(DiffTheme::ansi()),
-        SyntaxThemeSource::Base16 => {
-            let path = config.path.as_ref().ok_or_else(|| {
-                MarkError::Usage("base16 colorscheme requires colorscheme.path".to_owned())
-            })?;
-            Ok(DiffTheme::base16(load_base16_scheme(path)?))
-        }
+        SyntaxThemeConfig::Ansi => Ok(DiffTheme::ansi()),
+        SyntaxThemeConfig::Base16 { path } => Ok(DiffTheme::base16(load_base16_scheme(path)?)),
+        SyntaxThemeConfig::Base16MissingPath => Err(MarkError::Usage(
+            "base16 colorscheme requires colorscheme.path".to_owned(),
+        )),
     }
 }
 

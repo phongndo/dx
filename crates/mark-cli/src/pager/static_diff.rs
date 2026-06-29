@@ -96,10 +96,12 @@ pub(super) fn run_interactive_diff(
         Ok(guard) => guard,
         Err(_) => return write_static_diff(&input, args, static_color),
     };
-    mark_tui::run_diff_with_live_updates_and_syntax(
+    mark_tui::run_diff_with_options(
         patch_options(normalized_patch_input(&input)),
-        false,
-        !args.no_syntax,
+        mark_tui::DiffRunOptions {
+            live_updates: false,
+            syntax_enabled: !args.no_syntax,
+        },
     )?;
     Ok(())
 }
@@ -129,8 +131,7 @@ fn patch_options(patch: Vec<u8>) -> mark_command::DiffOptions {
         source: mark_command::DiffSource::Patch(mark_command::PatchSource::Stdin(Arc::from(
             patch.into_boxed_slice(),
         ))),
-        scope: mark_command::DiffScope::All,
-        include_untracked: false,
-        stat: false,
+        local_untracked: mark_command::UntrackedMode::Exclude,
+        output: mark_command::DiffOutput::Patch,
     }
 }

@@ -37,13 +37,13 @@ use crossterm::event::{
 };
 use mark_core::MarkError;
 use mark_diff::{
-    Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileStatus, PatchSource,
+    BranchName, Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileChange,
+    FileStatus, HunkLineRanges, PatchSource,
 };
 use mark_syntax::{
     ColorOverrides, DiffContextExpansion, HighlightedLine, LayoutSetting,
     MAX_NOTIFICATION_TIMEOUT_MS, NotificationMode, NotificationSettings, SyntaxClass,
-    SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, SyntaxThemeSource,
-    ToastCorner,
+    SyntaxLanguageSet, SyntaxLimits, SyntaxSettings, SyntaxThemeConfig, ToastCorner,
 };
 use ratatui::layout::Rect;
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
@@ -68,6 +68,25 @@ mod misc;
 mod render;
 mod syntax;
 
+const FILE_0: FileIndex = FileIndex::new(0);
+const FILE_1: FileIndex = FileIndex::new(1);
+const FILE_2: FileIndex = FileIndex::new(2);
+const FILE_4: FileIndex = FileIndex::new(4);
+const HUNK_0: HunkIndex = HunkIndex::new(0);
+const HUNK_1: HunkIndex = HunkIndex::new(1);
+const HUNK_2: HunkIndex = HunkIndex::new(2);
+const LINE_0: DiffLineIndex = DiffLineIndex::new(0);
+const LINE_1: DiffLineIndex = DiffLineIndex::new(1);
+const LINE_2: DiffLineIndex = DiffLineIndex::new(2);
+
+fn typed_hunk_key((file, hunk): (usize, usize)) -> (FileIndex, HunkIndex) {
+    (FileIndex::new(file), HunkIndex::new(hunk))
+}
+
+fn branch_names(names: &[&str]) -> Vec<BranchName> {
+    names.iter().copied().map(BranchName::from).collect()
+}
+
 fn handle_test_key_event(app: &mut DiffApp, key: KeyEvent) -> bool {
     let (_tx, rx) = mpsc::channel(1);
     let mut events = crate::event_reader::TerminalEventReader::from_receiver(rx);
@@ -77,38 +96,68 @@ fn handle_test_key_event(app: &mut DiffApp, key: KeyEvent) -> bool {
         .expect("key event should be handled")
 }
 
+fn set_test_file_modified(file: &mut mark_diff::DiffFile, path: &str) {
+    file.change = FileChange::modified(path.to_owned());
+}
+
+fn set_test_file_added(file: &mut mark_diff::DiffFile) {
+    let path = file
+        .new_path()
+        .or_else(|| file.old_path())
+        .unwrap_or("file.rs")
+        .to_owned();
+    file.change = FileChange::Added { path: path.into() };
+}
+
+fn set_test_file_deleted(file: &mut mark_diff::DiffFile) {
+    let path = file
+        .old_path()
+        .or_else(|| file.new_path())
+        .unwrap_or("file.rs")
+        .to_owned();
+    file.change = FileChange::Deleted { path: path.into() };
+}
+
+fn set_test_file_renamed(file: &mut mark_diff::DiffFile, old_path: &str, new_path: &str) {
+    file.change = FileChange::Renamed {
+        old_path: old_path.to_owned().into(),
+        new_path: new_path.to_owned().into(),
+    };
+}
+
 fn changeset_with_context_lines(line_count: usize) -> Changeset {
     changeset_with_context_lines_at(PathBuf::from("/repo"), 1, line_count)
 }
 
 fn changeset_with_context_lines_at(repo: PathBuf, start: usize, line_count: usize) -> Changeset {
     let lines = (1..=line_count)
-        .map(|line| DiffLine {
-            kind: DiffLineKind::Context,
-            old_line: Some(start.saturating_add(line - 1)),
-            new_line: Some(start.saturating_add(line - 1)),
-            text: format!("line {line}"),
+        .map(|line| {
+            DiffLine::context(
+                start.saturating_add(line - 1),
+                start.saturating_add(line - 1),
+                format!("line {line}"),
+            )
         })
         .collect();
 
     Changeset {
-        repo,
+        repo: repo.into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks: vec![mark_diff::DiffHunk {
-                header: format!("@@ -{start} +{start} @@"),
-                old_start: start,
-                old_count: line_count,
-                new_start: start,
-                new_count: line_count,
-                lines,
-            }],
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text {
+                hunks: vec![mark_diff::DiffHunk {
+                    header: format!("@@ -{start} +{start} @@"),
+                    ranges: HunkLineRanges::new(start, line_count, start, line_count),
+                    lines,
+                }],
+            },
         }],
         raw_patch: Vec::new(),
     }
@@ -120,32 +169,29 @@ fn changeset_with_line_text(text: &str) -> Changeset {
 
 fn changeset_with_line_texts(texts: &[&str]) -> Changeset {
     Changeset {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks: vec![mark_diff::DiffHunk {
-                header: "@@ -1 +1 @@".to_owned(),
-                old_start: 1,
-                old_count: texts.len(),
-                new_start: 1,
-                new_count: texts.len(),
-                lines: texts
-                    .iter()
-                    .enumerate()
-                    .map(|(index, text)| DiffLine {
-                        kind: DiffLineKind::Context,
-                        old_line: Some(index + 1),
-                        new_line: Some(index + 1),
-                        text: (*text).to_owned(),
-                    })
-                    .collect(),
-            }],
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text {
+                hunks: vec![mark_diff::DiffHunk {
+                    header: "@@ -1 +1 @@".to_owned(),
+                    ranges: HunkLineRanges::new(1, texts.len(), 1, texts.len()),
+                    lines: texts
+                        .iter()
+                        .enumerate()
+                        .map(|(index, text)| {
+                            DiffLine::context(index + 1, index + 1, (*text).to_owned())
+                        })
+                        .collect(),
+                }],
+            },
         }],
         raw_patch: Vec::new(),
     }
@@ -153,36 +199,26 @@ fn changeset_with_line_texts(texts: &[&str]) -> Changeset {
 
 fn changeset_with_replacement_pair() -> Changeset {
     Changeset {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks: vec![mark_diff::DiffHunk {
-                header: "@@ -1 +1 @@".to_owned(),
-                old_start: 1,
-                old_count: 1,
-                new_start: 1,
-                new_count: 1,
-                lines: vec![
-                    DiffLine {
-                        kind: DiffLineKind::Deletion,
-                        old_line: Some(1),
-                        new_line: None,
-                        text: "old".to_owned(),
-                    },
-                    DiffLine {
-                        kind: DiffLineKind::Addition,
-                        old_line: None,
-                        new_line: Some(1),
-                        text: "new".to_owned(),
-                    },
-                ],
-            }],
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 1,
             deletions: 1,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text {
+                hunks: vec![mark_diff::DiffHunk {
+                    header: "@@ -1 +1 @@".to_owned(),
+                    ranges: HunkLineRanges::new(1, 1, 1, 1),
+                    lines: vec![
+                        DiffLine::deletion(1, "old".to_owned()),
+                        DiffLine::addition(1, "new".to_owned()),
+                    ],
+                }],
+            },
         }],
         raw_patch: Vec::new(),
     }
@@ -190,7 +226,7 @@ fn changeset_with_replacement_pair() -> Changeset {
 
 fn changeset_with_wrapped_leading_file() -> Changeset {
     let mut changeset = changeset_with_files(&["wide.rs", "target.rs"]);
-    changeset.files[0].hunks[0].lines[0].text = "a".repeat(96);
+    *changeset.files[0].hunks_mut()[0].lines[0].text_mut() = "a".repeat(96);
     changeset
 }
 
@@ -202,7 +238,7 @@ fn set_wrapped_scroll_relative_to_file_start(
     app.viewport.line_wrapping = true;
     app.set_viewport_width(18);
     app.set_scroll(wrapped_file_start_scroll(app, file).saturating_add(relative_scroll));
-    assert_eq!(app.sidebar.selected_file, file);
+    assert_eq!(app.sidebar.selected_file, FileIndex::new(file));
 }
 
 fn wrapped_file_start_scroll(app: &DiffApp, file: usize) -> usize {
@@ -223,30 +259,27 @@ fn changeset_with_hunks_at(repo: PathBuf, line_numbers: &[usize]) -> Changeset {
         .iter()
         .map(|line_number| mark_diff::DiffHunk {
             header: format!("@@ -{line_number} +{line_number} @@"),
-            old_start: *line_number,
-            old_count: 1,
-            new_start: *line_number,
-            new_count: 1,
-            lines: vec![DiffLine {
-                kind: DiffLineKind::Context,
-                old_line: Some(*line_number),
-                new_line: Some(*line_number),
-                text: format!("line {line_number}"),
-            }],
+            ranges: HunkLineRanges::new(*line_number, 1, *line_number, 1),
+            lines: vec![DiffLine::context(
+                *line_number,
+                *line_number,
+                format!("line {line_number}"),
+            )],
         })
         .collect();
 
     Changeset {
-        repo,
+        repo: repo.into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks,
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text { hunks },
         }],
         raw_patch: Vec::new(),
     }
@@ -257,32 +290,31 @@ fn changeset_with_hunk_line_counts(repo: PathBuf, hunks: &[(usize, usize)]) -> C
         .iter()
         .map(|(line_number, line_count)| mark_diff::DiffHunk {
             header: format!("@@ -{line_number},{line_count} +{line_number},{line_count} @@"),
-            old_start: *line_number,
-            old_count: *line_count,
-            new_start: *line_number,
-            new_count: *line_count,
+            ranges: HunkLineRanges::new(*line_number, *line_count, *line_number, *line_count),
             lines: (0..*line_count)
-                .map(|offset| DiffLine {
-                    kind: DiffLineKind::Context,
-                    old_line: Some(line_number + offset),
-                    new_line: Some(line_number + offset),
-                    text: format!("line {}", line_number + offset),
+                .map(|offset| {
+                    DiffLine::context(
+                        line_number + offset,
+                        line_number + offset,
+                        format!("line {}", line_number + offset),
+                    )
                 })
                 .collect(),
         })
         .collect();
 
     Changeset {
-        repo,
+        repo: repo.into(),
         title: "test".to_owned(),
         files: vec![mark_diff::DiffFile {
-            old_path: Some("file.rs".to_owned()),
-            new_path: Some("file.rs".to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks,
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some("file.rs".to_owned()),
+                Some("file.rs".to_owned()),
+            ),
             additions: 0,
             deletions: 0,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text { hunks },
         }],
         raw_patch: Vec::new(),
     }
@@ -293,30 +325,25 @@ fn changeset_with_files(paths: &[&str]) -> Changeset {
         .iter()
         .enumerate()
         .map(|(index, path)| mark_diff::DiffFile {
-            old_path: Some((*path).to_owned()),
-            new_path: Some((*path).to_owned()),
-            status: mark_diff::FileStatus::Modified,
-            hunks: vec![mark_diff::DiffHunk {
-                header: "@@ -1 +1 @@".to_owned(),
-                old_start: 1,
-                old_count: 1,
-                new_start: 1,
-                new_count: 1,
-                lines: vec![DiffLine {
-                    kind: DiffLineKind::Context,
-                    old_line: Some(1),
-                    new_line: Some(1),
-                    text: format!("line {index}"),
-                }],
-            }],
+            change: mark_diff::FileChange::from_status(
+                mark_diff::FileStatus::Modified,
+                Some((*path).to_owned()),
+                Some((*path).to_owned()),
+            ),
             additions: index + 1,
             deletions: index,
-            is_binary: false,
+            body: mark_diff::DiffFileBody::Text {
+                hunks: vec![mark_diff::DiffHunk {
+                    header: "@@ -1 +1 @@".to_owned(),
+                    ranges: HunkLineRanges::new(1, 1, 1, 1),
+                    lines: vec![DiffLine::context(1, 1, format!("line {index}"))],
+                }],
+            },
         })
         .collect();
 
     Changeset {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         title: "test".to_owned(),
         files,
         raw_patch: Vec::new(),
@@ -328,8 +355,8 @@ fn pending_diff_load(options: DiffOptions) -> PendingDiffLoad {
     PendingDiffLoad {
         options,
         error_prefix: "load failed".to_owned(),
-        refresh_branch_metadata: false,
-        rx,
+        branch_metadata: BranchMetadataPolicy::Preserve,
+        job: AsyncJob::new(rx),
     }
 }
 
@@ -337,7 +364,7 @@ fn pending_review_load() -> PendingReviewLoad {
     let (_tx, rx) = oneshot::channel();
     PendingReviewLoad {
         error_prefix: "review unavailable".to_owned(),
-        rx,
+        job: AsyncJob::new(rx),
     }
 }
 
@@ -373,9 +400,9 @@ fn syntax_job(key: SyntaxKey) -> SyntaxJob {
 
 fn full_file_syntax_job_source() -> SyntaxJobSource {
     SyntaxJobSource::FullFile(FullFileSource {
-        repo: PathBuf::from("/repo"),
+        repo: PathBuf::from("/repo").into(),
         kind: FullFileSourceKind::Worktree {
-            path: "file.rs".to_owned(),
+            path: "file.rs".into(),
         },
     })
 }
@@ -427,7 +454,7 @@ fn visible_paths(app: &DiffApp) -> Vec<&str> {
         .model
         .visible_files()
         .iter()
-        .filter_map(|file| app.document.changeset.files.get(*file))
+        .filter_map(|file| app.document.changeset.files.get(file.get()))
         .map(|file| file.display_path())
         .collect()
 }
@@ -478,26 +505,26 @@ fn assert_key_pair_moves_hunk_focus_when_diff_fits_viewport(forward: KeyCode, ba
     app.set_viewport_rows(20);
 
     assert_eq!(app.max_scroll(), 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 
     app.handle_key(KeyEvent::new(forward, KeyModifiers::NONE))
         .expect("forward key should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.handle_key(KeyEvent::new(forward, KeyModifiers::NONE))
         .expect("forward key should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 2)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_2)));
 
     app.handle_key(KeyEvent::new(backward, KeyModifiers::NONE))
         .expect("backward key should be handled");
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 1)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_1)));
 
     app.handle_key(KeyEvent::new(backward, KeyModifiers::NONE))
         .expect("backward key should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.focused_hunk_for_viewport(20), Some((0, 0)));
+    assert_eq!(app.focused_hunk_for_viewport(20), Some((FILE_0, HUNK_0)));
 }
 
 fn assert_key_pair_scrolls_then_moves_hunk_focus_at_edges(
@@ -524,14 +551,14 @@ fn assert_key_pair_scrolls_then_moves_hunk_focus_at_edges(
 
     let top_hunks = visible_hunk_keys(&app);
     assert!(top_hunks.len() >= 2);
-    app.viewport.manual_hunk_focus = Some(top_hunks[1]);
+    app.viewport.manual_hunk_focus = Some(typed_hunk_key(top_hunks[1]));
     app.handle_key(KeyEvent::new(backward, KeyModifiers::NONE))
         .expect("backward key should be handled");
     assert_eq!(app.viewport.scroll, 0);
-    assert_eq!(app.sidebar.selected_file, top_hunks[0].0);
+    assert_eq!(app.sidebar.selected_file, FileIndex::new(top_hunks[0].0));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some(top_hunks[0])
+        Some(typed_hunk_key(top_hunks[0]))
     );
 
     app.set_scroll(app.max_scroll());
@@ -540,14 +567,14 @@ fn assert_key_pair_scrolls_then_moves_hunk_focus_at_edges(
     assert!(bottom_hunks.len() >= 2);
     let previous = bottom_hunks[bottom_hunks.len() - 2];
     let next = bottom_hunks[bottom_hunks.len() - 1];
-    app.viewport.manual_hunk_focus = Some(previous);
+    app.viewport.manual_hunk_focus = Some(typed_hunk_key(previous));
     app.handle_key(KeyEvent::new(forward, KeyModifiers::NONE))
         .expect("forward key should be handled");
     assert_eq!(app.viewport.scroll, bottom_scroll);
-    assert_eq!(app.sidebar.selected_file, next.0);
+    assert_eq!(app.sidebar.selected_file, FileIndex::new(next.0));
     assert_eq!(
         app.focused_hunk_for_viewport(app.viewport.viewport_rows),
-        Some(next)
+        Some(typed_hunk_key(next))
     );
 }
 

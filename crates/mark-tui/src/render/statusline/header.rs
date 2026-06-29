@@ -227,7 +227,7 @@ pub(crate) fn statusline_file_label(app: &DiffApp, max_width: usize) -> String {
     let file_number = app
         .document
         .model
-        .visible_file_position(app.sidebar.selected_file)
+        .visible_file_position(app.sidebar.selected_file.get())
         .map(|position| position + 1)
         .unwrap_or_default();
     let position = format!("{file_number}/{file_count} {progress}");
@@ -236,7 +236,7 @@ pub(crate) fn statusline_file_label(app: &DiffApp, max_width: usize) -> String {
         .document
         .changeset
         .files
-        .get(app.sidebar.selected_file)
+        .get(app.sidebar.selected_file.get())
         .map(|file| file.display_path())
         .unwrap_or(fallback);
 

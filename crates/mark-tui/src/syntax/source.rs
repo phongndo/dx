@@ -7,7 +7,9 @@ use std::{
     process::Command,
 };
 
-use mark_diff::{DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource};
+use mark_diff::{
+    DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, RepoRelativePath, RepoRoot, RevSpec,
+};
 use mark_syntax::{SyntaxHighlighter, SyntaxLimits};
 use tokio::sync::mpsc::Sender;
 
@@ -71,26 +73,26 @@ impl SyntaxJobSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FullFileSource {
-    pub(crate) repo: PathBuf,
+    pub(crate) repo: RepoRoot,
     pub(crate) kind: FullFileSourceKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FullFileSourceKind {
     Worktree {
-        path: String,
+        path: RepoRelativePath,
     },
     GitRevision {
-        rev: String,
-        path: String,
+        rev: RevSpec,
+        path: RepoRelativePath,
     },
     GitIndex {
-        path: String,
+        path: RepoRelativePath,
     },
     GitMergeBase {
-        base: String,
-        head: String,
-        path: String,
+        base: RevSpec,
+        head: RevSpec,
+        path: RepoRelativePath,
     },
 }
 
@@ -138,8 +140,8 @@ pub(crate) fn load_job_source(
 
 pub(crate) fn syntax_path(file: &mark_diff::DiffFile, side: DiffSide) -> Option<&str> {
     match side {
-        DiffSide::Old => file.old_path.as_deref().or(file.new_path.as_deref()),
-        DiffSide::New => file.new_path.as_deref().or(file.old_path.as_deref()),
+        DiffSide::Old => file.old_path().or(file.new_path()),
+        DiffSide::New => file.new_path().or(file.old_path()),
     }
 }
 
@@ -153,16 +155,16 @@ pub(crate) fn build_hunk_source(
     let mut source_lines = 0;
 
     for (index, line) in lines.iter().enumerate() {
-        if !line_belongs_to_side(line.kind, side) {
+        if !line_belongs_to_side(line.kind(), side) {
             continue;
         }
-        if line.text.len() > limits.max_line_bytes {
+        if line.text().len() > limits.max_line_bytes {
             return Err(SyntaxSkipReason::TooLarge);
         }
         if source_lines > 0 {
             text.push('\n');
         }
-        text.push_str(&line.text);
+        text.push_str(line.text());
         if text.len() > limits.max_source_bytes {
             return Err(SyntaxSkipReason::TooLarge);
         }
@@ -189,7 +191,7 @@ pub(crate) fn build_full_file_line_map(
     let mut source_lines = 0;
 
     for (index, line) in lines.iter().enumerate() {
-        if !line_belongs_to_side(line.kind, side) {
+        if !line_belongs_to_side(line.kind(), side) {
             continue;
         }
 
@@ -212,8 +214,8 @@ pub(crate) fn build_full_file_line_map(
 
 pub(crate) fn diff_line_number(line: &DiffLine, side: DiffSide) -> Option<usize> {
     match side {
-        DiffSide::Old => line.old_line,
-        DiffSide::New => line.new_line,
+        DiffSide::Old => line.old_line(),
+        DiffSide::New => line.new_line(),
     }
 }
 
@@ -233,81 +235,88 @@ pub(crate) fn full_file_source(
         return None;
     }
 
-    let path = file_path_for_side(file, side)?.to_owned();
-    let kind = match (&options.source, options.scope, side) {
-        (DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }, _, _) => {
+    let path: RepoRelativePath = file_path_for_side(file, side)?.into();
+    let kind = match (&options.source, side) {
+        (DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }, _) => {
             return None;
         }
-        (DiffSource::Worktree, DiffScope::All, DiffSide::Old) => FullFileSourceKind::GitRevision {
-            rev: "HEAD".to_owned(),
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::All,
+            },
+            DiffSide::Old,
+        ) => FullFileSourceKind::GitRevision {
+            rev: "HEAD".into(),
             path,
         },
-        (DiffSource::Worktree, DiffScope::All, DiffSide::New) => {
-            FullFileSourceKind::Worktree { path }
-        }
-        (DiffSource::Worktree, DiffScope::Staged, DiffSide::Old) => {
-            FullFileSourceKind::GitRevision {
-                rev: "HEAD".to_owned(),
-                path,
-            }
-        }
-        (DiffSource::Worktree, DiffScope::Staged, DiffSide::New) => {
-            FullFileSourceKind::GitIndex { path }
-        }
-        (DiffSource::Worktree, DiffScope::Unstaged, DiffSide::Old) => {
-            FullFileSourceKind::GitIndex { path }
-        }
-        (DiffSource::Worktree, DiffScope::Unstaged, DiffSide::New) => {
-            FullFileSourceKind::Worktree { path }
-        }
-        (DiffSource::Base(base), DiffScope::All, DiffSide::Old) => {
-            FullFileSourceKind::GitMergeBase {
-                base: base.clone(),
-                head: "HEAD".to_owned(),
-                path,
-            }
-        }
-        (DiffSource::Base(_), DiffScope::All, DiffSide::New) => {
-            FullFileSourceKind::Worktree { path }
-        }
-        (DiffSource::Branch { base, head }, DiffScope::All, DiffSide::Old) => {
-            FullFileSourceKind::GitMergeBase {
-                base: base.clone(),
-                head: head.clone(),
-                path,
-            }
-        }
-        (DiffSource::Branch { head, .. }, DiffScope::All, DiffSide::New) => {
-            FullFileSourceKind::GitRevision {
-                rev: head.clone(),
-                path,
-            }
-        }
-        (DiffSource::Range { left, .. }, DiffScope::All, DiffSide::Old) => {
-            FullFileSourceKind::GitRevision {
-                rev: left.clone(),
-                path,
-            }
-        }
-        (DiffSource::Range { right, .. }, DiffScope::All, DiffSide::New) => {
-            FullFileSourceKind::GitRevision {
-                rev: right.clone(),
-                path,
-            }
-        }
-        _ => return None,
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::All,
+            },
+            DiffSide::New,
+        ) => FullFileSourceKind::Worktree { path },
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::Staged,
+            },
+            DiffSide::Old,
+        ) => FullFileSourceKind::GitRevision {
+            rev: "HEAD".into(),
+            path,
+        },
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::Staged,
+            },
+            DiffSide::New,
+        ) => FullFileSourceKind::GitIndex { path },
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::Unstaged,
+            },
+            DiffSide::Old,
+        ) => FullFileSourceKind::GitIndex { path },
+        (
+            DiffSource::Worktree {
+                scope: DiffScope::Unstaged,
+            },
+            DiffSide::New,
+        ) => FullFileSourceKind::Worktree { path },
+        (DiffSource::Base(base), DiffSide::Old) => FullFileSourceKind::GitMergeBase {
+            base: base.clone(),
+            head: "HEAD".into(),
+            path,
+        },
+        (DiffSource::Base(_), DiffSide::New) => FullFileSourceKind::Worktree { path },
+        (DiffSource::Branch { base, head }, DiffSide::Old) => FullFileSourceKind::GitMergeBase {
+            base: base.clone(),
+            head: head.clone(),
+            path,
+        },
+        (DiffSource::Branch { head, .. }, DiffSide::New) => FullFileSourceKind::GitRevision {
+            rev: head.clone(),
+            path,
+        },
+        (DiffSource::Range { left, .. }, DiffSide::Old) => FullFileSourceKind::GitRevision {
+            rev: left.clone(),
+            path,
+        },
+        (DiffSource::Range { right, .. }, DiffSide::New) => FullFileSourceKind::GitRevision {
+            rev: right.clone(),
+            path,
+        },
     };
 
     Some(FullFileSource {
-        repo: repo.to_owned(),
+        repo: repo.to_owned().into(),
         kind,
     })
 }
 
 pub(crate) fn file_path_for_side(file: &mark_diff::DiffFile, side: DiffSide) -> Option<&str> {
     match side {
-        DiffSide::Old => file.old_path.as_deref(),
-        DiffSide::New => file.new_path.as_deref(),
+        DiffSide::Old => file.old_path(),
+        DiffSide::New => file.new_path(),
     }
 }
 

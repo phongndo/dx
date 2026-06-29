@@ -326,7 +326,7 @@ fn sanitize_terminal_fragment(text: &str) -> Cow<'_, str> {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use mark_diff::{DiffFile, DiffHunk, DiffLine, DiffLineKind, FileStatus};
+    use mark_diff::{DiffFile, DiffHunk, DiffLine, FileChange, FileStatus, HunkLineRanges};
     use mark_syntax::{SyntaxLanguageSet, SyntaxLimits};
     use tokio::sync::mpsc;
 
@@ -473,8 +473,8 @@ mod tests {
     #[test]
     fn static_pager_preserves_tabs_in_diff_lines() {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[0].text = "\told".to_owned();
-        changeset.files[0].hunks[0].lines[1].text = "\tnew".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[0].text_mut() = "\told".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "\tnew".to_owned();
 
         let output = render_static_changeset(
             DiffOptions::default(),
@@ -495,8 +495,8 @@ mod tests {
     #[test]
     fn static_pager_escapes_cr_payloads_in_diff_lines() {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[0].text = "old\r".to_owned();
-        changeset.files[0].hunks[0].lines[1].text = "old".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[0].text_mut() = "old\r".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "old".to_owned();
 
         let output = render_static_changeset(
             DiffOptions::default(),
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn static_pager_escapes_utf8_c1_controls() {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[1].text = "safe\u{009b}31m".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "safe\u{009b}31m".to_owned();
 
         let output = render_static_changeset(
             DiffOptions::default(),
@@ -538,7 +538,8 @@ mod tests {
     #[test]
     fn static_pager_escapes_malformed_terminal_sequences() {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[1].text = "safe\x1b]unterminated\x1b[31".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() =
+            "safe\x1b]unterminated\x1b[31".to_owned();
 
         let output = render_static_changeset(
             DiffOptions::default(),
@@ -558,7 +559,7 @@ mod tests {
     #[test]
     fn static_pager_escapes_complete_terminal_sequences() {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[1].text = "\x1b[31mred\x1b[0m".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "\x1b[31mred\x1b[0m".to_owned();
 
         let output = render_static_changeset(
             DiffOptions::default(),
@@ -583,7 +584,7 @@ mod tests {
                 source: mark_diff::DiffSource::Patch(mark_diff::PatchSource::Stdin(
                     std::sync::Arc::from(b"not a patch".as_slice()),
                 )),
-                include_untracked: false,
+                local_untracked: mark_diff::UntrackedMode::Exclude,
                 ..DiffOptions::default()
             },
             StaticPagerOptions {
@@ -599,48 +600,37 @@ mod tests {
 
     fn fixture_changeset() -> Changeset {
         Changeset {
-            repo: std::path::PathBuf::new(),
+            repo: std::path::PathBuf::new().into(),
             title: "test".to_owned(),
             raw_patch: Vec::new(),
             files: vec![DiffFile {
-                old_path: Some("file.rs".to_owned()),
-                new_path: Some("file.rs".to_owned()),
-                status: FileStatus::Modified,
-                hunks: vec![DiffHunk {
-                    header: "@@ -1 +1 @@".to_owned(),
-                    old_start: 1,
-                    old_count: 1,
-                    new_start: 1,
-                    new_count: 1,
-                    lines: vec![
-                        DiffLine {
-                            kind: DiffLineKind::Deletion,
-                            old_line: Some(1),
-                            new_line: None,
-                            text: "old".to_owned(),
-                        },
-                        DiffLine {
-                            kind: DiffLineKind::Addition,
-                            old_line: None,
-                            new_line: Some(1),
-                            text: "new".to_owned(),
-                        },
-                    ],
-                }],
+                change: FileChange::from_status(
+                    FileStatus::Modified,
+                    Some("file.rs".to_owned()),
+                    Some("file.rs".to_owned()),
+                ),
                 additions: 1,
                 deletions: 1,
-                is_binary: false,
+                body: mark_diff::DiffFileBody::Text {
+                    hunks: vec![DiffHunk {
+                        header: "@@ -1 +1 @@".to_owned(),
+                        ranges: HunkLineRanges::new(1, 1, 1, 1),
+                        lines: vec![
+                            DiffLine::deletion(1, "old".to_owned()),
+                            DiffLine::addition(1, "new".to_owned()),
+                        ],
+                    }],
+                },
             }],
         }
     }
 
     fn wrapping_static_changeset() -> Changeset {
         let mut changeset = fixture_changeset();
-        changeset.files[0].hunks[0].lines[0].text = "a".repeat(160);
-        changeset.files[0].hunks[0].lines[1].text = "b".repeat(160);
+        *changeset.files[0].hunks_mut()[0].lines[0].text_mut() = "a".repeat(160);
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "b".repeat(160);
         let mut second = changeset.files[0].clone();
-        second.old_path = Some("second.rs".to_owned());
-        second.new_path = Some("second.rs".to_owned());
+        second.change = FileChange::modified("second.rs");
         changeset.files.push(second);
         changeset
     }
@@ -668,9 +658,9 @@ mod tests {
 
     fn unsafe_changeset() -> Changeset {
         let mut changeset = fixture_changeset();
-        changeset.files[0].new_path = Some("bad\x1b]52;c;secret\x07.txt".to_owned());
-        changeset.files[0].hunks[0].header = "@@ -1 +1 @@\x1b[2J".to_owned();
-        changeset.files[0].hunks[0].lines[1].text = "safe\x1b[2J".to_owned();
+        changeset.files[0].change = FileChange::modified("bad\x1b]52;c;secret\x07.txt");
+        changeset.files[0].hunks_mut()[0].header = "@@ -1 +1 @@\x1b[2J".to_owned();
+        *changeset.files[0].hunks_mut()[0].lines[1].text_mut() = "safe\x1b[2J".to_owned();
         changeset
     }
 }

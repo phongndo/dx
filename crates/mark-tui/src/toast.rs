@@ -3,17 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mark_syntax::{
-    MAX_NOTIFICATION_TIMEOUT_MS, NotificationMode, NotificationSettings, ToastCorner,
-};
-
-fn normalize_max_visible(max_visible: usize) -> usize {
-    max_visible.max(1)
-}
-
-fn normalize_timeout(timeout_ms: u64) -> Duration {
-    Duration::from_millis(timeout_ms.min(MAX_NOTIFICATION_TIMEOUT_MS))
-}
+use mark_syntax::{NotificationMode, NotificationSettings, ToastCorner};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToastLevel {
@@ -44,18 +34,18 @@ impl Toasts {
     pub(crate) fn new(settings: NotificationSettings) -> Self {
         Self {
             items: VecDeque::new(),
-            mode: settings.mode,
-            corner: settings.corner,
-            timeout: normalize_timeout(settings.timeout_ms),
-            max_visible: normalize_max_visible(settings.max_visible),
+            mode: settings.mode(),
+            corner: settings.corner(),
+            timeout: Duration::from_millis(settings.timeout().get()),
+            max_visible: settings.visible_count().get(),
         }
     }
 
     pub(crate) fn configure(&mut self, settings: NotificationSettings) {
-        self.mode = settings.mode;
-        self.corner = settings.corner;
-        self.timeout = normalize_timeout(settings.timeout_ms);
-        self.max_visible = normalize_max_visible(settings.max_visible);
+        self.mode = settings.mode();
+        self.corner = settings.corner();
+        self.timeout = Duration::from_millis(settings.timeout().get());
+        self.max_visible = settings.visible_count().get();
         while self.items.len() > self.max_visible {
             self.items.pop_front();
         }

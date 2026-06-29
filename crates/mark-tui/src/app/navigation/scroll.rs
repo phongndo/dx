@@ -4,6 +4,7 @@ use super::super::{
     DiffApp, HunkFocusScrollBehavior, MouseScrollDirection, diff_content_width,
     hunk_focus_row_range, max_scroll_for_annotated_viewport, viewport_center_offset,
 };
+use crate::model::FileIndex;
 use crate::render::annotations::{annotation_compose_block_height, annotation_saved_block_height};
 
 impl DiffApp {
@@ -143,7 +144,7 @@ impl DiffApp {
         } else {
             self.document.model.file_at_row(self.viewport.scroll)
         } {
-            self.sidebar.selected_file = file;
+            self.sidebar.selected_file = FileIndex::new(file);
         }
         if sync_grep && self.viewport.scroll != previous_scroll {
             self.sync_grep_match_selection_to_scroll();

@@ -1,5 +1,8 @@
 use super::{DiffApp, HunkFocusModelBehavior, HunkFocusScrollBehavior, MAX_LIVE_GREP_MATCHES};
-use crate::model::{ContextKey, ContextSourceEntry, ContextSourceKey, UiRow, context_expands_up};
+use crate::model::{
+    ContextKey, ContextSourceEntry, ContextSourceKey, FileIndex, HunkIndex, UiRow,
+    context_expands_up,
+};
 use crate::search::grep_match_rows;
 use crate::syntax::{
     DiffSide, available_context_lines, full_file_source, load_full_file_source,
@@ -11,7 +14,10 @@ use unicode_width::UnicodeWidthStr;
 impl DiffApp {
     pub(super) fn context_source_line_count(&self, file: usize) -> Option<(DiffSide, usize)> {
         for side in [DiffSide::New, DiffSide::Old] {
-            let key = ContextSourceKey { file, side };
+            let key = ContextSourceKey {
+                file: FileIndex::new(file),
+                side,
+            };
             match self.document.context_cache.get(&key) {
                 Some(ContextSourceEntry::Lines(lines)) => return Some((side, lines.len())),
                 Some(ContextSourceEntry::Unavailable) => continue,
@@ -28,7 +34,9 @@ impl DiffApp {
     pub(crate) fn handle_context_at_row(&mut self, row_index: usize) -> bool {
         match self.document.model.row(row_index) {
             Some(UiRow::Collapsed { .. }) => self.expand_context_at_row(row_index),
-            Some(UiRow::ContextHide { file, hunk, .. }) => self.hide_context(file, hunk),
+            Some(UiRow::ContextHide { file, hunk, .. }) => {
+                self.hide_context(file.get(), hunk.get())
+            }
             _ => false,
         }
     }
@@ -41,45 +49,46 @@ impl DiffApp {
         let target_hunk = if direction < 0 {
             hunk
         } else {
-            let Some(next_hunk) = hunk.checked_add(1) else {
+            let Some(next_hunk) = hunk.get().checked_add(1).map(crate::model::HunkIndex::new)
+            else {
                 return false;
             };
             let Some(hunk_count) = self
                 .document
                 .changeset
                 .files
-                .get(file)
-                .map(|file_diff| file_diff.hunks.len())
+                .get(file.get())
+                .map(|file_diff| file_diff.hunks().len())
             else {
                 return false;
             };
-            if next_hunk == hunk_count {
-                return self.expand_trailing_context_for_key(file, next_hunk);
+            if next_hunk.get() == hunk_count {
+                return self.expand_trailing_context_for_key(file.get(), next_hunk.get());
             }
-            if next_hunk > hunk_count {
+            if next_hunk.get() > hunk_count {
                 return false;
             }
             next_hunk
         };
 
-        self.expand_context_for_key(file, target_hunk)
+        self.expand_context_for_key(file.get(), target_hunk.get())
     }
 
     pub(crate) fn expand_trailing_context_for_key(&mut self, file: usize, hunk: usize) -> bool {
         let Some(file_diff) = self.document.changeset.files.get(file) else {
             return false;
         };
-        if hunk != file_diff.hunks.len() {
+        if hunk != file_diff.hunks().len() {
             return false;
         }
         let Some(last_hunk) = hunk
             .checked_sub(1)
-            .and_then(|hunk| file_diff.hunks.get(hunk))
+            .and_then(|hunk| file_diff.hunks().get(hunk))
         else {
             return false;
         };
-        let old_start = last_hunk.old_start.saturating_add(last_hunk.old_count);
-        let new_start = last_hunk.new_start.saturating_add(last_hunk.new_count);
+        let old_start = last_hunk.old_start().saturating_add(last_hunk.old_count());
+        let new_start = last_hunk.new_start().saturating_add(last_hunk.new_count());
 
         let Some((side, source_lines)) = self.ensure_context_lines(file) else {
             self.set_notice("context unavailable for this diff");
@@ -94,7 +103,10 @@ impl DiffApp {
         let current = self
             .document
             .context_expansions
-            .get(&ContextKey { file, hunk })
+            .get(&ContextKey {
+                file: FileIndex::new(file),
+                hunk: HunkIndex::new(hunk),
+            })
             .copied()
             .unwrap_or_default()
             .min(available);
@@ -108,9 +120,13 @@ impl DiffApp {
             source_start,
             current..available,
         );
-        self.document
-            .context_expansions
-            .insert(ContextKey { file, hunk }, available);
+        self.document.context_expansions.insert(
+            ContextKey {
+                file: FileIndex::new(file),
+                hunk: HunkIndex::new(hunk),
+            },
+            available,
+        );
         self.rebuild_model_after_context_visibility_change();
         true
     }
@@ -123,7 +139,7 @@ impl DiffApp {
                     file: row_file,
                     hunk: row_hunk,
                     ..
-                } if *row_file == file && *row_hunk == hunk
+                } if row_file.get() == file && row_hunk.get() == hunk
             )
         }) else {
             return false;
@@ -145,7 +161,7 @@ impl DiffApp {
             return false;
         };
 
-        let Some((side, source_lines)) = self.ensure_context_lines(file) else {
+        let Some((side, source_lines)) = self.ensure_context_lines(file.get()) else {
             self.set_warning_notice("context unavailable for this diff");
             return true;
         };
@@ -184,7 +200,10 @@ impl DiffApp {
         if self
             .document
             .context_expansions
-            .remove(&ContextKey { file, hunk })
+            .remove(&ContextKey {
+                file: FileIndex::new(file),
+                hunk: HunkIndex::new(hunk),
+            })
             .is_none()
         {
             return false;
@@ -261,11 +280,10 @@ impl DiffApp {
 
     pub(crate) fn context_source_side(&self, file: usize) -> Option<DiffSide> {
         for side in [DiffSide::New, DiffSide::Old] {
-            match self
-                .document
-                .context_cache
-                .get(&ContextSourceKey { file, side })
-            {
+            match self.document.context_cache.get(&ContextSourceKey {
+                file: FileIndex::new(file),
+                side,
+            }) {
                 Some(ContextSourceEntry::Lines(_)) => return Some(side),
                 Some(ContextSourceEntry::Unavailable) => continue,
                 None if self.has_context_source(file, side) => return Some(side),
@@ -280,7 +298,10 @@ impl DiffApp {
         file: usize,
         side: DiffSide,
     ) -> Option<Arc<Vec<String>>> {
-        let key = ContextSourceKey { file, side };
+        let key = ContextSourceKey {
+            file: FileIndex::new(file),
+            side,
+        };
         if !self.document.context_cache.contains_key(&key) {
             let entry = self
                 .load_context_lines(file, side)

@@ -8,16 +8,18 @@ use crate::annotation::{AnnotationDraft, AnnotationStore};
 use crate::controls::{BranchMenu, DiffFilterKind, DiffLayoutMode, GitCommit};
 use crate::keymap::{KeyPress, Keymap};
 use crate::live_diff::live_diff_supported;
-use crate::model::{ContextKey, ContextSourceEntry, ContextSourceKey, UiModel};
+use crate::model::{
+    ContextKey, ContextSourceEntry, ContextSourceKey, FileIndex, HunkIndex, ModelRow, UiModel,
+};
 use crate::render::snapshot::HitMap;
-use crate::search::DiffSearchIndex;
+use crate::search::{DiffSearchIndex, SearchMatchIndex};
 use crate::selector::SelectorState;
 use crate::syntax::{InlineHunkEmphasisCache, InlineHunkKey, LruCache, SyntaxRuntime};
 use crate::text_input::{TextInputKeyResult, handle_text_input_key};
 use crate::theme::{DiffTheme, EVENT_POLL};
 use crate::toast::{ToastLevel, Toasts};
 use crossterm::event::KeyEvent;
-use mark_diff::{Changeset, DiffOptions, DiffStats};
+use mark_diff::{BranchName, Changeset, DiffOptions, DiffStats};
 use mark_syntax::{ColorOverrides, SyntaxLimits, SyntaxSettings};
 use ratatui::layout::Rect;
 use std::cell::RefCell;
@@ -54,7 +56,7 @@ pub(crate) struct ViewportState {
     pub(crate) viewport_rows: usize,
     pub(crate) viewport_width: usize,
     pub(crate) wrapped_visual_layout: RefCell<Option<WrappedVisualLayout>>,
-    pub(crate) manual_hunk_focus: Option<(usize, usize)>,
+    pub(crate) manual_hunk_focus: Option<(FileIndex, HunkIndex)>,
     pub(crate) terminal_area: Rect,
     pub(crate) rendered_diff_area: Option<Rect>,
     pub(crate) mouse_hover: Option<(u16, u16)>,
@@ -82,7 +84,7 @@ impl ViewportState {
 
 #[derive(Debug)]
 pub(crate) struct FileSidebarState {
-    pub(crate) selected_file: usize,
+    pub(crate) selected_file: FileIndex,
     pub(crate) file_sidebar_open: bool,
     pub(crate) file_sidebar_scroll: usize,
     pub(crate) file_sidebar_width: Option<u16>,
@@ -121,22 +123,17 @@ pub(crate) struct AnnotationState {
 
 #[derive(Debug)]
 pub(crate) struct OverlayState {
-    pub(crate) help_menu_open: bool,
+    pub(crate) active_overlay: ActiveOverlay,
     pub(crate) help_menu_input: String,
     pub(crate) help_menu_input_cursor: usize,
     pub(crate) help_menu_scroll: usize,
     pub(crate) help_menu_visible_rows: usize,
-    pub(crate) diff_menu_open: bool,
     pub(crate) diff_menu: SelectorState,
-    pub(crate) review_input_open: bool,
     pub(crate) review_input: String,
     pub(crate) review_input_cursor: usize,
-    pub(crate) options_menu_open: bool,
     pub(crate) options_menu: SelectorState,
-    pub(crate) annotation_menu_open: bool,
     pub(crate) annotation_menu: SelectorState,
     pub(crate) options_menu_draft: OptionsDraft,
-    pub(crate) color_scheme_picker_open: bool,
     pub(crate) color_scheme_picker: SelectorState,
     pub(crate) color_scheme_preview_original: Option<(ColorSchemeChoice, DiffTheme)>,
     pub(crate) rendered_diff_menu_area: Option<Rect>,
@@ -147,60 +144,123 @@ pub(crate) struct OverlayState {
     pub(crate) rendered_color_scheme_picker_area: Option<Rect>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ActiveOverlay {
+    #[default]
+    None,
+    HelpMenu,
+    DiffMenu,
+    ReviewInput,
+    OptionsMenu(OptionsOverlayMode),
+    AnnotationMenu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OptionsOverlayMode {
+    Menu,
+    ColorSchemePicker,
+}
+
 impl OverlayState {
     pub(crate) fn help_menu_is_open(&self) -> bool {
-        self.help_menu_open
+        self.active_overlay == ActiveOverlay::HelpMenu
     }
 
     pub(crate) fn diff_menu_is_open(&self) -> bool {
-        self.diff_menu_open
+        self.active_overlay == ActiveOverlay::DiffMenu
     }
 
     pub(crate) fn review_input_is_open(&self) -> bool {
-        self.review_input_open
+        self.active_overlay == ActiveOverlay::ReviewInput
     }
 
     pub(crate) fn options_menu_is_open(&self) -> bool {
-        self.options_menu_open
+        matches!(self.active_overlay, ActiveOverlay::OptionsMenu(_))
     }
 
     pub(crate) fn annotation_menu_is_open(&self) -> bool {
-        self.annotation_menu_open
+        self.active_overlay == ActiveOverlay::AnnotationMenu
     }
 
     pub(crate) fn color_scheme_picker_is_open(&self) -> bool {
-        self.color_scheme_picker_open
+        self.active_overlay == ActiveOverlay::OptionsMenu(OptionsOverlayMode::ColorSchemePicker)
+    }
+
+    pub(crate) fn open_help_menu(&mut self) {
+        self.active_overlay = ActiveOverlay::HelpMenu;
+    }
+
+    pub(crate) fn open_diff_menu(&mut self) {
+        self.active_overlay = ActiveOverlay::DiffMenu;
+    }
+
+    pub(crate) fn open_options_menu(&mut self) {
+        self.active_overlay = ActiveOverlay::OptionsMenu(OptionsOverlayMode::Menu);
+    }
+
+    pub(crate) fn open_annotation_menu(&mut self) {
+        self.active_overlay = ActiveOverlay::AnnotationMenu;
+    }
+
+    pub(crate) fn hide_diff_menu(&mut self) {
+        if self.diff_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
+        self.diff_menu.reset_input();
+        self.rendered_diff_menu_area = None;
+    }
+
+    pub(crate) fn hide_options_menu(&mut self) {
+        if self.options_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
+    }
+
+    pub(crate) fn close_help_menu(&mut self) {
+        if self.help_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
+        self.help_menu_input.clear();
+        self.help_menu_input_cursor = 0;
+        self.help_menu_scroll = 0;
     }
 
     pub(crate) fn close_diff_menu(&mut self) -> bool {
-        if !self.diff_menu_open
+        if !self.diff_menu_is_open()
             && self.diff_menu.input.is_empty()
             && self.rendered_diff_menu_area.is_none()
         {
             return false;
         }
 
-        self.diff_menu_open = false;
+        if self.diff_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
         self.diff_menu.reset_input();
         self.rendered_diff_menu_area = None;
         true
     }
 
     pub(crate) fn close_options_menu(&mut self) -> bool {
-        if !self.options_menu_open
+        if !self.options_menu_is_open()
             && self.options_menu.input.is_empty()
             && self.options_menu.scroll == 0
         {
             return false;
         }
 
-        self.options_menu_open = false;
+        if self.options_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
         self.options_menu.reset();
+        self.color_scheme_picker.reset_input_and_scroll();
+        self.color_scheme_preview_original = None;
+        self.rendered_color_scheme_picker_area = None;
         true
     }
 
     pub(crate) fn close_annotation_menu(&mut self) -> bool {
-        if !self.annotation_menu_open
+        if !self.annotation_menu_is_open()
             && self.annotation_menu.input.is_empty()
             && self.annotation_menu.scroll == 0
             && self.rendered_annotation_menu_area.is_none()
@@ -208,7 +268,9 @@ impl OverlayState {
             return false;
         }
 
-        self.annotation_menu_open = false;
+        if self.annotation_menu_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
         self.annotation_menu.reset();
         self.rendered_annotation_menu_area = None;
         true
@@ -217,35 +279,50 @@ impl OverlayState {
     pub(crate) fn open_review_input(&mut self) {
         self.review_input.clear();
         self.review_input_cursor = 0;
-        self.review_input_open = true;
+        self.active_overlay = ActiveOverlay::ReviewInput;
     }
 
     pub(crate) fn close_review_input(&mut self) -> bool {
-        if !self.review_input_open
+        if !self.review_input_is_open()
             && self.review_input.is_empty()
             && self.rendered_review_input_area.is_none()
         {
             return false;
         }
 
-        self.review_input_open = false;
+        if self.review_input_is_open() {
+            self.active_overlay = ActiveOverlay::None;
+        }
         self.review_input.clear();
         self.review_input_cursor = 0;
         self.rendered_review_input_area = None;
         true
     }
 
+    pub(crate) fn open_color_scheme_picker(&mut self) {
+        self.active_overlay = ActiveOverlay::OptionsMenu(OptionsOverlayMode::ColorSchemePicker);
+    }
+
     pub(crate) fn close_color_scheme_picker(
         &mut self,
     ) -> (bool, Option<(ColorSchemeChoice, DiffTheme)>) {
-        if !self.color_scheme_picker_open {
+        if !self.color_scheme_picker_is_open() {
             return (false, None);
         }
 
-        self.color_scheme_picker_open = false;
+        self.active_overlay = ActiveOverlay::OptionsMenu(OptionsOverlayMode::Menu);
         self.color_scheme_picker.reset_input_and_scroll();
         self.rendered_color_scheme_picker_area = None;
         (true, self.color_scheme_preview_original.take())
+    }
+
+    pub(crate) fn accept_color_scheme_picker(&mut self) {
+        if self.color_scheme_picker_is_open() {
+            self.active_overlay = ActiveOverlay::OptionsMenu(OptionsOverlayMode::Menu);
+        }
+        self.color_scheme_preview_original = None;
+        self.color_scheme_picker.reset_input_and_scroll();
+        self.rendered_color_scheme_picker_area = None;
     }
 }
 
@@ -258,9 +335,9 @@ pub(crate) struct FilterState {
     pub(crate) grep_filter: String,
     pub(crate) grep_filter_input: String,
     pub(crate) grep_filter_input_cursor: usize,
-    pub(crate) grep_matches: Vec<usize>,
+    pub(crate) grep_matches: Vec<ModelRow>,
     pub(crate) grep_matches_truncated: bool,
-    pub(crate) selected_grep_match: Option<usize>,
+    pub(crate) selected_grep_match: Option<SearchMatchIndex>,
 }
 
 impl FilterState {
@@ -355,29 +432,51 @@ impl FilterState {
 
 #[derive(Debug)]
 pub(crate) struct ReferenceState {
-    pub(crate) branch_menu_open: Option<BranchMenu>,
+    pub(crate) active_menu: ActiveReferenceMenu,
     pub(crate) branch_menu: SelectorState,
     pub(crate) branch_base: Option<String>,
     pub(crate) branch_head: Option<String>,
     pub(crate) current_head: Option<String>,
-    pub(crate) comparison_branches: Vec<String>,
-    pub(crate) commit_menu_open: bool,
+    pub(crate) comparison_branches: Vec<BranchName>,
     pub(crate) commit_menu: SelectorState,
     pub(crate) show_rev: Option<String>,
     pub(crate) comparison_commits: Vec<GitCommit>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ActiveReferenceMenu {
+    #[default]
+    None,
+    Branch(BranchMenu),
+    Commit,
+}
+
 impl ReferenceState {
+    pub(crate) fn branch_menu_open(&self) -> Option<BranchMenu> {
+        match self.active_menu {
+            ActiveReferenceMenu::Branch(menu) => Some(menu),
+            ActiveReferenceMenu::None | ActiveReferenceMenu::Commit => None,
+        }
+    }
+
     pub(crate) fn branch_menu_is_open(&self) -> bool {
-        self.branch_menu_open.is_some()
+        self.branch_menu_open().is_some()
     }
 
     pub(crate) fn commit_menu_is_open(&self) -> bool {
-        self.commit_menu_open
+        self.active_menu == ActiveReferenceMenu::Commit
+    }
+
+    pub(crate) fn open_branch_menu(&mut self, menu: BranchMenu) {
+        self.active_menu = ActiveReferenceMenu::Branch(menu);
+    }
+
+    pub(crate) fn open_commit_menu(&mut self) {
+        self.active_menu = ActiveReferenceMenu::Commit;
     }
 
     pub(crate) fn close_branch_menu(&mut self, overlays: &mut OverlayState) -> bool {
-        if self.branch_menu_open.is_none()
+        if !self.branch_menu_is_open()
             && self.branch_menu.input.is_empty()
             && self.branch_menu.scroll == 0
             && overlays.rendered_branch_menu_area.is_none()
@@ -385,14 +484,16 @@ impl ReferenceState {
             return false;
         }
 
-        self.branch_menu_open = None;
+        if self.branch_menu_is_open() {
+            self.active_menu = ActiveReferenceMenu::None;
+        }
         self.branch_menu.reset();
         overlays.rendered_branch_menu_area = None;
         true
     }
 
     pub(crate) fn close_commit_menu(&mut self, overlays: &mut OverlayState) -> bool {
-        if !self.commit_menu_open
+        if !self.commit_menu_is_open()
             && self.commit_menu.input.is_empty()
             && self.commit_menu.scroll == 0
             && overlays.rendered_commit_menu_area.is_none()
@@ -400,7 +501,9 @@ impl ReferenceState {
             return false;
         }
 
-        self.commit_menu_open = false;
+        if self.commit_menu_is_open() {
+            self.active_menu = ActiveReferenceMenu::None;
+        }
         self.commit_menu.reset();
         overlays.rendered_commit_menu_area = None;
         true
@@ -413,10 +516,7 @@ pub(crate) struct JobState {
     pub(crate) editor_reload: Option<EditorReloadWorker>,
     pub(crate) pending_editor_reload: Option<EditorReloadRequest>,
     pub(crate) post_editor_quit_key_ignore_until: Option<Instant>,
-    pub(crate) live_updates_allowed: bool,
-    pub(crate) live_updates_enabled: bool,
-    pub(crate) live_reload_invalidated: bool,
-    pub(crate) live_reload_pending: bool,
+    pub(crate) live_updates: LiveUpdatesState,
     pub(crate) pending_diff_load: Option<PendingDiffLoad>,
     pub(crate) pending_review_load: Option<PendingReviewLoad>,
     pub(crate) diff_cache: Vec<DiffCacheEntry>,
@@ -429,12 +529,81 @@ pub(crate) struct JobState {
     pub(crate) filter_searching: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveUpdatesState {
+    DisabledByCli,
+    DisabledByUser,
+    Enabled(LiveReloadStatus),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveReloadStatus {
+    Idle,
+    Invalidated,
+    Pending,
+}
+
+impl LiveUpdatesState {
+    pub(crate) fn from_allowed_and_enabled(allowed: bool, enabled: bool) -> Self {
+        if !allowed {
+            Self::DisabledByCli
+        } else if enabled {
+            Self::Enabled(LiveReloadStatus::Idle)
+        } else {
+            Self::DisabledByUser
+        }
+    }
+
+    pub(crate) fn allowed(self) -> bool {
+        !matches!(self, Self::DisabledByCli)
+    }
+
+    pub(crate) fn enabled(self) -> bool {
+        matches!(self, Self::Enabled(_))
+    }
+
+    pub(crate) fn status(self) -> Option<LiveReloadStatus> {
+        match self {
+            Self::Enabled(status) => Some(status),
+            Self::DisabledByCli | Self::DisabledByUser => None,
+        }
+    }
+
+    pub(crate) fn set_user_enabled(&mut self, enabled: bool) {
+        if !self.allowed() {
+            return;
+        }
+        *self = if enabled {
+            Self::Enabled(LiveReloadStatus::Idle)
+        } else {
+            Self::DisabledByUser
+        };
+    }
+
+    pub(crate) fn reset_reload(&mut self) {
+        if self.enabled() {
+            *self = Self::Enabled(LiveReloadStatus::Idle);
+        }
+    }
+
+    pub(crate) fn mark_invalidated(&mut self) {
+        match self {
+            Self::Enabled(LiveReloadStatus::Pending) => {}
+            Self::Enabled(status) => *status = LiveReloadStatus::Invalidated,
+            Self::DisabledByCli | Self::DisabledByUser => {}
+        }
+    }
+
+    pub(crate) fn mark_pending(&mut self) {
+        if self.enabled() {
+            *self = Self::Enabled(LiveReloadStatus::Pending);
+        }
+    }
+}
+
 impl JobState {
     pub(crate) fn diff_cache_invalidator_active(&self, options: &DiffOptions) -> bool {
-        self.live_updates_allowed
-            && self.live_updates_enabled
-            && !self.live_reload_invalidated
-            && !self.live_reload_pending
+        self.live_updates.status() == Some(LiveReloadStatus::Idle)
             && live_diff_supported(options)
             && self.live_diff_failed_options.as_ref() != Some(options)
     }
@@ -464,12 +633,11 @@ impl JobState {
     }
 
     pub(crate) fn mark_live_reload_invalidated(&mut self) {
-        self.live_reload_invalidated = true;
+        self.live_updates.mark_invalidated();
     }
 
     pub(crate) fn mark_live_reload_pending(&mut self) {
-        self.mark_live_reload_invalidated();
-        self.live_reload_pending = true;
+        self.live_updates.mark_pending();
     }
 }
 

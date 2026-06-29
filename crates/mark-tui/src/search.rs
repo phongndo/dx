@@ -7,48 +7,57 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     controls::diff_line_grep_prefix,
-    model::{UiModel, UiRow},
+    model::{DiffLineIndex, FileIndex, HunkIndex, ModelRow, UiModel, UiRow},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum SearchLineRef {
-    FileBody { file: u32 },
-    HunkHeader { file: u32, hunk: u32 },
-    DiffLine { file: u32, hunk: u32, line: u32 },
+    FileBody {
+        file: FileIndex,
+    },
+    HunkHeader {
+        file: FileIndex,
+        hunk: HunkIndex,
+    },
+    DiffLine {
+        file: FileIndex,
+        hunk: HunkIndex,
+        line: DiffLineIndex,
+    },
 }
 
 impl SearchLineRef {
-    fn file_body(file: usize) -> Self {
-        Self::FileBody {
-            file: compact_index(file),
-        }
+    fn file_body(file: FileIndex) -> Self {
+        Self::FileBody { file }
     }
 
-    fn hunk_header(file: usize, hunk: usize) -> Self {
-        Self::HunkHeader {
-            file: compact_index(file),
-            hunk: compact_index(hunk),
-        }
+    fn hunk_header(file: FileIndex, hunk: HunkIndex) -> Self {
+        Self::HunkHeader { file, hunk }
     }
 
-    fn diff_line(file: usize, hunk: usize, line: usize) -> Self {
-        Self::DiffLine {
-            file: compact_index(file),
-            hunk: compact_index(hunk),
-            line: compact_index(line),
-        }
+    fn diff_line(file: FileIndex, hunk: HunkIndex, line: DiffLineIndex) -> Self {
+        Self::DiffLine { file, hunk, line }
     }
-}
-
-fn compact_index(index: usize) -> u32 {
-    u32::try_from(index).expect("diff search indices should fit in u32")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DiffSearchResult {
-    pub(crate) visible_files: Vec<usize>,
+    pub(crate) visible_files: Vec<FileIndex>,
     pub(crate) grep_matches: Vec<SearchLineRef>,
     pub(crate) grep_matches_truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct SearchMatchIndex(usize);
+
+impl SearchMatchIndex {
+    pub(crate) const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub(crate) const fn get(self) -> usize {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -79,34 +88,37 @@ impl DiffSearchIndex {
             .iter()
             .enumerate()
             .map(|(file_index, file)| {
+                let file_index = FileIndex::new(file_index);
                 let mut filter_texts = Vec::with_capacity(4);
                 filter_texts.push(file.display_path().to_ascii_lowercase());
-                if let Some(old_path) = &file.old_path
+                if let Some(old_path) = file.old_path()
                     && old_path != file.display_path()
                 {
                     filter_texts.push(old_path.to_ascii_lowercase());
                 }
-                if let Some(new_path) = &file.new_path
+                if let Some(new_path) = file.new_path()
                     && new_path != file.display_path()
                 {
                     filter_texts.push(new_path.to_ascii_lowercase());
                 }
-                filter_texts.push(file.status.label().to_ascii_lowercase());
+                filter_texts.push(file.status().label().to_ascii_lowercase());
 
                 let grep_line_count = file
-                    .hunks
+                    .hunks()
                     .iter()
                     .map(|hunk| hunk.lines.len().saturating_add(1))
                     .sum::<usize>()
-                    .saturating_add(usize::from(file.is_binary || file.hunks.is_empty()));
+                    .saturating_add(usize::from(
+                        file.is_binary() || file.has_no_textual_changes(),
+                    ));
                 let grep_text_bytes = file
-                    .hunks
+                    .hunks()
                     .iter()
                     .map(|hunk| {
                         hunk.header.len().saturating_add(1).saturating_add(
                             hunk.lines
                                 .iter()
-                                .map(|line| line.text.len().saturating_add(2))
+                                .map(|line| line.text().len().saturating_add(2))
                                 .sum::<usize>(),
                         )
                     })
@@ -115,7 +127,8 @@ impl DiffSearchIndex {
                 let mut grep_lines = Vec::with_capacity(grep_line_count);
                 let mut max_line_width = 0usize;
 
-                for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+                for (hunk_index, hunk) in file.hunks().iter().enumerate() {
+                    let hunk_index = HunkIndex::new(hunk_index);
                     push_search_line(
                         &mut grep_text,
                         &mut grep_lines,
@@ -123,26 +136,27 @@ impl DiffSearchIndex {
                         hunk.header.as_bytes(),
                     );
                     for (line_index, line) in hunk.lines.iter().enumerate() {
-                        max_line_width = max_line_width.max(display_width(&line.text));
-                        let prefix = diff_line_grep_prefix(line.kind) as u8;
+                        let line_index = DiffLineIndex::new(line_index);
+                        max_line_width = max_line_width.max(display_width(line.text()));
+                        let prefix = diff_line_grep_prefix(line.kind()) as u8;
                         push_prefixed_search_line(
                             &mut grep_text,
                             &mut grep_lines,
                             SearchLineRef::diff_line(file_index, hunk_index, line_index),
                             prefix,
-                            line.text.as_bytes(),
+                            line.text().as_bytes(),
                         );
                     }
                 }
 
-                if file.is_binary {
+                if file.is_binary() {
                     push_search_line(
                         &mut grep_text,
                         &mut grep_lines,
                         SearchLineRef::file_body(file_index),
                         b"binary file",
                     );
-                } else if file.hunks.is_empty() {
+                } else if file.has_no_textual_changes() {
                     push_search_line(
                         &mut grep_text,
                         &mut grep_lines,
@@ -183,6 +197,7 @@ impl DiffSearchIndex {
         let mut grep_matches_truncated = false;
 
         for (file_index, file) in self.files.iter().enumerate() {
+            let file_index = FileIndex::new(file_index);
             if !file.matches_file_filter(&file_query) {
                 continue;
             }
@@ -237,10 +252,10 @@ impl DiffSearchIndex {
             .unwrap_or_default()
     }
 
-    pub(crate) fn max_line_width_for_files(&self, files: &[usize]) -> usize {
+    pub(crate) fn max_line_width_for_files(&self, files: &[FileIndex]) -> usize {
         files
             .iter()
-            .filter_map(|file| self.files.get(*file))
+            .filter_map(|file| self.files.get(file.get()))
             .map(|file| file.max_line_width)
             .max()
             .unwrap_or_default()
@@ -455,7 +470,7 @@ impl Sink for FirstMatchSink {
     }
 }
 
-pub(crate) fn grep_match_rows(model: &UiModel, grep_matches: &[SearchLineRef]) -> Vec<usize> {
+pub(crate) fn grep_match_rows(model: &UiModel, grep_matches: &[SearchLineRef]) -> Vec<ModelRow> {
     if grep_matches.is_empty() {
         return Vec::new();
     }
@@ -465,7 +480,9 @@ pub(crate) fn grep_match_rows(model: &UiModel, grep_matches: &[SearchLineRef]) -
         .rows
         .iter()
         .enumerate()
-        .filter_map(|(row_index, row)| row_matches_grep_refs(*row, &matches).then_some(row_index))
+        .filter_map(|(row_index, row)| {
+            row_matches_grep_refs(*row, &matches).then_some(ModelRow::new(row_index))
+        })
         .collect()
 }
 
@@ -476,7 +493,7 @@ fn row_matches_grep_refs(row: UiRow, matches: &HashSet<SearchLineRef>) -> bool {
         | UiRow::Collapsed { .. }
         | UiRow::ContextLine { .. }
         | UiRow::ContextHide { .. } => false,
-        UiRow::BinaryFile(file) => matches.contains(&SearchLineRef::file_body(file)),
+        UiRow::FileBodyNotice(file) => matches.contains(&SearchLineRef::file_body(file)),
         UiRow::HunkHeader { file, hunk } => {
             matches.contains(&SearchLineRef::hunk_header(file, hunk))
         }

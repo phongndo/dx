@@ -60,7 +60,7 @@ pub(crate) fn render_split_line_with_focus(
 
     let left_width = width / 2;
     let right_width = width.saturating_sub(left_width);
-    let lines = &app.document.changeset.files[file].hunks[hunk].lines;
+    let lines = &app.document.changeset.files[file].hunks()[hunk].lines;
     let left_line = left.and_then(|index| lines.get(index));
     let right_line = right.and_then(|index| lines.get(index));
     let mut spans = split_cell_spans_at_scroll_with_focus(
@@ -121,19 +121,19 @@ pub(crate) fn render_split_line_wrapped_with_focus(
 
     let left_width = width / 2;
     let right_width = width.saturating_sub(left_width);
-    let lines = &app.document.changeset.files[file].hunks[hunk].lines;
+    let lines = &app.document.changeset.files[file].hunks()[hunk].lines;
     let left_line = left.and_then(|index| lines.get(index));
     let right_line = right.and_then(|index| lines.get(index));
     let left_content_width = split_cell_content_width(left_width);
     let right_content_width = split_cell_content_width(right_width);
     let left_scrolls = left_line
-        .map(|line| wrapped_line_start_columns(&line.text, left_content_width))
+        .map(|line| wrapped_line_start_columns(line.text(), left_content_width))
         .unwrap_or_else(|| vec![0]);
     let right_scrolls = right_line
-        .map(|line| wrapped_line_start_columns(&line.text, right_content_width))
+        .map(|line| wrapped_line_start_columns(line.text(), right_content_width))
         .unwrap_or_else(|| vec![0]);
-    let left_text_width = left_line.map(|line| line.text.width()).unwrap_or(0);
-    let right_text_width = right_line.map(|line| line.text.width()).unwrap_or(0);
+    let left_text_width = left_line.map(|line| line.text().width()).unwrap_or(0);
+    let right_text_width = right_line.map(|line| line.text().width()).unwrap_or(0);
     let rows = left_scrolls.len().max(right_scrolls.len()).max(1);
     let visual_row_start = app.wrapped_visual_scroll_for_model_row(row_index);
     let mut rendered_lines = Vec::with_capacity(rows);
@@ -342,14 +342,14 @@ pub(super) fn split_cell_spans_at_scroll_with_focus_and_continuation(
         None
     } else {
         match side {
-            SplitSide::Old => line.old_line,
-            SplitSide::New => line.new_line,
+            SplitSide::Old => line.old_line(),
+            SplitSide::New => line.new_line(),
         }
     };
     let sign = if continuation {
         " "
     } else {
-        match (side, line.kind) {
+        match (side, line.kind()) {
             (SplitSide::Old, DiffLineKind::Deletion) => "-",
             (SplitSide::New, DiffLineKind::Addition) => "+",
             _ => " ",
@@ -358,22 +358,22 @@ pub(super) fn split_cell_spans_at_scroll_with_focus_and_continuation(
 
     let mut spans = Vec::new();
     if indicator_width > 0 {
-        spans.push(diff_indicator_span_for_focus(line.kind, theme, focused));
+        spans.push(diff_indicator_span_for_focus(line.kind(), theme, focused));
     }
     if gutter_width > 0 {
         spans.extend(gutter_spans(
             &split_gutter_text(line_number),
             sign,
             gutter_width,
-            line.kind,
+            line.kind(),
             theme,
         ));
     }
     spans.extend(content_spans_at_scroll(
-        &line.text,
+        line.text(),
         syntax,
         inline,
-        line.kind,
+        line.kind(),
         content_width,
         theme,
         horizontal_scroll,

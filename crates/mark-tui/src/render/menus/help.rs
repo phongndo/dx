@@ -38,7 +38,7 @@ struct HelpMenuLayout {
 }
 
 fn help_menu_layout(app: &DiffApp, area: Rect) -> Option<HelpMenuLayout> {
-    if !app.overlays.help_menu_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.help_menu_is_open() || !floating_menu_fits_terminal(area) {
         return None;
     }
 

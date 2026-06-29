@@ -26,26 +26,27 @@ pub(crate) enum AppEffect {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ActionOutcome {
-    pub(crate) consumed: bool,
-    pub(crate) effects: Vec<AppEffect>,
+pub(crate) enum ActionOutcome {
+    #[default]
+    Ignored,
+    Consumed {
+        effects: Vec<AppEffect>,
+    },
 }
 
 impl ActionOutcome {
     pub(crate) fn ignored() -> Self {
-        Self::default()
+        Self::Ignored
     }
 
     pub(crate) fn consumed() -> Self {
-        Self {
-            consumed: true,
+        Self::Consumed {
             effects: Vec::new(),
         }
     }
 
     pub(crate) fn effect(effect: AppEffect) -> Self {
-        Self {
-            consumed: true,
+        Self::Consumed {
             effects: vec![effect],
         }
     }
@@ -60,16 +61,35 @@ impl ActionOutcome {
     }
 
     pub(crate) fn into_legacy_quit(self) -> Option<bool> {
-        if self
-            .effects
-            .iter()
-            .any(|effect| matches!(effect, AppEffect::Quit))
-        {
-            Some(true)
-        } else if self.consumed {
-            Some(false)
-        } else {
-            None
+        match self {
+            Self::Ignored => None,
+            Self::Consumed { effects } => Some(
+                effects
+                    .iter()
+                    .any(|effect| matches!(effect, AppEffect::Quit)),
+            ),
+        }
+    }
+
+    pub(crate) fn extend_effects(&mut self, next_effects: Vec<AppEffect>) {
+        if next_effects.is_empty() {
+            return;
+        }
+
+        match self {
+            Self::Ignored => {
+                *self = Self::Consumed {
+                    effects: next_effects,
+                }
+            }
+            Self::Consumed { effects } => effects.extend(next_effects),
+        }
+    }
+
+    pub(crate) fn into_effects(self) -> Vec<AppEffect> {
+        match self {
+            Self::Ignored => Vec::new(),
+            Self::Consumed { effects } => effects,
         }
     }
 }

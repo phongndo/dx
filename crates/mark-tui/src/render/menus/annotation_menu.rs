@@ -91,7 +91,7 @@ pub(crate) fn annotation_menu_area(
     area: Rect,
     items: &[AnnotationMenuItem],
 ) -> Option<Rect> {
-    if !app.overlays.annotation_menu_open || !floating_menu_fits_terminal(area) {
+    if !app.overlays.annotation_menu_is_open() || !floating_menu_fits_terminal(area) {
         return None;
     }
     let list_cap = annotation_menu_visible_items(floating_menu_max_inner_height(area));

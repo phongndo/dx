@@ -133,7 +133,7 @@ pub(crate) fn hunk_header_location_parts(
 pub(crate) fn hunk_change_counts(hunk: &mark_diff::DiffHunk) -> (usize, usize) {
     hunk.lines.iter().fold(
         (0usize, 0usize),
-        |(additions, deletions), line| match line.kind {
+        |(additions, deletions), line| match line.kind() {
             DiffLineKind::Addition => (additions + 1, deletions),
             DiffLineKind::Deletion => (additions, deletions + 1),
             DiffLineKind::Context | DiffLineKind::Meta => (additions, deletions),

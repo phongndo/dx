@@ -112,7 +112,7 @@ impl DiffApp {
             else {
                 return false;
             };
-            let Some(file) = self.document.changeset.files.get(file) else {
+            let Some(file) = self.document.changeset.files.get(file.get()) else {
                 return false;
             };
             if AnnotationKey::path_for_side(file, AnnotationSide::New) != Some(key.path.as_str()) {
@@ -137,11 +137,11 @@ impl DiffApp {
                 {
                     return false;
                 }
-                let Some(last_hunk) = file.hunks.last() else {
+                let Some(last_hunk) = file.hunks().last() else {
                     return false;
                 };
-                let old_start = last_hunk.old_start.saturating_add(last_hunk.old_count);
-                let new_start = last_hunk.new_start.saturating_add(last_hunk.new_count);
+                let old_start = last_hunk.old_start().saturating_add(last_hunk.old_count());
+                let new_start = last_hunk.new_start().saturating_add(last_hunk.new_count());
                 if key.line < new_start {
                     return false;
                 }
@@ -186,12 +186,12 @@ impl DiffApp {
                 return None;
             }
 
-            file.hunks.iter().find_map(|hunk| {
+            file.hunks().iter().find_map(|hunk| {
                 hunk.lines
                     .iter()
                     .enumerate()
                     .find_map(|(line_index, line)| {
-                        if line.new_line == Some(key.line) {
+                        if line.new_line() == Some(key.line) {
                             paired_old_line_for_addition(&hunk.lines, line_index)
                         } else {
                             None

@@ -44,14 +44,15 @@ pub(crate) use annotations::AnnotationMenuItem;
 pub(crate) use clipboard::osc52_clipboard_sequence;
 pub(crate) use clipboard::{json_string, write_osc52_clipboard};
 pub(crate) use core::{
-    AnnotationScratchFile, DIFF_PREFETCH_POLL, DiffApp, DiffCacheEntry, EDITOR_RELOAD_POLL,
-    ERROR_LOG_DEFAULT_HEIGHT, ERROR_LOG_MAX_HEIGHT, ERROR_LOG_MIN_HEIGHT, EditorReloadBehavior,
-    EditorReloadRequest, EditorReloadWorker, EditorScopedReload, FILTER_DEBOUNCE,
-    FILTER_WORKER_POLL, FilterWorker, FocusedEditorLaunch, HunkFocusModelBehavior,
-    HunkFocusScrollBehavior, HunkFocusSearch, MAX_COLOR_SCHEME_MENU_ROWS, MAX_DIFF_CACHE_ENTRIES,
-    MAX_LIVE_GREP_MATCHES, MOUSE_HUNK_FOCUS_SCROLL_TICKS, MarkExport, NORMAL_GLOBAL_ACTIONS,
-    POST_EDITOR_QUIT_KEY_IGNORE, PendingDiffLoad, PendingDiffPrefetch, PendingFilterApply,
-    PendingReviewLoad, RenderedDiffRow, SyntaxStartupMode, WrappedVisualLayout,
+    AnnotationScratchFile, AsyncJob, BranchMetadataPolicy, DIFF_PREFETCH_POLL, DiffApp,
+    DiffCacheEntry, DiffLoadCachePolicy, EDITOR_RELOAD_POLL, ERROR_LOG_DEFAULT_HEIGHT,
+    ERROR_LOG_MAX_HEIGHT, ERROR_LOG_MIN_HEIGHT, EditorReloadBehavior, EditorReloadRequest,
+    EditorReloadWorker, EditorScopedReload, FILTER_DEBOUNCE, FILTER_WORKER_POLL, FilterWorker,
+    FocusedEditorLaunch, HunkFocusModelBehavior, HunkFocusScrollBehavior, HunkFocusSearch,
+    MAX_COLOR_SCHEME_MENU_ROWS, MAX_DIFF_CACHE_ENTRIES, MAX_LIVE_GREP_MATCHES,
+    MOUSE_HUNK_FOCUS_SCROLL_TICKS, MarkExport, NORMAL_GLOBAL_ACTIONS, POST_EDITOR_QUIT_KEY_IGNORE,
+    PendingDiffLoad, PendingDiffPrefetch, PendingFilterApply, PendingReviewLoad,
+    PostFilterNavigation, RenderedDiffRow, SyntaxStartupMode, WrappedVisualLayout,
     cacheable_diff_options, diff_choice_for_options, is_plain_char_key, next_context_expansion,
     previous_context_expansion, rect_contains, show_rev_from_options,
 };
@@ -82,8 +83,9 @@ pub(crate) use options::{
 pub(crate) use runner::{drain_live_reloads, handle_event};
 pub(crate) use runner::{is_quit_key, run_loop, sync_live_diff};
 pub(crate) use state::{
-    AnnotationState, AppConfigState, DocumentState, FileSidebarState, FilterState, InputState,
-    JobState, NotificationState, OverlayState, ReferenceState, RuntimeState, ViewportState,
+    ActiveOverlay, ActiveReferenceMenu, AnnotationState, AppConfigState, DocumentState,
+    FileSidebarState, FilterState, InputState, JobState, LiveReloadStatus, LiveUpdatesState,
+    NotificationState, OverlayState, ReferenceState, RuntimeState, ViewportState,
 };
 pub(crate) use viewport::{
     annotation_scroll_for_block, find_rendered_diff_row_outward, hunk_focus_row_range,

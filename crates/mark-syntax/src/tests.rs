@@ -387,8 +387,8 @@ fn syntax_settings_default_to_enabled_system_colorscheme() {
     let settings = parse_settings("").expect("empty settings should parse");
 
     assert_eq!(settings.mode, SyntaxMode::Enabled);
-    assert_eq!(settings.theme.source, SyntaxThemeSource::Builtin);
-    assert_eq!(settings.theme.name.as_deref(), Some("system"));
+    assert_eq!(settings.theme.source(), SyntaxThemeSource::Builtin);
+    assert_eq!(settings.theme.name(), Some("system"));
     assert_eq!(settings.layout, None);
     assert!(settings.live_reload);
     assert!(settings.syntax_highlighting);
@@ -451,10 +451,10 @@ max_visible = 5
     assert!(!settings.live_reload);
     assert!(!settings.syntax_highlighting);
     assert!(settings.line_wrapping);
-    assert_eq!(settings.notifications.mode, NotificationMode::Debug);
-    assert_eq!(settings.notifications.corner, ToastCorner::BottomLeft);
-    assert_eq!(settings.notifications.timeout_ms, 2_500);
-    assert_eq!(settings.notifications.max_visible, 5);
+    assert_eq!(settings.notifications.mode(), NotificationMode::Debug);
+    assert_eq!(settings.notifications.corner(), ToastCorner::BottomLeft);
+    assert_eq!(settings.notifications.timeout_ms(), 2_500);
+    assert_eq!(settings.notifications.max_visible(), 5);
 
     let settings = parse_settings("layout = \"dynamic\"\n").expect("settings should parse");
     assert_eq!(settings.layout, Some(LayoutSetting::Dynamic));
@@ -470,7 +470,7 @@ max_visible = 0
     )
     .expect("settings should parse");
 
-    assert_eq!(settings.notifications.max_visible, 1);
+    assert_eq!(settings.notifications.max_visible(), 1);
 }
 
 #[test]
@@ -484,7 +484,7 @@ timeout_ms = 9223372036854775807
     .expect("settings should parse");
 
     assert_eq!(
-        settings.notifications.timeout_ms,
+        settings.notifications.timeout_ms(),
         MAX_NOTIFICATION_TIMEOUT_MS
     );
 }
@@ -515,8 +515,8 @@ context_expand = 42
     .expect("settings should parse");
 
     assert_eq!(settings.mode, SyntaxMode::Builtin);
-    assert_eq!(settings.theme.source, SyntaxThemeSource::Ansi);
-    assert_eq!(settings.theme.name, None);
+    assert_eq!(settings.theme.source(), SyntaxThemeSource::Ansi);
+    assert_eq!(settings.theme.name(), None);
     assert!(settings.transparent_background);
     assert_eq!(settings.limits.max_source_bytes, 64 * 1024);
     assert_eq!(settings.limits.max_line_bytes, 4 * 1024);
@@ -579,8 +579,8 @@ theme = "ansi"
     )
     .expect("legacy theme key should parse");
 
-    assert_eq!(settings.theme.source, SyntaxThemeSource::Ansi);
-    assert_eq!(settings.theme.name, None);
+    assert_eq!(settings.theme.source(), SyntaxThemeSource::Ansi);
+    assert_eq!(settings.theme.name(), None);
 }
 
 #[test]
@@ -593,8 +593,8 @@ theme = "ansi"
     )
     .expect("settings should parse");
 
-    assert_eq!(settings.theme.source, SyntaxThemeSource::Builtin);
-    assert_eq!(settings.theme.name.as_deref(), Some("system"));
+    assert_eq!(settings.theme.source(), SyntaxThemeSource::Builtin);
+    assert_eq!(settings.theme.name(), Some("system"));
 }
 
 #[test]
@@ -661,9 +661,9 @@ path = "~/themes/example.yaml"
     .expect("settings should parse");
 
     assert_eq!(settings.mode, SyntaxMode::All);
-    assert_eq!(settings.theme.source, SyntaxThemeSource::Base16);
+    assert_eq!(settings.theme.source(), SyntaxThemeSource::Base16);
     assert_eq!(
-        settings.theme.path,
+        settings.theme.path().cloned(),
         Some(PathBuf::from("~/themes/example.yaml"))
     );
 }

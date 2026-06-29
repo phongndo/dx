@@ -76,7 +76,7 @@ impl DiffApp {
     pub(crate) fn perform_app_action(&mut self, action: AppAction) -> MarkResult<Option<bool>> {
         let outcome = self.perform_app_action_with_effects(action)?;
         let legacy = outcome.clone().into_legacy_quit();
-        self.run_effects(outcome.effects)?;
+        self.run_effects(outcome.into_effects())?;
         Ok(legacy)
     }
 

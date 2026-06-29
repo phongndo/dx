@@ -96,7 +96,7 @@ pub(crate) fn filter_status_right_label(app: &DiffApp) -> Option<String> {
         let current = app
             .filters
             .selected_grep_match
-            .map(|index| index.saturating_add(1).min(total))
+            .map(|index| index.get().saturating_add(1).min(total))
             .unwrap_or(1);
         let total = if app.filters.grep_matches_truncated {
             "10k+".to_owned()

@@ -11,10 +11,10 @@ pub(crate) fn repo_relative_path(repo: &Path, path: &Path) -> Option<PathBuf> {
 pub(crate) fn editor_reload_request_for_file(
     file: &mark_diff::DiffFile,
 ) -> Option<EditorReloadRequest> {
-    let path = PathBuf::from(file.new_path.as_deref()?);
+    let path = PathBuf::from(file.new_path()?);
     let mut pathspecs = Vec::new();
-    push_unique_pathspec(&mut pathspecs, file.old_path.as_deref());
-    push_unique_pathspec(&mut pathspecs, file.new_path.as_deref());
+    push_unique_pathspec(&mut pathspecs, file.old_path());
+    push_unique_pathspec(&mut pathspecs, file.new_path());
 
     Some(EditorReloadRequest { path, pathspecs })
 }
@@ -59,8 +59,7 @@ pub(crate) fn splice_diff_files_for_path(
 
 pub(crate) fn diff_file_matches_path(file: &mark_diff::DiffFile, path: &Path) -> bool {
     let path = diff_path_string(path);
-    file.old_path.as_deref() == Some(path.as_str())
-        || file.new_path.as_deref() == Some(path.as_str())
+    file.old_path() == Some(path.as_str()) || file.new_path() == Some(path.as_str())
 }
 
 pub(crate) fn diff_path_string(path: &Path) -> String {

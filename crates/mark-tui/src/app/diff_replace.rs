@@ -4,14 +4,15 @@ use mark_core::MarkResult;
 use mark_diff::{Changeset, DiffOptions};
 
 use super::{
-    DiffApp, DiffCacheEntry, HunkFocusModelBehavior, HunkFocusScrollBehavior,
-    MAX_LIVE_GREP_MATCHES, show_rev_from_options, splice_diff_files_for_path,
+    BranchMetadataPolicy, DiffApp, DiffCacheEntry, HunkFocusModelBehavior, HunkFocusScrollBehavior,
+    MAX_LIVE_GREP_MATCHES, PostFilterNavigation, show_rev_from_options, splice_diff_files_for_path,
 };
 use crate::{
     controls::{
         DiffLayoutMode, branch_base_from_options, branch_head_from_options, comparison_branches,
         comparison_commits, current_head_label, default_branch_base,
     },
+    model::FileIndex,
     search::DiffSearchIndex,
 };
 
@@ -34,9 +35,10 @@ impl DiffApp {
             .document
             .changeset
             .files
-            .get(self.sidebar.selected_file)
+            .get(self.sidebar.selected_file.get())
             .map(|file| file.display_path().to_owned());
-        let relative_scroll = self.relative_scroll_from_file_start(self.sidebar.selected_file);
+        let relative_scroll =
+            self.relative_scroll_from_file_start(self.sidebar.selected_file.get());
 
         splice_diff_files_for_path(
             &mut self.document.changeset.files,
@@ -69,7 +71,7 @@ impl DiffApp {
             search_result,
             selected_path,
             relative_scroll,
-            false,
+            PostFilterNavigation::Preserve,
             HunkFocusModelBehavior::Clear,
         );
         self.store_current_diff_cache();
@@ -80,7 +82,7 @@ impl DiffApp {
         &mut self,
         options: DiffOptions,
         cached: DiffCacheEntry,
-        refresh_branch_metadata: bool,
+        branch_metadata: BranchMetadataPolicy,
     ) {
         let DiffCacheEntry {
             changeset,
@@ -95,17 +97,17 @@ impl DiffApp {
             .document
             .changeset
             .files
-            .get(self.sidebar.selected_file)
+            .get(self.sidebar.selected_file.get())
             .map(|file| file.display_path().to_owned());
-        let relative_scroll = self.relative_scroll_from_file_start(self.sidebar.selected_file);
+        let relative_scroll =
+            self.relative_scroll_from_file_start(self.sidebar.selected_file.get());
 
         let previous_branch_base = self.refs.branch_base.clone();
         let previous_branch_head = self.refs.branch_head.clone();
         let previous_repo = self.document.changeset.repo.clone();
         self.document.options = options;
-        self.jobs.live_reload_invalidated = false;
-        self.jobs.live_reload_pending = false;
-        if !refresh_branch_metadata && previous_repo == changeset.repo {
+        self.jobs.live_updates.reset_reload();
+        if branch_metadata == BranchMetadataPolicy::Preserve && previous_repo == changeset.repo {
             self.refs.branch_base =
                 branch_base_from_options(&self.document.options).or(previous_branch_base);
             self.refs.branch_head =
@@ -124,9 +126,9 @@ impl DiffApp {
                     .refs
                     .comparison_branches
                     .iter()
-                    .any(|candidate| candidate == &branch)
+                    .any(|candidate| candidate.as_str() == branch)
                 {
-                    self.refs.comparison_branches.push(branch);
+                    self.refs.comparison_branches.push(branch.into());
                 }
             }
         } else {
@@ -185,7 +187,7 @@ impl DiffApp {
                 search_result,
                 selected_path,
                 relative_scroll,
-                false,
+                PostFilterNavigation::Preserve,
                 HunkFocusModelBehavior::Clear,
             );
         } else {
@@ -198,15 +200,17 @@ impl DiffApp {
             self.invalidate_wrapped_visual_layout();
             self.reanchor_annotation_draft();
             self.viewport.manual_hunk_focus = None;
-            self.sidebar.selected_file = selected_path
-                .and_then(|path| {
-                    self.document
-                        .changeset
-                        .files
-                        .iter()
-                        .position(|file| file.display_path() == path)
-                })
-                .unwrap_or(0);
+            self.sidebar.selected_file = FileIndex::new(
+                selected_path
+                    .and_then(|path| {
+                        self.document
+                            .changeset
+                            .files
+                            .iter()
+                            .position(|file| file.display_path() == path)
+                    })
+                    .unwrap_or(0),
+            );
             self.filters.grep_matches.clear();
             self.filters.grep_matches_truncated = false;
             self.filters.selected_grep_match = None;
@@ -214,7 +218,7 @@ impl DiffApp {
             let scroll = self
                 .document
                 .model
-                .file_start_row(self.sidebar.selected_file)
+                .file_start_row(self.sidebar.selected_file.get())
                 .map(|start| {
                     self.scroll_for_model_row(start)
                         .saturating_add(relative_scroll)
@@ -231,10 +235,7 @@ impl DiffApp {
     pub(crate) fn replace_loaded_diff(&mut self, options: DiffOptions, changeset: Changeset) {
         let options_changed = self.document.options != options;
         if !options_changed && self.document.base_changeset == changeset {
-            if self.jobs.live_reload_invalidated || self.jobs.live_reload_pending {
-                self.jobs.live_reload_invalidated = false;
-                self.jobs.live_reload_pending = false;
-            }
+            self.jobs.live_updates.reset_reload();
             self.runtime.dirty = true;
             return;
         }
@@ -243,15 +244,15 @@ impl DiffApp {
             .document
             .changeset
             .files
-            .get(self.sidebar.selected_file)
+            .get(self.sidebar.selected_file.get())
             .map(|file| file.display_path().to_owned());
-        let relative_scroll = self.relative_scroll_from_file_start(self.sidebar.selected_file);
+        let relative_scroll =
+            self.relative_scroll_from_file_start(self.sidebar.selected_file.get());
 
         let previous_branch_base = self.refs.branch_base.clone();
         let previous_branch_head = self.refs.branch_head.clone();
         self.document.options = options;
-        self.jobs.live_reload_invalidated = false;
-        self.jobs.live_reload_pending = false;
+        self.jobs.live_updates.reset_reload();
         self.refs.current_head = current_head_label(&changeset.repo);
         self.refs.branch_base = branch_base_from_options(&self.document.options)
             .or(previous_branch_base)
@@ -304,7 +305,7 @@ impl DiffApp {
             search_result,
             selected_path,
             relative_scroll,
-            false,
+            PostFilterNavigation::Preserve,
             HunkFocusModelBehavior::Clear,
         );
         self.runtime.dirty = true;
