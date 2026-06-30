@@ -22,7 +22,7 @@ use crate::render::{
         error_log_header_line, error_log_height, error_log_separator, filter_bar_line,
         filter_bar_visible, statusline_file_count_label, statusline_header_line,
     },
-    style::base_bg,
+    style::{base_bg, diff_base_bg, header_bg, statusline_bg},
     text::{
         fit, fit_padded, fit_padded_from, fit_with_ellipsis, format_count, progress_label,
         skip_display_prefix,

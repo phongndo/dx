@@ -26,10 +26,6 @@ pub(crate) fn line_gutter_fg(kind: DiffLineKind, theme: DiffTheme) -> Color {
 }
 
 pub(crate) fn line_gutter_bg(kind: DiffLineKind, theme: DiffTheme) -> Color {
-    if theme.transparent_background {
-        return Color::Reset;
-    }
-
     match (theme.diff.gutter_background, kind) {
         (DiffGutterBackground::Delta, DiffLineKind::Addition) => theme.addition_gutter_bg,
         (DiffGutterBackground::Delta, DiffLineKind::Deletion) => theme.deletion_gutter_bg,

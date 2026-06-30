@@ -21,7 +21,7 @@ use crate::{
         headers::{
             file_header_line, file_separator_line, hunk_header_line, hunk_header_line_with_focus,
         },
-        style::base_bg,
+        style::diff_base_bg,
         text::fit_padded,
     },
     syntax::unified_syntax_side,
@@ -66,7 +66,7 @@ pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
                 message,
                 Style::default().fg(app.config.theme.muted),
             )))
-            .style(Style::default().bg(base_bg(app.config.theme))),
+            .style(Style::default().bg(diff_base_bg(app.config.theme))),
             area,
         );
         return;
@@ -77,7 +77,8 @@ pub(crate) fn draw_diff(frame: &mut Frame<'_>, app: &mut DiffApp, area: Rect) {
     let width = area.width as usize;
     let lines = build_diff_viewport_lines(app, width, visible_rows);
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(base_bg(app.config.theme))),
+        Paragraph::new(Text::from(lines))
+            .style(Style::default().bg(diff_base_bg(app.config.theme))),
         area,
     );
 }

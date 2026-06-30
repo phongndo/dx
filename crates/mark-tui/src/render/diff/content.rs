@@ -338,7 +338,7 @@ pub(crate) fn syntax_style(
 }
 
 pub(crate) fn inline_style(style: Style, kind: DiffLineKind, theme: DiffTheme) -> Style {
-    if theme.transparent_background || theme.diff.inline_background == DiffBackground::None {
+    if theme.diff.inline_background == DiffBackground::None {
         return match kind {
             DiffLineKind::Addition | DiffLineKind::Deletion => style.add_modifier(Modifier::BOLD),
             DiffLineKind::Context | DiffLineKind::Meta => style,
