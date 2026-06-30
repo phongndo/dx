@@ -13,7 +13,7 @@ use crate::{
             diff_line_grep_highlight_text, grep_highlight_target_for_columns,
             highlighted_grep_text_line, scrolled_text_byte_start, unified_content_start_column,
         },
-        style::base_bg,
+        style::diff_base_bg,
         text::spaces,
     },
     syntax::InlineRange,
@@ -195,17 +195,13 @@ fn highlight_wrapped_unified_grep_line(
 }
 
 pub(crate) fn row_bg(kind: DiffLineKind, theme: DiffTheme) -> Color {
-    if theme.transparent_background {
-        return Color::Reset;
-    }
-
     match (theme.diff.line_background, kind) {
-        (DiffBackground::None, _) => theme.background,
+        (DiffBackground::None, _) => diff_base_bg(theme),
         (DiffBackground::Subtle, DiffLineKind::Addition) => theme.addition_bg,
         (DiffBackground::Subtle, DiffLineKind::Deletion) => theme.deletion_bg,
         (DiffBackground::Strong, DiffLineKind::Addition) => theme.addition_inline_bg,
         (DiffBackground::Strong, DiffLineKind::Deletion) => theme.deletion_inline_bg,
-        _ => theme.background,
+        _ => diff_base_bg(theme),
     }
 }
 
@@ -217,7 +213,9 @@ pub(crate) fn line_style(kind: DiffLineKind, theme: DiffTheme) -> Style {
         DiffLineKind::Deletion => Style::default()
             .fg(theme.foreground)
             .bg(row_bg(kind, theme)),
-        DiffLineKind::Meta => Style::default().fg(theme.muted).bg(base_bg(theme)),
-        DiffLineKind::Context => Style::default().fg(theme.foreground).bg(base_bg(theme)),
+        DiffLineKind::Meta => Style::default().fg(theme.muted).bg(diff_base_bg(theme)),
+        DiffLineKind::Context => Style::default()
+            .fg(theme.foreground)
+            .bg(diff_base_bg(theme)),
     }
 }

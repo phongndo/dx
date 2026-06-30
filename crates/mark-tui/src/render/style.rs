@@ -58,6 +58,10 @@ pub(crate) fn diff_indicator_fg(kind: DiffLineKind, theme: DiffTheme) -> Color {
 }
 
 pub(crate) fn base_bg(theme: DiffTheme) -> Color {
+    theme.background
+}
+
+pub(crate) fn diff_base_bg(theme: DiffTheme) -> Color {
     if theme.transparent_background {
         Color::Reset
     } else {
@@ -66,19 +70,11 @@ pub(crate) fn base_bg(theme: DiffTheme) -> Color {
 }
 
 pub(crate) fn header_bg(theme: DiffTheme) -> Color {
-    if theme.transparent_background {
-        Color::Reset
-    } else {
-        theme.gutter_bg
-    }
+    theme.gutter_bg
 }
 
 pub(crate) fn statusline_bg(theme: DiffTheme) -> Color {
-    if theme.transparent_background {
-        Color::Reset
-    } else {
-        theme.statusline_bg
-    }
+    theme.statusline_bg
 }
 
 pub(crate) fn input_cursor_style(theme: DiffTheme, bg: Color) -> Style {

@@ -2396,7 +2396,7 @@ fn builtin_syntax_palettes_match_upstream_theme_scopes() {
 }
 
 #[test]
-fn transparent_background_resets_diff_and_inline_backgrounds() {
+fn transparent_background_only_resets_diff_base_background() {
     let theme = DiffTheme::catppuccin_mocha().with_transparent_background(true);
     let spans = content_spans_at_scroll(
         "changed",
@@ -2410,10 +2410,40 @@ fn transparent_background_resets_diff_and_inline_backgrounds() {
         theme,
         0,
     );
+    let context = render_unified_line_at_scroll(
+        &DiffLine::context(7, 7, "same".to_owned()),
+        None,
+        &[],
+        0,
+        24,
+        theme,
+        0,
+    );
+    let changeset = changeset_with_files(&["file.rs"]);
+    let file_header = file_header_line(&changeset.files[0], 32, theme);
+    let file_separator = file_separator_line(DiffLayoutMode::Unified, 8, theme);
 
-    assert_eq!(row_bg(DiffLineKind::Addition, theme), Color::Reset);
-    assert_eq!(spans[0].style.bg, Some(Color::Reset));
+    assert_eq!(base_bg(theme), theme.background);
+    assert_eq!(diff_base_bg(theme), Color::Reset);
+    assert_eq!(header_bg(theme), theme.gutter_bg);
+    assert_eq!(statusline_bg(theme), theme.statusline_bg);
+    assert_eq!(
+        line_gutter_bg(DiffLineKind::Addition, theme),
+        theme.addition_gutter_bg
+    );
+    assert_eq!(row_bg(DiffLineKind::Addition, theme), theme.addition_bg);
+    assert_eq!(spans[0].style.bg, Some(theme.addition_inline_bg));
     assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+    assert_eq!(context.spans[0].style.bg, Some(theme.gutter_bg));
+    assert_eq!(context.spans[1].style.bg, Some(theme.gutter_bg));
+    assert_eq!(context.spans[2].style.bg, Some(Color::Reset));
+    assert!(
+        file_header
+            .spans
+            .iter()
+            .all(|span| span.style.bg == Some(Color::Reset))
+    );
+    assert_eq!(file_separator.spans[0].style.bg, Some(Color::Reset));
 }
 
 #[test]

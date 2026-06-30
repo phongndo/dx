@@ -7,7 +7,7 @@ use crate::{
     app::{DiffApp, split_cell_content_width, wrapped_line_start_columns},
     render::{
         grep::{highlighted_grep_text_line, split_diff_line_grep_highlight_target},
-        style::base_bg,
+        style::diff_base_bg,
         text::spaces,
     },
     syntax::{DiffSide, InlineRange},
@@ -329,7 +329,9 @@ pub(super) fn split_cell_spans_at_scroll_with_focus_and_continuation(
                     row_index,
                     indicator_width + gutter_width + horizontal_scroll,
                 ),
-                Style::default().fg(theme.empty_diff).bg(base_bg(theme)),
+                Style::default()
+                    .fg(theme.empty_diff)
+                    .bg(diff_base_bg(theme)),
             ));
         }
         return spans;

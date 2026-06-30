@@ -7,7 +7,7 @@ use crate::{
     app::{DiffApp, split_cell_content_width, wrapped_line_start_columns},
     controls::DiffLayoutMode,
     render::{
-        style::{base_bg, diff_indicator_span},
+        style::{diff_base_bg, diff_indicator_span},
         text::{fit_padded, format_count},
     },
     syntax::DiffSide,
@@ -79,7 +79,7 @@ pub(crate) fn context_action_line(
         return Line::default();
     }
 
-    let bg = base_bg(theme);
+    let bg = diff_base_bg(theme);
     let mut spans = Vec::new();
     let indicator_width = 1.min(width);
     if indicator_width > 0 {

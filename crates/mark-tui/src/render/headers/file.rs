@@ -4,7 +4,7 @@ use crate::{
     controls::DiffLayoutMode,
     render::{
         headers::{HeaderStyles, file_delta_parts, header_spans},
-        style::{base_bg, file_sidebar_style},
+        style::{diff_base_bg, file_sidebar_style},
         text::status_code,
     },
     theme::DiffTheme,
@@ -21,7 +21,9 @@ pub(crate) fn file_separator_line(
 
     Line::from(Span::styled(
         "─".repeat(width),
-        Style::default().fg(theme.empty_diff).bg(base_bg(theme)),
+        Style::default()
+            .fg(theme.empty_diff)
+            .bg(diff_base_bg(theme)),
     ))
 }
 
@@ -38,7 +40,7 @@ pub(crate) fn file_header_spans(
     width: usize,
     theme: DiffTheme,
 ) -> Vec<Span<'static>> {
-    let bg = base_bg(theme);
+    let bg = diff_base_bg(theme);
     header_spans(
         status_code(file.status()),
         file.display_path(),
