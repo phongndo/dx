@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn base_branch_diff_includes_committed_staged_and_untracked_changes() {
+fn base_branch_diff_includes_committed_index_and_untracked_changes() {
     let test_dir = temp_test_dir("base-branch-all-changes");
     let repo = test_dir.join("repo");
     fs::create_dir_all(&test_dir).expect("test directory should be created");
@@ -12,8 +12,8 @@ fn base_branch_diff_includes_committed_staged_and_untracked_changes() {
     fs::write(repo.join("committed.txt"), "committed\n").expect("committed file should be written");
     git(["add", "committed.txt"], &repo);
     git(["commit", "-q", "-m", "committed"], &repo);
-    fs::write(repo.join("staged.txt"), "staged\n").expect("staged file should be written");
-    git(["add", "staged.txt"], &repo);
+    fs::write(repo.join("indexed.txt"), "indexed\n").expect("indexed file should be written");
+    git(["add", "indexed.txt"], &repo);
     fs::write(repo.join("untracked.txt"), "untracked\n").expect("untracked file should be written");
 
     let changeset = load_review_ref(&DiffOptions {
@@ -29,7 +29,7 @@ fn base_branch_diff_includes_committed_staged_and_untracked_changes() {
         .collect::<Vec<_>>();
 
     assert!(paths.contains(&"committed.txt"));
-    assert!(paths.contains(&"staged.txt"));
+    assert!(paths.contains(&"indexed.txt"));
     assert!(paths.contains(&"untracked.txt"));
     fs::remove_dir_all(test_dir).expect("test directory should be removed");
 }

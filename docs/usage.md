@@ -18,8 +18,6 @@ mark diff
 Common local review modes:
 
 ```sh
-mark diff --staged
-mark diff --unstaged
 mark diff --no-untracked
 mark diff --base main
 mark diff main feature
@@ -28,7 +26,7 @@ mark diff main feature
 Use `--repo` when running from outside the target repository:
 
 ```sh
-mark diff --repo ../project --staged
+mark diff --repo ../project
 mark show --repo ../project HEAD~1
 ```
 

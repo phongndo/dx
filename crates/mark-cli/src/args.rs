@@ -20,8 +20,6 @@ options:
 
 examples:
   mark
-  mark diff --staged
-  mark diff --unstaged
   mark diff --base main
   mark diff main feature
   mark difftool -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\"
@@ -75,7 +73,6 @@ pub(crate) enum Command {
 examples:
   mark diff
   mark diff --base main
-  mark diff --staged
   mark diff main feature"
     )]
     Diff(DiffArgs),
@@ -250,10 +247,6 @@ pub(crate) struct DiffArgs {
     pub(crate) repo: RepoArgs,
     #[arg(short = 'b', long)]
     pub(crate) base: Option<String>,
-    #[arg(long, conflicts_with = "unstaged", conflicts_with_all = ["base", "revs"])]
-    pub(crate) staged: bool,
-    #[arg(long, conflicts_with_all = ["base", "revs"])]
-    pub(crate) unstaged: bool,
     #[arg(long = "no-untracked")]
     pub(crate) no_untracked: bool,
     #[command(flatten)]
@@ -362,9 +355,8 @@ mod tests {
 
     #[test]
     fn parses_top_level_diff_compatibility_args() {
-        let cli = parse(&["mark", "--staged", "--stat"]);
+        let cli = parse(&["mark", "--stat"]);
         assert!(cli.command.is_none());
-        assert!(cli.diff.staged);
         assert!(cli.diff.display.stat);
 
         let cli = parse(&["mark", "main", "feature"]);
@@ -374,10 +366,13 @@ mod tests {
 
     #[test]
     fn parses_source_subcommands() {
-        let cli = parse(&["mark", "diff", "--unstaged"]);
+        let cli = parse(&["mark", "diff", "--base", "main"]);
         assert!(matches!(
             cli.command,
-            Some(Command::Diff(DiffArgs { unstaged: true, .. }))
+            Some(Command::Diff(DiffArgs {
+                base: Some(base),
+                ..
+            })) if base == "main"
         ));
 
         let cli = parse(&["mark", "show", "--stat", "HEAD~1"]);

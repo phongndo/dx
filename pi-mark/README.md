@@ -87,8 +87,6 @@ for this repository and workflow before the publish step can succeed.
 
 ```text
 /mark
-/mark diff --staged
-/mark diff --unstaged
 /mark diff --base main
 /mark diff main feature
 /mark show

@@ -180,7 +180,7 @@ impl DiffApp {
         self.close_branch_menu();
         self.runtime.request_terminal_clear();
         let mut paused_live_diff = false;
-        if matches!(self.document.options.source, DiffSource::Worktree { .. })
+        if matches!(self.document.options.source, DiffSource::Worktree)
             && let Some(live_diff) = live_diff.as_mut().and_then(|live_diff| live_diff.as_mut())
         {
             live_diff.set_paused(true);
@@ -238,7 +238,7 @@ impl DiffApp {
         if !target_changed
             || !matches!(
                 self.document.options.source,
-                DiffSource::Worktree { .. } | DiffSource::Base(_)
+                DiffSource::Worktree | DiffSource::Base(_)
             )
         {
             return EditorReloadBehavior::None;

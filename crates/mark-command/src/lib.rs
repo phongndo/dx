@@ -3,7 +3,7 @@ mod diff;
 mod syntax;
 
 pub use mark_diff::{
-    BranchName, CommitSha, DiffOptions, DiffOutput, DiffPath, DiffScope, DiffSource, DisplayPath,
+    BranchName, CommitSha, DiffOptions, DiffOutput, DiffPath, DiffSource, DisplayPath,
     NewLineNumber, OldLineNumber, PatchLabel, PatchSource, PullRequestId, RefName, RemoteName,
     RepoArg, RepoRelativePath, RepoRoot, RevSpec, ReviewId, UntrackedMode, WorktreePath,
 };

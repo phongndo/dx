@@ -9,7 +9,7 @@ use crate::model::UiModel;
 use crate::search::{DiffSearchIndex, DiffSearchResult};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use mark_core::MarkResult;
-use mark_diff::{Changeset, DiffOptions, DiffScope, DiffSource, DiffStats};
+use mark_diff::{Changeset, DiffOptions, DiffSource, DiffStats};
 use mark_syntax::DiffContextExpansion;
 use ratatui::layout::Rect;
 use std::path::PathBuf;
@@ -200,15 +200,7 @@ pub(crate) fn diff_choice_for_options(options: &DiffOptions) -> Option<DiffChoic
     }
 
     match &options.source {
-        DiffSource::Worktree {
-            scope: DiffScope::All,
-        } => Some(DiffChoice::All),
-        DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        } => Some(DiffChoice::Unstaged),
-        DiffSource::Worktree {
-            scope: DiffScope::Staged,
-        } => Some(DiffChoice::Staged),
+        DiffSource::Worktree => Some(DiffChoice::All),
         DiffSource::Base(_) | DiffSource::Branch { .. } => Some(DiffChoice::Branch),
         DiffSource::Show(_) => Some(DiffChoice::Show),
         _ => None,

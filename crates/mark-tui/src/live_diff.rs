@@ -310,7 +310,7 @@ fn is_relevant_git_metadata_components(mut components: std::path::Components<'_>
 pub(crate) fn live_diff_supported(options: &DiffOptions) -> bool {
     matches!(
         options.source,
-        DiffSource::Worktree { .. } | DiffSource::Base(_) | DiffSource::Difftool { .. }
+        DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Difftool { .. }
     )
 }
 

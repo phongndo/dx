@@ -230,19 +230,10 @@ impl From<usize> for NewLineNumber {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum DiffScope {
-    #[default]
-    All,
-    Staged,
-    Unstaged,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DiffSource {
-    Worktree {
-        scope: DiffScope,
-    },
+    #[default]
+    Worktree,
     Show(RevSpec),
     Base(RevSpec),
     Branch {
@@ -259,14 +250,6 @@ pub enum DiffSource {
         path: Option<DisplayPath>,
     },
     Patch(PatchSource),
-}
-
-impl Default for DiffSource {
-    fn default() -> Self {
-        Self::Worktree {
-            scope: DiffScope::All,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,17 +320,6 @@ impl DiffOptions {
 
     pub fn is_stat(&self) -> bool {
         self.output.is_stat()
-    }
-
-    pub fn worktree_scope(&self) -> Option<DiffScope> {
-        match self.source {
-            DiffSource::Worktree { scope } => Some(scope),
-            _ => None,
-        }
-    }
-
-    pub fn set_worktree_scope(&mut self, scope: DiffScope) {
-        self.source = DiffSource::Worktree { scope };
     }
 }
 

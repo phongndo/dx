@@ -17,14 +17,6 @@ fn diff_output(stat: bool) -> mark_command::DiffOutput {
 }
 
 pub(crate) fn diff_options(args: DiffArgs) -> MarkResult<mark_command::DiffOptions> {
-    let scope = if args.staged {
-        mark_command::DiffScope::Staged
-    } else if args.unstaged {
-        mark_command::DiffScope::Unstaged
-    } else {
-        mark_command::DiffScope::All
-    };
-
     let source = match (args.base, args.revs.as_slice()) {
         (Some(base), []) => mark_command::DiffSource::Base(base.into()),
         (Some(_), _) => {
@@ -32,7 +24,7 @@ pub(crate) fn diff_options(args: DiffArgs) -> MarkResult<mark_command::DiffOptio
                 "use either --base or positional revisions, not both".to_owned(),
             ));
         }
-        (None, []) => mark_command::DiffSource::Worktree { scope },
+        (None, []) => mark_command::DiffSource::Worktree,
         (None, [base]) => mark_command::DiffSource::Base(base.clone().into()),
         (None, [left, right]) => mark_command::DiffSource::Range {
             left: left.clone().into(),
@@ -44,14 +36,6 @@ pub(crate) fn diff_options(args: DiffArgs) -> MarkResult<mark_command::DiffOptio
             ));
         }
     };
-
-    if scope != mark_command::DiffScope::All
-        && !matches!(source, mark_command::DiffSource::Worktree { .. })
-    {
-        return Err(MarkError::Usage(
-            "--staged and --unstaged only apply to working tree diffs".to_owned(),
-        ));
-    }
 
     Ok(mark_command::DiffOptions {
         repo: args.repo.repo.map(Into::into),

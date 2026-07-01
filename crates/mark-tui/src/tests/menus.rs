@@ -648,7 +648,6 @@ fn diff_menu_show_loads_current_commit_like_branch() {
         .as_ref()
         .expect("show choice should queue diff load");
     assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
-    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
@@ -666,8 +665,6 @@ fn diff_menu_lists_all_changes_first() {
             DiffChoice::All,
             DiffChoice::Branch,
             DiffChoice::Show,
-            DiffChoice::Unstaged,
-            DiffChoice::Staged,
             DiffChoice::Review,
         ]
     );
@@ -711,10 +708,6 @@ fn diff_menu_keyboard_selects_diff_choice() {
     app.open_diff_menu();
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
-        .expect("down should move to unstaged");
-    assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Unstaged));
-
     let should_quit = app
         .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
         .expect("enter should apply menu selection");
@@ -726,13 +719,7 @@ fn diff_menu_keyboard_selects_diff_choice() {
         .pending_diff_load
         .as_ref()
         .expect("menu selection should queue diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::Unstaged
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Unstaged));
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
 }
 
 #[test]
@@ -932,7 +919,6 @@ fn diff_menu_uses_configured_menu_keymap() {
         .as_ref()
         .expect("menu selection should queue diff load");
     assert_eq!(load.options.source, DiffSource::Base("main".into()));
-    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
@@ -998,7 +984,6 @@ fn branch_menu_uses_configured_menu_keymap() {
             head: "topic".into()
         }
     );
-    assert_eq!(load.options.worktree_scope(), None);
 }
 
 #[test]
@@ -1161,11 +1146,11 @@ fn diff_menu_draws_centered_floating_menu() {
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("│  Unstaged") && !row.contains("1 │"))
+            .any(|row| row.contains("│  Show") && !row.contains("1 │"))
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("│  Staged") && !row.contains("2 │"))
+            .any(|row| row.contains("│  Review") && !row.contains("2 │"))
     );
 }
 
@@ -1187,9 +1172,9 @@ fn diff_menu_mouse_selects_visible_centered_choice() {
             let text: String = (0..buffer.area.width)
                 .map(|x| buffer.cell((x, y)).expect("cell should exist").symbol())
                 .collect();
-            text.find("Unstaged").map(|x| (y, x as u16))
+            text.find("Show").map(|x| (y, x as u16))
         })
-        .expect("unstaged choice should be visible");
+        .expect("show choice should be visible");
 
     app.handle_click(column, row);
 
@@ -1199,13 +1184,7 @@ fn diff_menu_mouse_selects_visible_centered_choice() {
         .pending_diff_load
         .as_ref()
         .expect("visible click should queue diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::Unstaged
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Unstaged));
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
 }
 
 #[test]
@@ -2325,13 +2304,7 @@ fn tab_from_review_diff_cycles_to_all_changes() {
         .pending_diff_load
         .as_ref()
         .expect("tab should queue all-changes diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::All
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
+    assert_eq!(load.options.source, DiffSource::Worktree);
 }
 
 #[test]
@@ -2369,24 +2342,17 @@ fn diff_menu_options_preserve_repo_and_untracked_setting() {
     app.refs.branch_head = Some("feature/ui".to_owned());
     app.refs.current_head = Some("feature/ui".to_owned());
 
-    let staged = app.options_for_choice(DiffChoice::Staged).unwrap();
-    assert_eq!(staged.repo, options.repo);
-    assert!(!staged.include_untracked());
-    assert_eq!(
-        staged.source,
-        DiffSource::Worktree {
-            scope: DiffScope::Staged
-        }
-    );
-    assert_eq!(staged.worktree_scope(), Some(DiffScope::Staged));
+    let all_changes = app.options_for_choice(DiffChoice::All).unwrap();
+    assert_eq!(all_changes.repo, options.repo);
+    assert!(!all_changes.include_untracked());
+    assert_eq!(all_changes.source, DiffSource::Worktree);
 
     let branch = app.options_for_choice(DiffChoice::Branch).unwrap();
     assert_eq!(branch.source, DiffSource::Base("origin/main".into()));
-    assert_eq!(branch.worktree_scope(), None);
 }
 
 #[test]
-fn branch_choice_survives_switching_to_worktree_scope() {
+fn branch_choice_survives_switching_to_worktree_diff() {
     let options = DiffOptions {
         source: DiffSource::Base("origin/main".into()),
         ..DiffOptions::default()

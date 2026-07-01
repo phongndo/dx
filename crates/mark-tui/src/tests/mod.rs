@@ -37,8 +37,8 @@ use crossterm::event::{
 };
 use mark_core::MarkError;
 use mark_diff::{
-    BranchName, Changeset, DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, FileChange,
-    FileStatus, HunkLineRanges, PatchSource,
+    BranchName, Changeset, DiffLine, DiffLineKind, DiffOptions, DiffSource, FileChange, FileStatus,
+    HunkLineRanges, PatchSource,
 };
 use mark_syntax::{
     ColorOverrides, DiffContextExpansion, HighlightedLine, LayoutSetting,

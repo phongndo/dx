@@ -691,9 +691,7 @@ fn live_reload_invalidation_clears_cache_without_visible_pending_state() {
     let changeset = changeset_with_files(&["src/lib.rs"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let options = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+        source: DiffSource::Worktree,
         ..DiffOptions::default()
     };
 
@@ -799,7 +797,6 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .as_ref()
         .expect("leader n should queue diff load");
     assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
-    assert_eq!(load.options.worktree_scope(), None);
     assert!(app.input.key_prefix_pending.is_none());
 
     app.jobs.pending_diff_load = None;
@@ -816,13 +813,7 @@ fn configured_leader_diff_type_bindings_cycle_choices() {
         .pending_diff_load
         .as_ref()
         .expect("leader p should queue diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::All
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
+    assert_eq!(load.options.source, DiffSource::Worktree);
     assert!(app.input.key_prefix_pending.is_none());
 }
 
@@ -854,13 +845,13 @@ fn cached_current_diff_rebuilds_model_while_filter_apply_is_pending() {
         changeset_with_files(&["all.rs", "filtered.rs"]),
         DiffLayoutMode::Unified,
     );
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+    app.refs.branch_base = Some("main".to_owned());
+    app.refs.current_head = Some("feature".to_owned());
+    let branch = DiffOptions {
+        source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
     };
-    app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["unstaged.rs"]));
+    app.cache_loaded_diff(branch.clone(), changeset_with_files(&["branch.rs"]));
 
     app.filters.file_filter = "filtered".to_owned();
     app.apply_filters(PostFilterNavigation::Preserve);
@@ -870,9 +861,9 @@ fn cached_current_diff_rebuilds_model_while_filter_apply_is_pending() {
     app.filters.file_filter_input.clear();
     app.jobs.filter_searching = true;
 
-    app.select_diff_choice(DiffChoice::Unstaged);
-    assert_eq!(app.document.options, unstaged);
-    assert_eq!(visible_paths(&app), vec!["unstaged.rs"]);
+    app.select_diff_choice(DiffChoice::Branch);
+    assert_eq!(app.document.options, branch);
+    assert_eq!(visible_paths(&app), vec!["branch.rs"]);
 
     app.select_diff_choice(DiffChoice::All);
     assert_eq!(app.document.options, DiffOptions::default());
@@ -886,13 +877,11 @@ fn cached_diff_choice_is_not_reused_without_live_invalidator() {
         changeset_with_files(&["all.rs"]),
         DiffLayoutMode::Unified,
     );
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+    let all_changes = DiffOptions {
+        source: DiffSource::Worktree,
         ..DiffOptions::default()
     };
-    app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["stale.rs"]));
+    app.cache_loaded_diff(all_changes.clone(), changeset_with_files(&["stale.rs"]));
     app.jobs.live_updates = LiveUpdatesState::DisabledByCli;
 
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
@@ -913,7 +902,7 @@ fn cached_diff_choice_is_not_reused_without_live_invalidator() {
         .pending_diff_load
         .as_ref()
         .expect("tab should queue a fresh diff load");
-    assert_eq!(load.options, unstaged);
+    assert_eq!(load.options, all_changes);
     assert_eq!(app.document.options.source, DiffSource::Show("HEAD".into()));
     assert_eq!(visible_paths(&app), vec!["all.rs"]);
     assert!(app.jobs.diff_cache.is_empty());
@@ -926,13 +915,11 @@ fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
         changeset_with_files(&["all.rs"]),
         DiffLayoutMode::Unified,
     );
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+    let all_changes = DiffOptions {
+        source: DiffSource::Worktree,
         ..DiffOptions::default()
     };
-    app.cache_loaded_diff(unstaged.clone(), changeset_with_files(&["stale.rs"]));
+    app.cache_loaded_diff(all_changes.clone(), changeset_with_files(&["stale.rs"]));
     app.mark_live_reload_pending();
 
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
@@ -953,7 +940,7 @@ fn cached_diff_choice_is_not_reused_during_pending_live_reload() {
         .pending_diff_load
         .as_ref()
         .expect("tab should queue a fresh diff load");
-    assert_eq!(load.options, unstaged);
+    assert_eq!(load.options, all_changes);
     assert_eq!(app.document.options.source, DiffSource::Show("HEAD".into()));
     assert_eq!(visible_paths(&app), vec!["all.rs"]);
     assert!(app.jobs.diff_cache.is_empty());
@@ -1027,13 +1014,11 @@ fn reload_invalidates_cached_diff_choices() {
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+    let show = DiffOptions {
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
-    app.cache_loaded_diff(unstaged, changeset_with_files(&["unstaged.rs"]));
+    app.cache_loaded_diff(show, changeset_with_files(&["show.rs"]));
 
     app.reload().expect("reload should start");
 
@@ -1051,9 +1036,7 @@ fn cache_invalidation_preserves_pending_diff_load() {
         DiffLayoutMode::Unified,
     );
     let pending_options = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
     app.jobs.pending_diff_load = Some(pending_diff_load(pending_options.clone()));
@@ -1231,36 +1214,6 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
         }
     );
 
-    let staged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Staged,
-        },
-        ..DiffOptions::default()
-    };
-    assert_eq!(
-        full_file_source(&repo, &staged, &file, DiffSide::New)
-            .unwrap()
-            .kind,
-        FullFileSourceKind::GitIndex {
-            path: "new.rs".into(),
-        }
-    );
-
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
-        ..DiffOptions::default()
-    };
-    assert_eq!(
-        full_file_source(&repo, &unstaged, &file, DiffSide::Old)
-            .unwrap()
-            .kind,
-        FullFileSourceKind::GitIndex {
-            path: "old.rs".into(),
-        }
-    );
-
     let base = DiffOptions {
         source: DiffSource::Base("main".into()),
         ..DiffOptions::default()
@@ -1324,7 +1277,7 @@ fn full_file_sources_cover_diff_modes_and_statuses() {
 }
 
 #[test]
-fn full_file_source_loads_worktree_index_and_revision_contents() {
+fn full_file_source_loads_worktree_and_revision_contents() {
     let repo = temp_test_dir("full-file-source");
     fs::create_dir_all(&repo).expect("repo directory should be created");
     git(&repo, &["init", "-q"]);
@@ -1351,18 +1304,6 @@ fn full_file_source_loads_worktree_index_and_revision_contents() {
         load_full_file_source(&FullFileSource {
             repo: repo.clone().into(),
             kind: FullFileSourceKind::Worktree {
-                path: "file.rs".into(),
-            },
-        })
-        .unwrap(),
-        "fn new() {}\n"
-    );
-
-    git(&repo, &["add", "file.rs"]);
-    assert_eq!(
-        load_full_file_source(&FullFileSource {
-            repo: repo.clone().into(),
-            kind: FullFileSourceKind::GitIndex {
                 path: "file.rs".into(),
             },
         })

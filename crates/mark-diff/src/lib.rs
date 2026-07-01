@@ -29,7 +29,7 @@ use stats::parse_patch_stats;
 use stats::{patch_stats, render_patch_stats, terminal_safe_text};
 pub use types::{
     BranchName, Changeset, CommitSha, DiffFile, DiffFileBody, DiffHunk, DiffLine, DiffLineKind,
-    DiffOptions, DiffOutput, DiffPath, DiffRowRef, DiffScope, DiffSource, DiffStats, DiffViewModel,
+    DiffOptions, DiffOutput, DiffPath, DiffRowRef, DiffSource, DiffStats, DiffViewModel,
     DisplayPath, FileChange, FileStatus, HunkLineRanges, LineSpan, NewLineNumber, OldLineNumber,
     PatchLabel, PatchSource, PullRequestId, RefName, RemoteName, RepoArg, RepoRelativePath,
     RepoRoot, RevSpec, ReviewId, UntrackedMode, WorktreePath,

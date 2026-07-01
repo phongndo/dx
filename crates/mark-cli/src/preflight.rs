@@ -21,8 +21,6 @@ fn has_diff_args(args: &args::DiffArgs) -> bool {
     !args.revs.is_empty()
         || args.repo.repo.is_some()
         || args.base.is_some()
-        || args.staged
-        || args.unstaged
         || args.no_untracked
         || args.watch.no_watch
         || args.display.no_syntax

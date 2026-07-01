@@ -832,9 +832,7 @@ fn statusline_header_hides_pending_diff_load() {
     let changeset = changeset_with_files(&["src/lib.rs", "README.md", "docs/guide.md"]);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
     let options = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Staged,
-        },
+        source: DiffSource::Worktree,
         ..DiffOptions::default()
     };
     app.jobs.pending_diff_load = Some(pending_diff_load(options));

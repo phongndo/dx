@@ -1,4 +1,4 @@
-use mark_diff::{DiffOptions, DiffScope, DiffSource};
+use mark_diff::{DiffOptions, DiffSource};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -232,7 +232,7 @@ pub(crate) fn diff_type_label(options: &DiffOptions) -> &'static str {
         DiffSource::Range { .. } => "Range",
         DiffSource::Difftool { .. } => "Difftool",
         DiffSource::Patch(_) => "Patch",
-        DiffSource::Worktree { .. } | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
+        DiffSource::Worktree | DiffSource::Base(_) | DiffSource::Branch { .. } => "Diff",
     }
 }
 
@@ -243,15 +243,7 @@ pub(crate) fn diff_choice_from_options(options: &DiffOptions) -> Option<DiffChoi
 
     match &options.source {
         DiffSource::Base(_) | DiffSource::Branch { .. } => Some(DiffChoice::Branch),
-        DiffSource::Worktree {
-            scope: DiffScope::All,
-        } => Some(DiffChoice::All),
-        DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        } => Some(DiffChoice::Unstaged),
-        DiffSource::Worktree {
-            scope: DiffScope::Staged,
-        } => Some(DiffChoice::Staged),
+        DiffSource::Worktree => Some(DiffChoice::All),
         DiffSource::Show(_) => Some(DiffChoice::Show),
         _ => None,
     }
@@ -259,11 +251,7 @@ pub(crate) fn diff_choice_from_options(options: &DiffOptions) -> Option<DiffChoi
 
 pub(crate) fn diff_comparison_label(options: &DiffOptions) -> String {
     match &options.source {
-        DiffSource::Worktree { scope } => match scope {
-            DiffScope::All => "HEAD → working tree".to_owned(),
-            DiffScope::Staged => "HEAD → index".to_owned(),
-            DiffScope::Unstaged => "index → working tree".to_owned(),
-        },
+        DiffSource::Worktree => "HEAD → working tree".to_owned(),
         DiffSource::Show(rev) => format!("show {rev}"),
         DiffSource::Base(base) => format!("HEAD → {base}"),
         DiffSource::Branch { base, head } => format!("{head} → {base}"),

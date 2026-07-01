@@ -6,8 +6,8 @@
 `mark` is a fast, keyboard-first terminal Git diff reviewer.
 
 Use it when you want to review real diffs without leaving the terminal: local
-worktree changes, staged changes, revision ranges, patch files, Git difftool
-pairs, pager input, and GitHub pull requests.
+worktree changes, revision ranges, patch files, Git difftool pairs, pager input,
+and GitHub pull requests.
 
 ## Why mark
 
@@ -65,7 +65,6 @@ Nightly binaries report their channel and build commit in `mark --version`.
 
 ```sh
 mark                         # review current worktree changes
-mark diff --staged           # review staged changes
 mark diff --base main        # review current branch against main
 mark diff main feature       # review a revision range
 mark show HEAD~1             # review one commit

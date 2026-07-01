@@ -6,8 +6,6 @@ pub(crate) enum DiffChoice {
     Review,
     Show,
     All,
-    Unstaged,
-    Staged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,8 +21,6 @@ impl DiffChoice {
             Self::Review => "Review",
             Self::Show => "Show",
             Self::All => "All changes",
-            Self::Unstaged => "Unstaged",
-            Self::Staged => "Staged",
         }
     }
 }

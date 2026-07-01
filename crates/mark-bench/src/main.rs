@@ -219,7 +219,6 @@ enum ScenarioKind {
     FewUntrackedLarge,
     MinifiedOneLine,
     BinaryFiles,
-    StagedUnstaged,
     HugeMixedStress,
     SyntaxManySmallRust,
     SyntaxLargeRust,
@@ -236,7 +235,6 @@ impl ScenarioKind {
             Self::FewUntrackedLarge => "few-untracked-large",
             Self::MinifiedOneLine => "minified-one-line",
             Self::BinaryFiles => "binary-files",
-            Self::StagedUnstaged => "staged-unstaged",
             Self::HugeMixedStress => "huge-mixed-stress",
             Self::SyntaxManySmallRust => "syntax-many-small-rust",
             Self::SyntaxLargeRust => "syntax-large-rust",
@@ -253,7 +251,6 @@ impl ScenarioKind {
             Self::FewUntrackedLarge => "Tracked edits plus a few large untracked files.",
             Self::MinifiedOneLine => "A pathological single-line minified file edit.",
             Self::BinaryFiles => "Binary modified and untracked files plus a small text edit.",
-            Self::StagedUnstaged => "Separate staged, unstaged, mixed, and untracked changes.",
             Self::HugeMixedStress => "Large opt-in stress case for max-size and memory testing.",
             Self::SyntaxManySmallRust => "Rust many-small-file diff for syntax-enabled runs.",
             Self::SyntaxLargeRust => "Rust large-single-file diff for syntax-enabled runs.",
@@ -272,7 +269,6 @@ impl ScenarioKind {
             Self::FewUntrackedLarge,
             Self::MinifiedOneLine,
             Self::BinaryFiles,
-            Self::StagedUnstaged,
         ]
     }
 
@@ -358,8 +354,6 @@ struct FixturePaths {
     repo: String,
     patch: String,
     head_patch: String,
-    unstaged_patch: String,
-    staged_patch: String,
     pair_before: String,
     pair_after: String,
 }
@@ -373,15 +367,12 @@ struct FixtureManifest {
     counts: FixtureCounts,
     patch_bytes: u64,
     head_patch_bytes: u64,
-    unstaged_patch_bytes: u64,
-    staged_patch_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum SourceVariant {
     Baseline,
     ChangedA,
-    ChangedB,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -1118,7 +1109,6 @@ fn generate_scenario(
             generate_minified_one_line_scenario(&scenario_dir, scenario, 45_000)?
         }
         ScenarioKind::BinaryFiles => generate_binary_scenario(&scenario_dir, scenario)?,
-        ScenarioKind::StagedUnstaged => generate_staged_unstaged_scenario(&scenario_dir, scenario)?,
         ScenarioKind::HugeMixedStress => generate_untracked_text_scenario(
             &scenario_dir,
             scenario,
@@ -1312,7 +1302,6 @@ fn minified_rust_source(tokens: usize, variant: SourceVariant) -> String {
         match variant {
             SourceVariant::Baseline => text.push_str(&format!("\"token_{index}\"")),
             SourceVariant::ChangedA => text.push_str(&format!("\"token_{index}_changed\"")),
-            SourceVariant::ChangedB => text.push_str(&format!("\"token_{index}_again\"")),
         }
     }
     text.push_str("];\n");
@@ -1362,80 +1351,6 @@ fn generate_binary_scenario(
         counts,
         &repo,
         &[PathBuf::from("bin/new-untracked.dat")],
-    )
-}
-
-fn generate_staged_unstaged_scenario(
-    scenario_dir: &Path,
-    scenario: ScenarioKind,
-) -> BenchResult<FixtureManifest> {
-    let repo = scenario_dir.join("repo");
-    initialize_repo(&repo)?;
-
-    for (index, name) in ["staged", "unstaged", "mixed", "untouched"]
-        .into_iter()
-        .enumerate()
-    {
-        write_file(
-            &repo.join(format!("src/{name}.ts")),
-            synthetic_source(index + 1, SourceVariant::Baseline, 80, None, 12).as_bytes(),
-        )?;
-    }
-    git(&repo, &["add", "."])?;
-    git(&repo, &["commit", "-m", "initial benchmark fixture"])?;
-
-    write_file(
-        &repo.join("src/staged.ts"),
-        synthetic_source(1, SourceVariant::ChangedA, 80, None, 12).as_bytes(),
-    )?;
-    git(&repo, &["add", "src/staged.ts"])?;
-
-    write_file(
-        &repo.join("src/unstaged.ts"),
-        synthetic_source(2, SourceVariant::ChangedA, 80, None, 12).as_bytes(),
-    )?;
-
-    write_file(
-        &repo.join("src/mixed.ts"),
-        synthetic_source(3, SourceVariant::ChangedA, 80, None, 12).as_bytes(),
-    )?;
-    git(&repo, &["add", "src/mixed.ts"])?;
-    write_file(
-        &repo.join("src/mixed.ts"),
-        synthetic_source(3, SourceVariant::ChangedB, 80, None, 12).as_bytes(),
-    )?;
-
-    write_file(
-        &repo.join("untracked/new.ts"),
-        synthetic_source(4, SourceVariant::ChangedA, 40, None, 8).as_bytes(),
-    )?;
-
-    write_pair_fixture(
-        scenario_dir,
-        TextShape {
-            file_count: 1,
-            lines: 80,
-            changed_start: None,
-            changed_lines: 12,
-            extension: "ts",
-        },
-        4_444,
-    )?;
-
-    let counts = FixtureCounts {
-        tracked_files: 3,
-        untracked_files: 1,
-        expected_text_additions: 3 * 12 + 40,
-        expected_text_deletions: 3 * 12,
-        ..FixtureCounts::default()
-    };
-
-    finish_manifest(
-        scenario_dir,
-        scenario,
-        counts,
-        &repo,
-        &[PathBuf::from("untracked/new.ts")],
     )
 }
 
@@ -1553,39 +1468,8 @@ fn finish_manifest(
         repo,
         untracked_paths,
     )?;
-    let unstaged_patch = append_untracked_patches(
-        git_diff(
-            repo,
-            &[
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-color",
-                "--find-renames",
-            ],
-        )?,
-        repo,
-        untracked_paths,
-    )?;
-    let staged_patch = git_diff(
-        repo,
-        &[
-            "diff",
-            "--cached",
-            "--binary",
-            "--no-ext-diff",
-            "--no-color",
-            "--find-renames",
-        ],
-    )?;
-
     write_file(&scenario_dir.join("patch.diff"), head_patch.as_bytes())?;
     write_file(&scenario_dir.join("head.patch"), head_patch.as_bytes())?;
-    write_file(
-        &scenario_dir.join("unstaged.patch"),
-        unstaged_patch.as_bytes(),
-    )?;
-    write_file(&scenario_dir.join("staged.patch"), staged_patch.as_bytes())?;
 
     Ok(FixtureManifest {
         version: 1,
@@ -1595,16 +1479,12 @@ fn finish_manifest(
             repo: "repo".to_owned(),
             patch: "patch.diff".to_owned(),
             head_patch: "head.patch".to_owned(),
-            unstaged_patch: "unstaged.patch".to_owned(),
-            staged_patch: "staged.patch".to_owned(),
             pair_before: pair_before_path(scenario_dir),
             pair_after: pair_after_path(scenario_dir),
         },
         counts,
         patch_bytes: head_patch.len() as u64,
         head_patch_bytes: head_patch.len() as u64,
-        unstaged_patch_bytes: unstaged_patch.len() as u64,
-        staged_patch_bytes: staged_patch.len() as u64,
     })
 }
 
@@ -1751,9 +1631,6 @@ fn synthetic_source(
                 SourceVariant::ChangedA => text.push_str(&format!(
                     "export function bench{file_index}_{line}(value: number) {{ return value * {line} + {file_index}; }}\n"
                 )),
-                SourceVariant::ChangedB => text.push_str(&format!(
-                    "export function bench{file_index}_{line}(value: number) {{ return value - {line} - {file_index}; }}\n"
-                )),
             }
         } else {
             text.push_str(&format!(
@@ -1801,9 +1678,6 @@ fn synthetic_rust_source(
                 SourceVariant::ChangedA => text.push_str(&format!(
                     "pub fn bench_{file_index}_{line}(value: i64) -> i64 {{ value * {line} + {file_index} }}\n"
                 )),
-                SourceVariant::ChangedB => text.push_str(&format!(
-                    "pub fn bench_{file_index}_{line}(value: i64) -> i64 {{ value - {line} - {file_index} }}\n"
-                )),
             }
         } else {
             text.push_str(&format!(
@@ -1824,7 +1698,6 @@ fn minified_source(tokens: usize, variant: SourceVariant) -> String {
         match variant {
             SourceVariant::Baseline => text.push_str(&format!("\"token_{index}\"")),
             SourceVariant::ChangedA => text.push_str(&format!("\"token_{index}_changed\"")),
-            SourceVariant::ChangedB => text.push_str(&format!("\"token_{index}_again\"")),
         }
     }
     text.push_str("];console.log(markBenchBundle.length);");
@@ -1858,7 +1731,6 @@ mod tests {
             ScenarioKind::FewUntrackedLarge,
             ScenarioKind::MinifiedOneLine,
             ScenarioKind::BinaryFiles,
-            ScenarioKind::StagedUnstaged,
             ScenarioKind::HugeMixedStress,
             ScenarioKind::SyntaxManySmallRust,
             ScenarioKind::SyntaxLargeRust,

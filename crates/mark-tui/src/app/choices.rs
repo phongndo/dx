@@ -6,7 +6,7 @@ use crate::controls::{
 use crate::render::menus::{color_scheme_picker_block, diff_menu_block};
 use crate::selector::{SelectorController, SelectorMovement};
 use crossterm::event::KeyEvent;
-use mark_diff::{DiffOptions, DiffScope, DiffSource};
+use mark_diff::{DiffOptions, DiffSource};
 
 impl DiffApp {
     pub(crate) fn diff_choice_at(&self, column: u16, row: u16) -> Option<DiffChoice> {
@@ -87,7 +87,6 @@ impl DiffApp {
             choices.push(DiffChoice::Branch);
         }
         choices.push(DiffChoice::Show);
-        choices.extend([DiffChoice::Unstaged, DiffChoice::Staged]);
         choices.push(DiffChoice::Review);
         choices
     }
@@ -146,8 +145,6 @@ impl DiffApp {
     pub(crate) fn diff_choice_detail(&self, choice: DiffChoice) -> String {
         match choice {
             DiffChoice::All => "HEAD → working tree".to_owned(),
-            DiffChoice::Unstaged => "index → working tree".to_owned(),
-            DiffChoice::Staged => "HEAD → index".to_owned(),
             DiffChoice::Branch => match self.refs.branch_base.as_deref() {
                 Some(base) => {
                     let head = self
@@ -356,13 +353,7 @@ impl DiffApp {
                 options.source = self.branch_source(base, head);
             }
             DiffChoice::All => {
-                options.set_worktree_scope(DiffScope::All);
-            }
-            DiffChoice::Unstaged => {
-                options.set_worktree_scope(DiffScope::Unstaged);
-            }
-            DiffChoice::Staged => {
-                options.set_worktree_scope(DiffScope::Staged);
+                options.source = DiffSource::Worktree;
             }
             DiffChoice::Show => {
                 let rev = self

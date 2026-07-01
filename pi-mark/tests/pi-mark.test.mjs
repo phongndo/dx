@@ -38,7 +38,11 @@ test("package manifest loads mark source commands", async () => {
 });
 
 test("parseCommandLine splits whitespace", () => {
-  assert.deepEqual(parseCommandLine("--staged --base main"), ["--staged", "--base", "main"]);
+  assert.deepEqual(parseCommandLine("--no-untracked --base main"), [
+    "--no-untracked",
+    "--base",
+    "main",
+  ]);
 });
 
 test("parseCommandLine preserves quoted arguments", () => {
@@ -87,7 +91,7 @@ test("markInvocationNeedsGit allows full GitHub pull request URLs", () => {
 
 test("markInvocationNeedsGit requires git for diffs, revisions, and review numbers", () => {
   assert.equal(markInvocationNeedsGit("diff", []), true);
-  assert.equal(markInvocationNeedsGit("diff", ["--staged"]), true);
+  assert.equal(markInvocationNeedsGit("diff", ["--no-untracked"]), true);
   assert.equal(markInvocationNeedsGit("show", []), true);
   assert.equal(markInvocationNeedsGit("show", ["HEAD~1"]), true);
   assert.equal(markInvocationNeedsGit("review", ["123"]), true);
@@ -260,8 +264,8 @@ process.exit(0);
 
     for (const [args, expected] of [
       ["", []],
-      ["--staged", ["--staged"]],
-      ["diff --staged", ["diff", "--staged"]],
+      ["--no-untracked", ["--no-untracked"]],
+      ["diff --base main", ["diff", "--base", "main"]],
       ["show HEAD~1", ["show", "HEAD~1"]],
       ["review 123", ["review", "123"]],
       ["patch changes.diff", ["patch", "changes.diff"]],

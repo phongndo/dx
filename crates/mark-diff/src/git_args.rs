@@ -7,7 +7,7 @@ use mark_git::{
     worktree_base_revision,
 };
 
-use crate::{DiffOptions, DiffScope, DiffSource, PatchSource, difftool::difftool_display_path};
+use crate::{DiffOptions, DiffSource, PatchSource, difftool::difftool_display_path};
 
 pub(super) fn validate_options(_options: &DiffOptions) -> MarkResult<()> {
     Ok(())
@@ -27,14 +27,10 @@ pub(super) fn git_diff_args(options: &DiffOptions, repo: &Path) -> MarkResult<Ve
     ];
 
     match &options.source {
-        DiffSource::Worktree { scope } => match scope {
-            DiffScope::All => {
-                args.push("--end-of-options".to_owned());
-                args.push(worktree_base_revision(repo)?);
-            }
-            DiffScope::Staged => args.push("--cached".to_owned()),
-            DiffScope::Unstaged => {}
-        },
+        DiffSource::Worktree => {
+            args.push("--end-of-options".to_owned());
+            args.push(worktree_base_revision(repo)?);
+        }
         DiffSource::Base(base) => {
             args.push("--end-of-options".to_owned());
             args.push(merge_base_revision(repo, base)?);
@@ -90,14 +86,10 @@ pub(super) fn git_diff_numstat_args(options: &DiffOptions, repo: &Path) -> MarkR
     ];
 
     match &options.source {
-        DiffSource::Worktree { scope } => match scope {
-            DiffScope::All => {
-                args.push("--end-of-options".to_owned());
-                args.push(worktree_base_revision(repo)?);
-            }
-            DiffScope::Staged => args.push("--cached".to_owned()),
-            DiffScope::Unstaged => {}
-        },
+        DiffSource::Worktree => {
+            args.push("--end-of-options".to_owned());
+            args.push(worktree_base_revision(repo)?);
+        }
         DiffSource::Base(base) => {
             args.push("--end-of-options".to_owned());
             args.push(merge_base_revision(repo, base)?);
@@ -160,20 +152,12 @@ fn git_show_numstat_args(repo: &Path, rev: &str) -> MarkResult<Vec<String>> {
 
 pub(super) fn should_include_untracked(options: &DiffOptions) -> bool {
     options.include_untracked()
-        && match options.source {
-            DiffSource::Worktree { scope } => matches!(scope, DiffScope::All | DiffScope::Unstaged),
-            DiffSource::Base(_) => true,
-            _ => false,
-        }
+        && matches!(options.source, DiffSource::Worktree | DiffSource::Base(_))
 }
 
 pub(super) fn diff_title(options: &DiffOptions) -> String {
     match &options.source {
-        DiffSource::Worktree { scope } => match scope {
-            DiffScope::All => "working tree vs HEAD".to_owned(),
-            DiffScope::Staged => "staged changes".to_owned(),
-            DiffScope::Unstaged => "unstaged changes".to_owned(),
-        },
+        DiffSource::Worktree => "working tree vs HEAD".to_owned(),
         DiffSource::Show(rev) => format!("show {rev}"),
         DiffSource::Base(base) => format!("{base}...HEAD"),
         DiffSource::Branch { base, head } => format!("{base}...{head}"),

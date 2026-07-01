@@ -1496,19 +1496,11 @@ fn file_sidebar_separator_drag_resizes_sidebar() {
 }
 
 #[test]
-fn diff_header_labels_describe_selected_scope() {
+fn diff_header_labels_describe_selected_source() {
     let mut options = DiffOptions::default();
 
     assert_eq!(diff_selector_text(&options), " All changes ");
     assert_eq!(diff_comparison_label(&options), "HEAD → working tree");
-
-    options.set_worktree_scope(DiffScope::Unstaged);
-    assert_eq!(diff_selector_text(&options), " Unstaged ");
-    assert_eq!(diff_comparison_label(&options), "index → working tree");
-
-    options.set_worktree_scope(DiffScope::Staged);
-    assert_eq!(diff_selector_text(&options), " Staged ");
-    assert_eq!(diff_comparison_label(&options), "HEAD → index");
 
     options.source = DiffSource::Base("origin/main".into());
     assert_eq!(diff_selector_text(&options), " Branch ");
@@ -1656,9 +1648,7 @@ fn replace_cached_diff_preserves_wrapped_file_relative_scroll() {
     let relative_scroll = 1;
     set_wrapped_scroll_relative_to_file_start(&mut app, 1, relative_scroll);
     let options = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Staged,
-        },
+        source: DiffSource::Worktree,
         ..DiffOptions::default()
     };
     let mut replacement = changeset_with_wrapped_leading_file();
@@ -1692,12 +1682,7 @@ fn number_keys_do_not_switch_diff_choice() {
 
     assert!(!should_quit);
     assert!(app.jobs.pending_diff_load.is_none());
-    assert_eq!(
-        app.document.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::All
-        }
-    );
+    assert_eq!(app.document.options.source, DiffSource::Worktree);
 }
 
 #[test]
@@ -1719,7 +1704,6 @@ fn tab_keys_cycle_diff_choice() {
         .as_ref()
         .expect("tab should queue diff load");
     assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
-    assert_eq!(load.options.worktree_scope(), None);
 
     app.jobs.pending_diff_load = None;
     app.document.options = DiffOptions {
@@ -1734,13 +1718,7 @@ fn tab_keys_cycle_diff_choice() {
         .pending_diff_load
         .as_ref()
         .expect("shift-tab should queue diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::All
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::All));
+    assert_eq!(load.options.source, DiffSource::Worktree);
 }
 
 #[test]
@@ -1750,21 +1728,19 @@ fn cached_tab_key_switches_diff_choice_without_loading() {
         changeset_with_files(&["all.rs"]),
         DiffLayoutMode::Unified,
     );
-    let unstaged = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
+    let show = DiffOptions {
+        source: DiffSource::Show("HEAD".into()),
         ..DiffOptions::default()
     };
-    let cached_changeset = changeset_with_files(&["unstaged.rs"]);
-    app.cache_loaded_diff(unstaged.clone(), cached_changeset.clone());
+    let cached_changeset = changeset_with_files(&["show.rs"]);
+    app.cache_loaded_diff(show.clone(), cached_changeset.clone());
 
-    app.select_diff_choice(DiffChoice::Unstaged);
+    app.select_diff_choice(DiffChoice::Show);
 
     assert!(app.jobs.pending_diff_load.is_none());
-    assert_eq!(app.document.options, unstaged);
+    assert_eq!(app.document.options, show);
     assert_eq!(app.document.base_changeset, cached_changeset);
-    assert_eq!(visible_paths(&app), vec!["unstaged.rs"]);
+    assert_eq!(visible_paths(&app), vec!["show.rs"]);
 }
 
 #[test]
@@ -1774,38 +1750,20 @@ fn repeated_tab_uses_pending_diff_choice_for_next_target() {
         changeset_with_context_lines(1),
         DiffLayoutMode::Unified,
     );
+    app.refs.branch_base = Some("main".to_owned());
+    app.refs.current_head = Some("feature".to_owned());
 
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
-        .expect("tab should queue show");
-    app.jobs.pending_diff_load = None;
-    app.document.options = DiffOptions {
-        source: DiffSource::Show("HEAD".into()),
-        ..DiffOptions::default()
-    };
+        .expect("tab should queue branch");
     app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
-        .expect("tab should queue unstaged");
-    app.jobs.pending_diff_load = None;
-    app.document.options = DiffOptions {
-        source: DiffSource::Worktree {
-            scope: DiffScope::Unstaged,
-        },
-        ..DiffOptions::default()
-    };
-    app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
-        .expect("tab should advance to staged");
+        .expect("tab should advance from pending branch to show");
 
     let load = app
         .jobs
         .pending_diff_load
         .as_ref()
-        .expect("third tab should queue diff load");
-    assert_eq!(
-        load.options.source,
-        DiffSource::Worktree {
-            scope: DiffScope::Staged
-        }
-    );
-    assert_eq!(load.options.worktree_scope(), Some(DiffScope::Staged));
+        .expect("second tab should queue diff load");
+    assert_eq!(load.options.source, DiffSource::Show("HEAD".into()));
 }
 
 #[test]

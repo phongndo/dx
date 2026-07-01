@@ -8,7 +8,7 @@ use std::{
 };
 
 use mark_diff::{
-    DiffLine, DiffLineKind, DiffOptions, DiffScope, DiffSource, RepoRelativePath, RepoRoot, RevSpec,
+    DiffLine, DiffLineKind, DiffOptions, DiffSource, RepoRelativePath, RepoRoot, RevSpec,
 };
 use mark_syntax::{SyntaxHighlighter, SyntaxLimits};
 use tokio::sync::mpsc::Sender;
@@ -84,9 +84,6 @@ pub(crate) enum FullFileSourceKind {
     },
     GitRevision {
         rev: RevSpec,
-        path: RepoRelativePath,
-    },
-    GitIndex {
         path: RepoRelativePath,
     },
     GitMergeBase {
@@ -240,48 +237,11 @@ pub(crate) fn full_file_source(
         (DiffSource::Patch(_) | DiffSource::Show(_) | DiffSource::Difftool { .. }, _) => {
             return None;
         }
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::All,
-            },
-            DiffSide::Old,
-        ) => FullFileSourceKind::GitRevision {
+        (DiffSource::Worktree, DiffSide::Old) => FullFileSourceKind::GitRevision {
             rev: "HEAD".into(),
             path,
         },
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::All,
-            },
-            DiffSide::New,
-        ) => FullFileSourceKind::Worktree { path },
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::Staged,
-            },
-            DiffSide::Old,
-        ) => FullFileSourceKind::GitRevision {
-            rev: "HEAD".into(),
-            path,
-        },
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::Staged,
-            },
-            DiffSide::New,
-        ) => FullFileSourceKind::GitIndex { path },
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::Unstaged,
-            },
-            DiffSide::Old,
-        ) => FullFileSourceKind::GitIndex { path },
-        (
-            DiffSource::Worktree {
-                scope: DiffScope::Unstaged,
-            },
-            DiffSide::New,
-        ) => FullFileSourceKind::Worktree { path },
+        (DiffSource::Worktree, DiffSide::New) => FullFileSourceKind::Worktree { path },
         (DiffSource::Base(base), DiffSide::Old) => FullFileSourceKind::GitMergeBase {
             base: base.clone(),
             head: "HEAD".into(),
@@ -326,7 +286,6 @@ pub(crate) fn load_full_file_source(source: &FullFileSource) -> Result<String, S
         FullFileSourceKind::GitRevision { rev, path } => {
             git_blob(&source.repo, &format!("{rev}:{path}"))?
         }
-        FullFileSourceKind::GitIndex { path } => git_blob(&source.repo, &format!(":{path}"))?,
         FullFileSourceKind::GitMergeBase { base, head, path } => {
             let rev = git_merge_base(&source.repo, base, head)?;
             git_blob(&source.repo, &format!("{rev}:{path}"))?
