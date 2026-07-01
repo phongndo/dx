@@ -137,10 +137,7 @@ f              file filter
 /              grep filter
 n / p          next / previous grep match
 r              reload
-m m            diff type selector
-m h            head branch picker
-m b            base branch picker
-m c            commit picker
+m              diff type selector
 o              settings menu
 a              annotation search menu
 b              file browser

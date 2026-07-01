@@ -156,16 +156,14 @@ fn configured_leader_help_key_filters_help_menu_when_open() {
 }
 
 #[test]
-fn m_m_opens_diff_source_menu() {
+fn m_opens_diff_source_menu() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
 
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("m prefix should be handled");
-    assert!(app.input.key_prefix_pending.is_some());
-    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("m m should be handled");
+        .expect("m should be handled");
 
+    assert!(app.input.key_prefix_pending.is_none());
     assert!(app.overlays.diff_menu_is_open());
     assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 }
@@ -338,7 +336,10 @@ fn help_menu_lines_list_keybindings() {
         text.iter()
             .any(|line| line.contains("Ctrl-G") && line.contains("edit focused hunk"))
     );
-    assert!(text.iter().any(|line| line.contains("m m")));
+    assert!(
+        text.iter()
+            .any(|line| line.contains(" m") && line.contains("diff selector"))
+    );
     assert!(text.iter().any(|line| line.contains("Ctrl-Shift-C")));
     assert_eq!(keymap.global_action_label(GlobalAction::FileBrowser), "b");
     assert!(text.iter().any(|line| line.contains("toggle file sidebar")));

@@ -335,8 +335,16 @@ impl KeySpec {
 
 fn set_sequences(target: &mut Vec<KeySequence>, spec: Option<KeySpec>) -> Result<(), String> {
     if let Some(spec) = spec {
-        *target = spec
-            .into_strings()
+        let sequences = spec.into_strings();
+        if sequences.iter().all(|sequence| sequence.trim().is_empty()) {
+            target.clear();
+            return Ok(());
+        }
+        if sequences.iter().any(|sequence| sequence.trim().is_empty()) {
+            return Err("empty key binding".to_owned());
+        }
+
+        *target = sequences
             .into_iter()
             .map(|sequence| parse_key_sequence(&sequence))
             .collect::<Result<_, _>>()?;

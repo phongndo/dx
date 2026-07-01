@@ -1073,35 +1073,16 @@ fn flat_action_keys_are_unmapped_under_leader() {
 }
 
 #[test]
-fn default_mode_prefix_keys_open_diff_pickers() {
+fn default_m_key_opens_diff_menu() {
     let changeset = changeset_with_context_lines(1);
     let mut app = DiffApp::new(DiffOptions::default(), changeset, DiffLayoutMode::Unified);
-    app.refs.comparison_branches = branch_names(&["main", "feature"]);
-    app.refs.comparison_commits = vec![GitCommit {
-        sha: "abcdef0".into(),
-        subject: "commit".to_owned(),
-    }];
 
     app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("m prefix should be handled");
-    assert!(app.input.key_prefix_pending.is_some());
-    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
-        .expect("m h should open head picker");
-    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Head));
+        .expect("m should open diff menu");
 
-    app.close_branch_menu();
-    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("m prefix should be handled");
-    app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE))
-        .expect("m b should open base picker");
-    assert_eq!(app.refs.branch_menu_open(), Some(BranchMenu::Base));
-
-    app.close_branch_menu();
-    app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE))
-        .expect("m prefix should be handled");
-    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
-        .expect("m c should open commit picker");
-    assert!(app.refs.commit_menu_is_open());
+    assert!(app.input.key_prefix_pending.is_none());
+    assert!(app.overlays.diff_menu_is_open());
+    assert_eq!(app.highlighted_diff_choice(), Some(DiffChoice::Show));
 }
 
 #[test]

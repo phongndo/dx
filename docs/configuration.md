@@ -56,10 +56,10 @@ help = "?"
 reload = "r"
 file_filter = "f"
 grep = "/"
-diff_menu = "m m"
-head_branch = "m h"
-base_branch = "m b"
-commit_picker = "m c"
+diff_menu = "m"
+head_branch = []
+base_branch = []
+commit_picker = []
 options_menu = "o"
 annotation_menu = "a"
 file_browser = "b"
@@ -252,10 +252,10 @@ Bindings can be a string or a list of strings:
 [keymap.global]
 help = ["?", "h ?"]
 file_filter = "ctrl-f"
-diff_menu = "m m"
-head_branch = "m h"
-base_branch = "m b"
-commit_picker = "m c"
+diff_menu = "m"
+head_branch = []
+base_branch = []
+commit_picker = []
 copy_marks = "y"
 save_mark = "ctrl-s"
 cancel_mark = "esc"
@@ -269,7 +269,8 @@ confirm = "enter"
 close = "esc"
 ```
 
-Use an empty list, such as `copy_marks = []`, to unbind an action.
+Use an empty list, such as `copy_marks = []`, or an empty string, such as
+`copy_marks = ""`, to unbind an action.
 
 Key names include printable characters plus names such as `space`, `enter`,
 `esc`, `tab`, `shift-tab`, `up`, `down`, `left`, `right`, and modified keys such

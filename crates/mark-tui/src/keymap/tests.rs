@@ -150,11 +150,10 @@ fn default_mark_bindings_are_configurable_actions() {
 fn default_review_actions_use_mnemonic_keys() {
     let keymap = Keymap::default();
 
-    assert!(keymap.is_prefix(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)));
+    assert!(!keymap.is_prefix(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)));
     assert!(!keymap.is_prefix(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)));
-    assert!(keymap.matches_prefix(
+    assert!(keymap.matches_single(
         GlobalAction::DiffMenu,
-        KeyPress::from(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)),
         KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)
     ));
     assert!(keymap.matches_single(
@@ -213,22 +212,36 @@ fn default_review_actions_use_mnemonic_keys() {
         GlobalAction::CollapseContextAll,
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)
     ));
-    assert!(keymap.matches_prefix(
-        GlobalAction::HeadBranch,
-        KeyPress::from(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)),
-        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE)
-    ));
-    assert!(keymap.matches_prefix(
-        GlobalAction::BaseBranch,
-        KeyPress::from(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)),
-        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)
-    ));
-    assert!(keymap.matches_prefix(
-        GlobalAction::CommitPicker,
-        KeyPress::from(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE)),
-        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE)
-    ));
+    assert_eq!(
+        keymap.global_action_label(GlobalAction::HeadBranch),
+        "unbound"
+    );
+    assert_eq!(
+        keymap.global_action_label(GlobalAction::BaseBranch),
+        "unbound"
+    );
+    assert_eq!(
+        keymap.global_action_label(GlobalAction::CommitPicker),
+        "unbound"
+    );
     assert!(!keymap.is_prefix(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::NONE)));
+}
+
+#[test]
+fn keymap_allows_empty_string_to_unbind_action() {
+    let keymap = Keymap::parse(
+        r#"
+            [keymap.global]
+            quit = ""
+            "#,
+    )
+    .expect("empty string should unbind action");
+
+    assert_eq!(keymap.global_action_label(GlobalAction::Quit), "unbound");
+    assert!(!keymap.matches_single(
+        GlobalAction::Quit,
+        KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)
+    ));
 }
 
 #[test]
